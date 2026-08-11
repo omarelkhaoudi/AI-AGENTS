@@ -1,0 +1,17 @@
+{
+  "name": "ai-agents-foundation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Phase 0 technical foundation for an enterprise AI agent platform.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "lint": "node scripts/lint.mjs",
+    "typecheck": "node scripts/typecheck.mjs",
+    "build": "node scripts/build.mjs",
+    "scan:secrets": "node scripts/scan-secrets.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

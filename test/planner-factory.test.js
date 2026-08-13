@@ -27,6 +27,8 @@ test("missing PLANNER_PROVIDER selects the deterministic planner by default", ()
   const planner = createPlannerFromConfig(config);
 
   assert.equal(config.provider, "deterministic");
+  assert.equal(config.llmProvider, "mock");
+  assert.equal(config.openai.hasApiKey, false);
   assert.equal(planner.id, "deterministic");
   assert.equal(planner.kind, "deterministic");
 });
@@ -85,10 +87,53 @@ test("unknown planner provider fails with CONFIGURATION_ERROR", () => {
 test("loadFoundationConfig exposes planner configuration", () => {
   const config = loadFoundationConfig({
     NODE_ENV: "test",
-    PLANNER_PROVIDER: "stub_llm"
+    PLANNER_PROVIDER: "stub_llm",
+    OPENAI_MODEL: "configured-model"
   });
 
-  assert.deepEqual(config.planner, { provider: "stub_llm" });
+  assert.equal(config.planner.provider, "stub_llm");
+  assert.equal(config.planner.openai.model, "configured-model");
+  assert.equal(config.planner.openai.hasApiKey, false);
+});
+
+test("PLANNER_PROVIDER=llm_openai selects LlmPlanner only with explicit OpenAI configuration", async () => {
+  const repository = await createRepositoryWithAgents();
+  const request = await repository.createRequest({
+    title: "factory openai planner",
+    payload: { question: "factory openai planner" }
+  });
+  const planner = createPlannerFromConfig({
+    provider: "llm_openai",
+    openai: {
+      apiKey: "test",
+      model: "test-model"
+    }
+  }, {
+    openaiClient: createFakeOpenAIClient(request.id)
+  });
+
+  const result = await orchestrateRequest({ repository, requestId: request.id, planner });
+
+  assert.equal(planner.kind, "llm");
+  assert.equal(result.status, "orchestrated");
+  assert.equal(result.plans[0].metadata.planner, "openai");
+});
+
+test("PLANNER_PROVIDER=deterministic does not require OpenAI configuration", async () => {
+  const repository = await createRepositoryWithAgents();
+  const request = await repository.createRequest({
+    title: "combien dois-je encaisser cette semaine",
+    payload: { question: "combien dois-je encaisser cette semaine" }
+  });
+  const planner = createPlannerFromConfig(createPlannerConfig({
+    PLANNER_PROVIDER: "deterministic",
+    LLM_PROVIDER: "openai"
+  }));
+
+  const result = await orchestrateRequest({ repository, requestId: request.id, planner });
+
+  assert.equal(result.status, "orchestrated");
+  assert.equal(result.plans[0].metadata.planner, "deterministic");
 });
 
 test("API uses the configured planner selection", async (t) => {
@@ -237,4 +282,33 @@ async function createRepositoryWithAgents() {
   const repository = new InMemoryRepository();
   await seedMvpAgents(repository);
   return repository;
+}
+
+function createFakeOpenAIClient(requestId) {
+  return Object.freeze({
+    responses: Object.freeze({
+      async create() {
+        return {
+          structuredPlan: {
+            summary: "Factory OpenAI fake plan.",
+            planner: "openai",
+            agents: ["finance"],
+            steps: [
+              {
+                agentId: "finance",
+                sequence: 1,
+                actionKind: "read_analyze",
+                actionType: "analyze_request",
+                toolName: "get_company_overview",
+                resource: `request:${requestId}`,
+                input: { requestId },
+                requiresApproval: false
+              }
+            ],
+            metadata: { planner: "openai" }
+          }
+        };
+      }
+    })
+  });
 }

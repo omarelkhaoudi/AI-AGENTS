@@ -36,7 +36,8 @@ export async function generateStructuredPlanWithProvider(provider, input) {
     }
 
     throw new LlmProviderError("LLM provider failed while generating a structured plan.", "PROVIDER_FAILURE", {
-      cause: cause?.message ?? String(cause)
+      causeName: cause?.name ?? "Error",
+      causeCode: cause?.code
     });
   }
 }

@@ -16,6 +16,7 @@ export * from "./director/stub-llm-planner.js";
 export * from "./integrations/ai-provider.js";
 export * from "./integrations/workflow-boundary.js";
 export * from "./llm/mock-provider.js";
+export * from "./llm/openai-provider.js";
 export * from "./llm/provider-contract.js";
 export * from "./observability/audit.js";
 export * from "./observability/logger.js";

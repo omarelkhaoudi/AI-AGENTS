@@ -11,6 +11,8 @@ export const AUDIT_EVENT_TYPES = Object.freeze([
   "permission_denied",
   "agent_called",
   "tool_called",
+  "tool_completed",
+  "tool_failed",
   "action_prepared",
   "approval_requested",
   "approval_granted",

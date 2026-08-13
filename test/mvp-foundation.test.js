@@ -6,7 +6,8 @@ import {
   canExecuteAction,
   createApprovalRequest,
   createPermission,
-  evaluateActionPolicy
+  evaluateActionPolicy,
+  seedMvpAgents
 } from "../src/index.js";
 
 test("creates and reads a request through the in-memory repository", async () => {
@@ -152,4 +153,152 @@ test("GET /api/requests/:id returns a persisted request", async (t) => {
   assert.equal(response.statusCode, 200);
   assert.equal(body.request.id, "req-api-get-1");
   assert.deepEqual(body.request.payload, { ok: true });
+});
+
+test("POST /api/requests rejects an empty request body", async (t) => {
+  const app = buildApi();
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/requests",
+    payload: {}
+  });
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(body.error, "message, title, or payload is required.");
+});
+
+test("GET /api/requests/:id returns 404 for unknown requests", async (t) => {
+  const app = buildApi();
+  t.after(() => app.close());
+
+  const response = await app.inject({ method: "GET", url: "/api/requests/missing-request" });
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 404);
+  assert.equal(body.error, "Request not found.");
+});
+
+test("POST /api/requests returns a clean response when the repository fails", async (t) => {
+  class FailingRepository extends InMemoryRepository {
+    createRequest() {
+      const error = new Error("database unavailable");
+      error.name = "DatabaseError";
+      throw error;
+    }
+  }
+
+  const app = buildApi({ repository: new FailingRepository(), seedAgents: false });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/requests",
+    payload: {
+      message: "fais-moi le point sur mon entreprise"
+    }
+  });
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 500);
+  assert.equal(body.error, "Request orchestration failed.");
+  assert.deepEqual(body.details, { name: "DatabaseError" });
+});
+
+test("GET /api/requests/:id returns a clean response when the repository fails", async (t) => {
+  class FailingRepository extends InMemoryRepository {
+    getRequest() {
+      const error = new Error("database unavailable");
+      error.name = "DatabaseError";
+      throw error;
+    }
+  }
+
+  const app = buildApi({ repository: new FailingRepository(), seedAgents: false });
+  t.after(() => app.close());
+
+  const response = await app.inject({ method: "GET", url: "/api/requests/any-request" });
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 500);
+  assert.equal(body.error, "Request retrieval failed.");
+  assert.deepEqual(body.details, { name: "DatabaseError" });
+});
+
+test("POST /api/requests returns a blocked request when the planner selects an unknown agent", async (t) => {
+  const repository = new InMemoryRepository();
+  const app = buildApi({
+    repository,
+    planner: async ({ request }) => ({
+      summary: "Unknown agent test plan.",
+      steps: [
+        {
+          agentId: "unknown-agent",
+          sequence: 1,
+          actionKind: "read_analyze",
+          actionType: "analyze_request",
+          resource: `request:${request.id}`,
+          input: { requestId: request.id }
+        }
+      ],
+      metadata: { test: true }
+    })
+  });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/requests",
+    payload: {
+      message: "route this to an unknown agent"
+    }
+  });
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 201);
+  assert.equal(body.request.status, "blocked");
+  assert.equal(body.request.plans.length, 1);
+  assert.equal(body.request.plans[0].steps.length, 0);
+  assert.ok(body.request.auditEvents.some((event) => event.type === "permission_denied"));
+});
+
+test("POST /api/requests returns a blocked request when an agent is inactive", async (t) => {
+  const repository = new InMemoryRepository();
+  await seedMvpAgents(repository);
+  await repository.upsertAgent({
+    ...(await repository.getAgent("finance")),
+    status: "disabled"
+  });
+  const app = buildApi({ repository, seedAgents: false });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/requests",
+    payload: {
+      message: "combien dois-je encaisser cette semaine"
+    }
+  });
+  const body = JSON.parse(response.body);
+
+  assert.equal(response.statusCode, 201);
+  assert.equal(body.request.status, "blocked");
+  assert.equal(body.request.plans[0].steps[0].agentId, "finance");
+  assert.equal(body.request.executions[0].status, "blocked");
+  assert.ok(body.request.auditEvents.some((event) => event.type === "permission_denied"));
+});
+
+test("closing the API closes the repository", async () => {
+  const repository = new InMemoryRepository();
+  let disconnected = false;
+  repository.disconnect = async () => {
+    disconnected = true;
+  };
+  const app = buildApi({ repository });
+
+  await app.close();
+
+  assert.equal(disconnected, true);
 });

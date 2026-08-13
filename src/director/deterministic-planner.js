@@ -33,6 +33,20 @@ const AGENT_PATTERNS = Object.freeze([
 
 const GLOBAL_AGENT_IDS = Object.freeze(["finance", "commercial", "production", "purchasing"]);
 
+const DEFAULT_TOOL_BY_AGENT = Object.freeze({
+  finance: "get_company_overview",
+  commercial: "get_pending_quotes",
+  production: "get_delayed_production_orders",
+  purchasing: "get_purchase_needs"
+});
+
+const INTENT_TOOL_BY_AGENT = Object.freeze({
+  finance: "get_pending_payments",
+  commercial: "get_pending_quotes",
+  production: "get_delayed_production_orders",
+  purchasing: "get_purchase_needs"
+});
+
 export function createDeterministicPlanner() {
   return async ({ request }) => createDeterministicPlan(request);
 }
@@ -50,6 +64,7 @@ export function createDeterministicPlan(request) {
         sequence: index + 1,
         actionKind: "read_analyze",
         actionType: "analyze_request",
+        toolName: selectToolName(agentId, text),
         resource: `request:${request.id ?? request.requestId}`,
         reason: definition?.reason ?? "Global company overview requires this specialized agent.",
         input: {
@@ -63,6 +78,14 @@ export function createDeterministicPlan(request) {
       matchedText: text
     }
   });
+}
+
+function selectToolName(agentId, text) {
+  if (agentId === "finance" && AGENT_PATTERNS[0].patterns.some((pattern) => text.includes(pattern))) {
+    return INTENT_TOOL_BY_AGENT.finance;
+  }
+
+  return DEFAULT_TOOL_BY_AGENT[agentId] ?? null;
 }
 
 export function selectAgentIds(text) {

@@ -5,11 +5,21 @@ import { createAuditEvent } from "../observability/audit.js";
 import { InMemoryRepository } from "../persistence/in-memory-repository.js";
 import { assertRepositoryContract } from "../persistence/repository-contract.js";
 
-export function buildApi({ repository = new InMemoryRepository(), logger = false, seedAgents = true } = {}) {
+export function buildApi({
+  repository = new InMemoryRepository(),
+  logger = false,
+  seedAgents = true,
+  planner,
+  toolRegistry = null
+} = {}) {
   assertRepositoryContract(repository);
 
   const app = Fastify({ logger });
   let seedPromise = null;
+
+  app.addHook("onClose", async () => {
+    await repository.disconnect();
+  });
 
   app.get("/health", async () => ({
     status: "ok",
@@ -18,46 +28,56 @@ export function buildApi({ repository = new InMemoryRepository(), logger = false
   }));
 
   app.post("/api/requests", async (request, reply) => {
-    if (seedAgents) {
-      seedPromise ??= seedMvpAgents(repository);
-      await seedPromise;
-    }
-
     const validation = normalizeRequestBody(request.body);
     if (!validation.ok) {
       return reply.code(400).send({ error: validation.error });
     }
 
-    const savedRequest = await repository.createRequest(validation.value);
-    await repository.createAuditEvent(
-      createAuditEvent({
-        type: "request_created",
-        actorUserId: savedRequest.createdById,
+    try {
+      if (seedAgents) {
+        seedPromise ??= seedMvpAgents(repository);
+        await seedPromise;
+      }
+
+      const savedRequest = await repository.createRequest(validation.value);
+      await repository.createAuditEvent(
+        createAuditEvent({
+          type: "request_created",
+          actorUserId: savedRequest.createdById,
+          requestId: savedRequest.id,
+          resourceType: "request",
+          resourceId: savedRequest.id,
+          metadata: {
+            source: savedRequest.source,
+            title: savedRequest.title
+          }
+        })
+      );
+
+      const orchestratedRequest = await orchestrateRequest({
         requestId: savedRequest.id,
-        resourceType: "request",
-        resourceId: savedRequest.id,
-        metadata: {
-          source: savedRequest.source,
-          title: savedRequest.title
-        }
-      })
-    );
+        repository,
+        planner,
+        toolRegistry
+      });
 
-    const orchestratedRequest = await orchestrateRequest({
-      requestId: savedRequest.id,
-      repository
-    });
-
-    return reply.code(201).send({ request: orchestratedRequest });
+      return reply.code(201).send({ request: orchestratedRequest });
+    } catch (error) {
+      return reply.code(500).send(createErrorResponse("Request orchestration failed.", error));
+    }
   });
 
   app.get("/api/requests/:id", async (request, reply) => {
-    const savedRequest = await repository.getRequest(request.params.id);
-    if (!savedRequest) {
-      return reply.code(404).send({ error: "Request not found." });
-    }
+    try {
+      const savedRequest = await repository.getRequest(request.params.id);
+      if (!savedRequest) {
+        return reply.code(404).send({ error: "Request not found." });
+      }
 
-    return { request: savedRequest };
+      return { request: savedRequest };
+    } catch (error) {
+      return reply.code(500).send(createErrorResponse("Request retrieval failed.", error));
+    }
   });
 
   return app;
@@ -72,13 +92,24 @@ function normalizeRequestBody(body) {
     return { ok: false, error: "payload must be an object when provided." };
   }
 
+  const message = normalizeText(body.message);
+  const title = normalizeText(body.title) ?? message;
+  const payload = { ...(body.payload ?? {}) };
+  if (message) {
+    payload.message = message;
+  }
+
+  if (!title && Object.keys(payload).length === 0) {
+    return { ok: false, error: "message, title, or payload is required." };
+  }
+
   return {
     ok: true,
     value: {
-      title: typeof body.title === "string" ? body.title : null,
+      title,
       source: typeof body.source === "string" ? body.source : "api",
       status: "received",
-      payload: body.payload ?? {},
+      payload,
       metadata: isJsonObject(body.metadata) ? body.metadata : {},
       createdById: typeof body.createdById === "string" ? body.createdById : null
     }
@@ -87,4 +118,22 @@ function normalizeRequestBody(body) {
 
 function isJsonObject(value) {
   return value && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeText(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function createErrorResponse(message, error) {
+  return {
+    error: message,
+    details: {
+      name: error?.name ?? "Error"
+    }
+  };
 }

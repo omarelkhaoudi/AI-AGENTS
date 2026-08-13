@@ -18,7 +18,9 @@ export const REPOSITORY_METHODS = Object.freeze([
   "createAuditEvent",
   "listAuditEvents",
   "createDocument",
-  "getDocument"
+  "getDocument",
+  "transaction",
+  "disconnect"
 ]);
 
 export class RepositoryContractError extends Error {
@@ -107,6 +109,14 @@ export class AgentPlatformRepository {
 
   getDocument() {
     throw new RepositoryContractError("getDocument is not implemented.");
+  }
+
+  transaction() {
+    throw new RepositoryContractError("transaction is not implemented.");
+  }
+
+  disconnect() {
+    throw new RepositoryContractError("disconnect is not implemented.");
   }
 }
 

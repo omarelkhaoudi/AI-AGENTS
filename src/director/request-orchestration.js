@@ -1,22 +1,36 @@
 import { createAuditEvent } from "../observability/audit.js";
 import { canExecuteAction, evaluateActionPolicy } from "../security/permissions.js";
+import { createMvpToolRegistry } from "../tools/mvp-tools.js";
 import { createDeterministicPlanner } from "./deterministic-planner.js";
 import { DirectorExecutionError } from "./orchestrator.js";
 
 export async function orchestrateRequest({
   requestId,
   repository,
-  planner = createDeterministicPlanner()
+  planner = createDeterministicPlanner(),
+  toolRegistry = null
 } = {}) {
   if (!repository) {
     throw new DirectorExecutionError("Request orchestration requires a repository.");
   }
 
+  return repository.transaction((transactionRepository) =>
+    orchestrateRequestInTransaction({
+      requestId,
+      repository: transactionRepository,
+      planner,
+      toolRegistry
+    })
+  );
+}
+
+async function orchestrateRequestInTransaction({ requestId, repository, planner, toolRegistry }) {
   const request = await repository.getRequest(requestId);
   if (!request) {
     throw new DirectorExecutionError(`Request not found: ${requestId}`);
   }
 
+  const registry = toolRegistry ?? createMvpToolRegistry({ repository });
   const planned = await planner({ request, repository });
   const plan = await repository.createPlan({
     requestId: request.id,
@@ -63,6 +77,7 @@ export async function orchestrateRequest({
       sequence: plannedStep.sequence,
       status: "created",
       actionType: plannedStep.actionType,
+      toolName: plannedStep.toolName ?? null,
       input: plannedStep.input,
       requiresApproval: plannedStep.requiresApproval ?? false
     });
@@ -136,7 +151,7 @@ export async function orchestrateRequest({
       });
 
       executions.push(
-        await createExecution(repository, {
+        await createBlockedExecution(repository, {
           request,
           plan,
           planStep,
@@ -166,21 +181,83 @@ export async function orchestrateRequest({
       metadata: { actionKind: plannedStep.actionKind }
     });
 
+    const execution = await createExecutionRecord(repository, {
+      request,
+      plan,
+      planStep,
+      agent,
+      status: "executing",
+      input: plannedStep.input,
+      metadata: {
+        planner: "deterministic",
+        toolName: plannedStep.toolName ?? null,
+        policyDecision
+      }
+    });
+
+    let output;
+    try {
+      if (plannedStep.toolName) {
+        const toolExecution = await registry.execute(plannedStep.toolName, {
+          repository,
+          requestId: request.id,
+          planId: plan.id,
+          stepId: planStep.id,
+          executionId: execution.id,
+          agentId: agent.id,
+          agentPermissions: agent.permissions ?? []
+        }, plannedStep.input ?? {});
+
+        output = {
+          agentId: agent.id,
+          toolId: toolExecution.toolId,
+          result: toolExecution.output
+        };
+      } else {
+        output = {
+          agentId: agent.id,
+          status: "acknowledged",
+          message: "Deterministic MVP execution placeholder. No business tools were invoked."
+        };
+      }
+    } catch (error) {
+      executions.push(
+        await finishExecution(repository, {
+          execution,
+          request,
+          plan,
+          planStep,
+          agent,
+          status: "failed",
+          error: {
+            name: error.name,
+            code: error.code,
+            message: error.message
+          },
+          metadata: {
+            planner: "deterministic",
+            toolName: plannedStep.toolName ?? null,
+            policyDecision
+          }
+        })
+      );
+      blockedSteps.push(plannedStep);
+      continue;
+    }
+
     executions.push(
-      await createExecution(repository, {
+      await finishExecution(repository, {
+        execution,
         request,
         plan,
         planStep,
         agent,
         status: "completed",
         input: plannedStep.input,
-        output: {
-          agentId: agent.id,
-          status: "acknowledged",
-          message: "Deterministic MVP execution placeholder. No business tools were invoked."
-        },
+        output,
         metadata: {
           planner: "deterministic",
+          toolName: plannedStep.toolName ?? null,
           policyDecision
         }
       })
@@ -200,7 +277,7 @@ export async function orchestrateRequest({
   return repository.getRequest(request.id);
 }
 
-async function createExecution(repository, {
+async function createExecutionRecord(repository, {
   request,
   plan,
   planStep,
@@ -212,7 +289,6 @@ async function createExecution(repository, {
   metadata = {}
 }) {
   const startedAt = new Date().toISOString();
-  const finishedAt = new Date().toISOString();
   const execution = await repository.saveExecution({
     requestId: request.id,
     planId: plan.id,
@@ -224,8 +300,8 @@ async function createExecution(repository, {
     error,
     metadata,
     startedAt,
-    finishedAt,
-    durationMs: 0
+    finishedAt: null,
+    durationMs: null
   });
 
   await audit(repository, {
@@ -241,6 +317,67 @@ async function createExecution(repository, {
     metadata: { status: execution.status }
   });
 
+  return execution;
+}
+
+async function createBlockedExecution(repository, options) {
+  const execution = await createExecutionRecord(repository, options);
+  await auditExecutionFinished(repository, {
+    ...options,
+    execution
+  });
+  return execution;
+}
+
+async function finishExecution(repository, {
+  execution,
+  request,
+  plan,
+  planStep,
+  agent,
+  status,
+  input = null,
+  output = null,
+  error = null,
+  metadata = {}
+}) {
+  const finishedAt = new Date().toISOString();
+  const saved = await repository.saveExecution({
+    id: execution.id,
+    requestId: request.id,
+    planId: plan.id,
+    planStepId: planStep.id,
+    agentId: agent.id,
+    status,
+    input,
+    output,
+    error,
+    metadata,
+    startedAt: execution.startedAt,
+    finishedAt,
+    durationMs: Date.parse(finishedAt) - Date.parse(execution.startedAt)
+  });
+
+  await auditExecutionFinished(repository, {
+    execution: saved,
+    request,
+    plan,
+    planStep,
+    agent,
+    status
+  });
+
+  return saved;
+}
+
+async function auditExecutionFinished(repository, {
+  execution,
+  request,
+  plan,
+  planStep,
+  agent,
+  status
+}) {
   await audit(repository, {
     type: status === "completed" ? "execution_completed" : "execution_failed",
     actorUserId: request.createdById,
@@ -253,8 +390,6 @@ async function createExecution(repository, {
     resourceId: execution.id,
     metadata: { status: execution.status }
   });
-
-  return execution;
 }
 
 function isAgentActive(agent) {

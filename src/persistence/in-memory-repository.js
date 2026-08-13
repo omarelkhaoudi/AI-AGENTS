@@ -111,7 +111,10 @@ export class InMemoryRepository extends AgentPlatformRepository {
           .sort((first, second) => first.sequence - second.sequence)
           .map((step) => ({
             ...step,
-            agent: this.getAgent(step.agentId)
+            agent: this.getAgent(step.agentId),
+            executions: [...this.#executions.values()].filter((execution) => execution.planStepId === step.id),
+            approvals: [...this.#approvals.values()].filter((approval) => approval.planStepId === step.id),
+            auditEvents: [...this.#auditEvents.values()].filter((event) => event.planStepId === step.id)
           }))
       }));
 
@@ -304,6 +307,14 @@ export class InMemoryRepository extends AgentPlatformRepository {
 
   getDocument(documentId) {
     return this.#documents.get(documentId) ?? null;
+  }
+
+  async transaction(callback) {
+    return callback(this);
+  }
+
+  async disconnect() {
+    return undefined;
   }
 }
 

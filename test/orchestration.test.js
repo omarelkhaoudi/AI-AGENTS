@@ -45,6 +45,9 @@ test("MVP agent seed is idempotent and creates active agent records", async () =
 test("Request Finance routes to finance agent", async () => {
   const request = await createOrchestratedRequest("combien dois-je encaisser cette semaine");
   assert.deepEqual(selectedAgents(request), ["finance"]);
+  assert.equal(request.plans[0].steps[0].toolName, "get_pending_payments");
+  assert.equal(request.executions[0].output.toolId, "get_pending_payments");
+  assert.equal(request.executions[0].output.result.demo, true);
 });
 
 test("Request Commercial routes to commercial agent", async () => {

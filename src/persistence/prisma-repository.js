@@ -3,12 +3,13 @@ import { createAuditEvent as createAuditEventRecord } from "../observability/aud
 import { AgentPlatformRepository } from "./repository-contract.js";
 
 export class PrismaRepository extends AgentPlatformRepository {
-  constructor({ prisma }) {
+  constructor({ prisma, transactional = false }) {
     super();
     if (!prisma) {
       throw new Error("PrismaRepository requires a PrismaClient instance.");
     }
     this.prisma = prisma;
+    this.transactional = transactional;
   }
 
   static async create() {
@@ -268,11 +269,33 @@ export class PrismaRepository extends AgentPlatformRepository {
   async getDocument(documentId) {
     return this.prisma.document.findUnique({ where: { id: documentId } });
   }
+
+  async transaction(callback) {
+    if (this.transactional) {
+      return callback(this);
+    }
+
+    return this.prisma.$transaction((tx) =>
+      callback(new PrismaRepository({ prisma: tx, transactional: true }))
+    );
+  }
+
+  async disconnect() {
+    if (typeof this.prisma.$disconnect === "function") {
+      await this.prisma.$disconnect();
+    }
+  }
 }
 
-export async function createPrismaClient() {
+export async function createPrismaClient({ databaseUrl = process.env.DATABASE_URL } = {}) {
+  if (typeof databaseUrl !== "string" || databaseUrl.trim().length === 0) {
+    throw new Error("DATABASE_URL is required to create a PrismaClient.");
+  }
+
   const { PrismaClient } = await import("@prisma/client");
-  return new PrismaClient();
+  const { PrismaPg } = await import("@prisma/adapter-pg");
+  const adapter = new PrismaPg({ connectionString: databaseUrl });
+  return new PrismaClient({ adapter });
 }
 
 function approvalData(approval) {

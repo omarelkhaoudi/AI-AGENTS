@@ -16,7 +16,8 @@ const files = [
   ".env.example",
   "prisma/schema.prisma",
   "docs/AI_AGENTS_FOUNDATION_ARCHITECTURE.md",
-  "docs/AGENT-MVP-BOUNDARIES.md"
+  "docs/AGENT-MVP-BOUNDARIES.md",
+  "docs/POSTGRESQL_SETUP.md"
 ];
 
 const findings = [];

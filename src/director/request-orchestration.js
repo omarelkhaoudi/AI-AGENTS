@@ -4,7 +4,7 @@ import { ToolExecutionService } from "../tools/execution-service.js";
 import { createMvpToolRegistry } from "../tools/mvp-tools.js";
 import { createDeterministicPlanner } from "./deterministic-planner.js";
 import { DirectorExecutionError } from "./orchestrator.js";
-import { runPlanner, validatePlannerPlan } from "./planner-contract.js";
+import { PlannerContractError, PlanningError, runPlanner, validatePlannerPlan } from "./planner-contract.js";
 
 export async function orchestrateRequest({
   requestId,
@@ -37,8 +37,12 @@ async function orchestrateRequestInTransaction({ requestId, repository, planner,
     repository,
     toolRegistry: registry
   });
-  const planned = await runPlanner(planner, { request, repository });
-  await validatePlannerPlan(planned, { repository, toolRegistry: registry });
+  const planned = await createValidatedPlan({
+    planner,
+    request,
+    repository,
+    toolRegistry: registry
+  });
 
   const plan = await repository.createPlan({
     requestId: request.id,
@@ -327,6 +331,24 @@ async function createExecutionRecord(repository, {
   });
 
   return execution;
+}
+
+async function createValidatedPlan({ planner, request, repository, toolRegistry }) {
+  try {
+    const planned = await runPlanner(planner, { request, repository });
+    await validatePlannerPlan(planned, { repository, toolRegistry });
+    return planned;
+  } catch (cause) {
+    if (cause instanceof PlannerContractError) {
+      throw cause;
+    }
+
+    throw new PlanningError("Planner failed before producing an executable plan.", {
+      causeName: cause?.name ?? "Error",
+      causeCode: cause?.code,
+      causeMessage: cause?.message ?? String(cause)
+    });
+  }
 }
 
 async function createBlockedExecution(repository, options) {

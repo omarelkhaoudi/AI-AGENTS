@@ -8,6 +8,7 @@ export * from "./director/deterministic-planner.js";
 export * from "./director/llm-planner-interface.js";
 export * from "./director/llm-planner.js";
 export * from "./director/orchestrator.js";
+export * from "./director/planner-factory.js";
 export * from "./director/planner-prompt.js";
 export * from "./director/planner-contract.js";
 export * from "./director/request-orchestration.js";

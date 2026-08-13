@@ -1,5 +1,6 @@
 import { createAiProviderConfig } from "./integrations/ai-provider.js";
 import { createWorkflowConfig } from "./integrations/workflow-boundary.js";
+import { createPlannerConfig } from "./director/planner-factory.js";
 
 export function loadFoundationConfig(env = process.env) {
   const workflowsEnabled = env.WORKFLOW_ENABLED === "true";
@@ -19,6 +20,7 @@ export function loadFoundationConfig(env = process.env) {
       model: env.AI_PROVIDER_MODEL ?? null,
       enabled: aiEnabled
     }),
+    planner: createPlannerConfig(env),
     workflow: createWorkflowConfig({
       provider: env.WORKFLOW_PROVIDER ?? "n8n",
       baseUrl: env.WORKFLOW_BASE_URL,

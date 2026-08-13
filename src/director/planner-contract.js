@@ -1,9 +1,20 @@
+import { redact } from "../observability/logger.js";
+
 export class PlannerContractError extends Error {
   constructor(message, code = "PLAN_INVALID", details = {}) {
     super(message);
     this.name = "PlannerContractError";
     this.code = code;
     this.details = details;
+  }
+}
+
+export class PlanningError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = "PlanningError";
+    this.code = "PLANNING_FAILED";
+    this.details = redact(details);
   }
 }
 

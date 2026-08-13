@@ -1,6 +1,8 @@
 import Fastify from "fastify";
 import { seedMvpAgents } from "../agents/seed.js";
-import { PlannerContractError } from "../director/planner-contract.js";
+import { loadFoundationConfig } from "../config.js";
+import { PlannerConfigurationError, createPlannerFromConfig } from "../director/planner-factory.js";
+import { PlannerContractError, PlanningError } from "../director/planner-contract.js";
 import { orchestrateRequest } from "../director/request-orchestration.js";
 import { createAuditEvent } from "../observability/audit.js";
 import { InMemoryRepository } from "../persistence/in-memory-repository.js";
@@ -17,10 +19,12 @@ export function buildApi({
   repository = new InMemoryRepository(),
   logger = false,
   seedAgents = true,
-  planner,
+  planner = null,
+  config = null,
   toolRegistry = null
 } = {}) {
   assertRepositoryContract(repository);
+  const selectedPlanner = planner ?? createPlannerFromConfig((config ?? loadFoundationConfig()).planner);
 
   const app = Fastify({ logger });
   let seedPromise = null;
@@ -128,7 +132,7 @@ export function buildApi({
       const orchestratedRequest = await orchestrateRequest({
         requestId: savedRequest.id,
         repository,
-        planner,
+        planner: selectedPlanner,
         toolRegistry
       });
 
@@ -226,8 +230,16 @@ function sendDomainError(reply, message, error) {
 }
 
 function statusCodeForError(error) {
+  if (error instanceof PlannerConfigurationError) {
+    return 500;
+  }
+
   if (error instanceof PlannerContractError) {
     return 400;
+  }
+
+  if (error instanceof PlanningError) {
+    return 500;
   }
 
   if (error instanceof ApprovalStateError || error instanceof ToolExecutionServiceError) {

@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import { createMvpAgentHierarchy } from "../agents/default-agents.js";
 import { seedMvpAgents } from "../agents/seed.js";
 import { loadFoundationConfig } from "../config.js";
 import { PlannerConfigurationError, createPlannerFromConfig } from "../director/planner-factory.js";
@@ -109,36 +110,49 @@ export function buildApi({
     }
 
     try {
-      if (seedAgents) {
-        seedPromise ??= seedMvpAgents(repository);
-        await seedPromise;
-      }
-
-      const savedRequest = await repository.createRequest(validation.value);
-      await repository.createAuditEvent(
-        createAuditEvent({
-          type: "request_created",
-          actorUserId: savedRequest.createdById,
-          requestId: savedRequest.id,
-          resourceType: "request",
-          resourceId: savedRequest.id,
-          metadata: {
-            source: savedRequest.source,
-            title: savedRequest.title
-          }
-        })
-      );
-
-      const orchestratedRequest = await orchestrateRequest({
-        requestId: savedRequest.id,
+      const orchestratedRequest = await createAndOrchestrateRequest({
+        request: validation.value,
         repository,
         planner: selectedPlanner,
-        toolRegistry
+        toolRegistry,
+        seedAgents,
+        getSeedPromise: () => seedPromise,
+        setSeedPromise: (promise) => {
+          seedPromise = promise;
+        }
       });
 
       return reply.code(201).send({ request: orchestratedRequest });
     } catch (error) {
       return sendDomainError(reply, "Request orchestration failed.", error);
+    }
+  });
+
+  app.post("/api/director/requests", async (request, reply) => {
+    const validation = normalizeRequestBody(request.body);
+    if (!validation.ok) {
+      return reply.code(400).send({ error: validation.error });
+    }
+
+    try {
+      const orchestratedRequest = await createAndOrchestrateRequest({
+        request: {
+          ...validation.value,
+          source: "director_demo"
+        },
+        repository,
+        planner: selectedPlanner,
+        toolRegistry,
+        seedAgents,
+        getSeedPromise: () => seedPromise,
+        setSeedPromise: (promise) => {
+          seedPromise = promise;
+        }
+      });
+
+      return reply.code(201).send(createDirectorDemoResponse(orchestratedRequest));
+    } catch (error) {
+      return sendDomainError(reply, "Director request failed.", error);
     }
   });
 
@@ -156,6 +170,342 @@ export function buildApi({
   });
 
   return app;
+}
+
+async function createAndOrchestrateRequest({
+  request,
+  repository,
+  planner,
+  toolRegistry,
+  seedAgents,
+  getSeedPromise,
+  setSeedPromise
+}) {
+  if (seedAgents) {
+    const existingSeed = getSeedPromise();
+    const seedPromise = existingSeed ?? seedMvpAgents(repository);
+    if (!existingSeed) {
+      setSeedPromise(seedPromise);
+    }
+    await seedPromise;
+  }
+
+  const savedRequest = await repository.createRequest(request);
+  await repository.createAuditEvent(
+    createAuditEvent({
+      type: "request_created",
+      actorUserId: savedRequest.createdById,
+      requestId: savedRequest.id,
+      resourceType: "request",
+      resourceId: savedRequest.id,
+      metadata: {
+        source: savedRequest.source,
+        title: savedRequest.title
+      }
+    })
+  );
+
+  return orchestrateRequest({
+    requestId: savedRequest.id,
+    repository,
+    planner,
+    toolRegistry
+  });
+}
+
+function createDirectorDemoResponse(request) {
+  const agentResults = createAgentResults(request);
+  const completedCount = agentResults.filter((result) => result.status === "completed").length;
+  const expectedCount = request.plans?.[0]?.steps?.length ?? agentResults.length;
+  const decisionsRequired = createDecisionsRequired(request, agentResults);
+  const status = decisionsRequired.length > 0
+    ? decisionsRequired.some((decision) => decision.type === "approval") ? "requires_approval" : null
+    : null;
+  const finalStatus = status ??
+    (completedCount === expectedCount
+      ? "completed"
+      : "partial");
+
+  const summary = createDemoSummary({
+    status: finalStatus,
+    completedCount,
+    expectedCount,
+    agentResults,
+    decisionsRequired
+  });
+
+  return Object.freeze({
+    requestId: request.id,
+    status: finalStatus,
+    message: request.payload?.message ?? request.title,
+    summary,
+    hierarchy: createDirectorHierarchy(agentResults),
+    agents: createDemoAgentList(agentResults),
+    findings: createDemoFindings(agentResults),
+    results: agentResults,
+    decisionsRequired,
+    audit: summarizeAuditEvents(request.auditEvents ?? [])
+  });
+}
+
+function createDemoAgentList(agentResults) {
+  return [
+    Object.freeze({
+      id: "director",
+      tool: null,
+      status: agentResults.some((result) => result.status !== "completed") ? "partial" : "completed"
+    }),
+    ...agentResults.map((result) => Object.freeze({
+      id: result.agent,
+      tool: result.tool,
+      status: result.status,
+      supervisorAgentId: result.supervisorAgentId,
+      supervisedAgentIds: result.supervisedAgentIds
+    }))
+  ];
+}
+
+function createAgentResults(request) {
+  const executionsByStep = new Map((request.executions ?? []).map((execution) => [execution.planStepId, execution]));
+  return (request.plans?.[0]?.steps ?? []).map((step) => {
+    const execution = executionsByStep.get(step.id);
+    return Object.freeze({
+      agent: step.agentId,
+      tool: step.toolName,
+      supervisorAgentId: step.agent?.metadata?.supervisorAgentId ?? null,
+      supervisedAgentIds: step.agent?.metadata?.supervisedAgentIds ?? [],
+      delegatedByAgentId: step.input?.delegatedByAgentId ?? null,
+      reportsToAgentId: step.input?.reportsToAgentId ?? step.agent?.metadata?.supervisorAgentId ?? null,
+      status: execution?.status ?? "not_executed",
+      result: execution?.output?.result ?? null,
+      error: execution?.error
+        ? {
+            name: execution.error.name,
+            code: execution.error.code,
+            message: execution.error.message
+          }
+        : null
+    });
+  });
+}
+
+function createDirectorHierarchy(agentResults) {
+  const activeAgentIds = new Set(["director", ...agentResults.map((result) => result.agent)]);
+  return createMvpAgentHierarchy()
+    .filter((entry) => activeAgentIds.has(entry.agentId))
+    .map((entry) => Object.freeze({
+      ...entry,
+      supervisedAgentIds: entry.supervisedAgentIds.filter((agentId) => activeAgentIds.has(agentId))
+    }));
+}
+
+function createDemoSummary({ status, completedCount, expectedCount, agentResults, decisionsRequired }) {
+  const sections = Object.freeze({
+    whatIsGoingWell: collectItems(agentResults, ({ item }) =>
+      ["ok", "completed"].includes(item.status) || item.performance === "ok"
+    ),
+    urgent: collectItems(agentResults, ({ item }) =>
+      item.urgency === "high" ||
+      item.priority === "high" ||
+      item.status === "blocked" ||
+      item.status === "attention_required" ||
+      item.delayRisk === "high"
+    ),
+    monitoring: collectItems(agentResults, ({ item }) =>
+      item.urgency === "medium" ||
+      item.priority === "medium" ||
+      item.status === "watch" ||
+      item.performance === "watch" ||
+      item.delayRisk === "medium"
+    ),
+    delayed: collectItems(agentResults, ({ agent, item }) =>
+      agent === "production" || item.delayRisk || item.topic?.toLowerCase().includes("quality")
+    ),
+    receivables: collectItems(agentResults, ({ agent }) => agent === "finance"),
+    purchaseNeeds: collectItems(agentResults, ({ agent }) => agent === "purchasing"),
+    marketingSynthesis: createMarketingSynthesis(agentResults),
+    legal: collectItems(agentResults, ({ agent }) => agent === "legal"),
+    afterSales: collectItems(agentResults, ({ agent }) => agent === "after_sales"),
+    blockers: collectItems(agentResults, ({ item }) =>
+      ["high", "watch", "blocked", "attention_required"].includes(item.urgency) ||
+      ["high", "watch", "blocked", "attention_required"].includes(item.status) ||
+      item.priority === "high" ||
+      item.delayRisk === "high"
+    ),
+    decisionsRequired
+  });
+
+  return Object.freeze({
+    headline: createSummaryHeadline({ status, completedCount, expectedCount, agentResults, decisionsRequired }),
+    whatIsGoingWell: sections.whatIsGoingWell,
+    urgent: sections.urgent,
+    monitoring: sections.monitoring,
+    delayed: sections.delayed,
+    receivables: sections.receivables,
+    purchaseNeeds: sections.purchaseNeeds,
+    marketingSynthesis: sections.marketingSynthesis,
+    legal: sections.legal,
+    afterSales: sections.afterSales,
+    blockers: sections.blockers,
+    decisionsRequired: sections.decisionsRequired,
+    sections
+  });
+}
+
+function createMarketingSynthesis(agentResults) {
+  const marketing = agentResults.find((result) => result.agent === "marketing");
+  const community = agentResults.find((result) => result.agent === "community_manager");
+  if (!marketing && !community) {
+    return null;
+  }
+
+  return Object.freeze({
+    agent: "marketing",
+    supervisorAgentId: marketing?.supervisorAgentId ?? "director",
+    delegatedAgentId: community?.agent ?? "community_manager",
+    flow: ["community_manager", "marketing", "director"],
+    status: marketing?.status === "completed" && community?.status === "completed" ? "completed" : "partial",
+    marketingItems: Array.isArray(marketing?.result?.items) ? marketing.result.items : [],
+    communityItems: Array.isArray(community?.result?.items) ? community.result.items : [],
+    summary: "Marketing consolidates demo campaign signals with Community Manager editorial work before reporting to Director."
+  });
+}
+
+function createSummaryHeadline({ status, completedCount, expectedCount, agentResults, decisionsRequired }) {
+  const unavailableAgents = agentResults
+    .filter((result) => result.status !== "completed")
+    .map((result) => result.agent);
+  const highPriorityCount = countHighPrioritySignals(agentResults);
+
+  if (status === "requires_approval") {
+    return `Action prepared. ${decisionsRequired.length} human approval decision(s) required before execution.`;
+  }
+  if (status === "partial") {
+    return `Point available with ${completedCount} agent(s) out of ${expectedCount}. Missing: ${unavailableAgents.join(", ")}.`;
+  }
+  return `Point complete: ${completedCount}/${expectedCount} agents responded with ${highPriorityCount} high-priority demo signal(s).`;
+}
+
+function countHighPrioritySignals(agentResults) {
+  return collectItems(agentResults, ({ item }) =>
+    item.urgency === "high" ||
+    item.priority === "high" ||
+    item.status === "blocked" ||
+    item.status === "attention_required" ||
+    item.delayRisk === "high"
+  ).length;
+}
+
+function createDemoFindings(agentResults) {
+  return agentResults.map((result) => Object.freeze({
+    agent: result.agent,
+    type: result.tool,
+    tool: result.tool,
+    source: result.tool,
+    status: result.status,
+    itemCount: Array.isArray(result.result?.items) ? result.result.items.length : 0,
+    demo: result.result?.demo === true,
+    notice: result.result?.notice ?? null,
+    priority: summarizeResultPriority(result),
+    title: createFindingTitle(result),
+    description: createFindingDescription(result),
+    error: result.error
+  }));
+}
+
+function createFindingTitle(result) {
+  if (result.status !== "completed") {
+    return `${result.agent} unavailable`;
+  }
+  return `${result.agent} returned ${Array.isArray(result.result?.items) ? result.result.items.length : 0} demo item(s)`;
+}
+
+function createFindingDescription(result) {
+  if (result.error) {
+    return result.error.message;
+  }
+  return result.result?.notice ?? "Demonstration tool result.";
+}
+
+function summarizeResultPriority(result) {
+  const items = Array.isArray(result.result?.items) ? result.result.items : [];
+  if (items.some((item) =>
+    item.urgency === "high" ||
+    item.priority === "high" ||
+    item.status === "blocked" ||
+    item.status === "attention_required" ||
+    item.delayRisk === "high"
+  )) {
+    return "urgent";
+  }
+  if (items.some((item) =>
+    item.urgency === "medium" ||
+    item.priority === "medium" ||
+    item.status === "watch" ||
+    item.delayRisk === "medium"
+  )) {
+    return "attention";
+  }
+  return result.status === "completed" ? "normal" : "unavailable";
+}
+
+function collectItems(agentResults, predicate) {
+  const collected = [];
+  for (const result of agentResults) {
+    const items = Array.isArray(result.result?.items) ? result.result.items : [];
+    for (const item of items) {
+      if (predicate({ agent: result.agent, tool: result.tool, item })) {
+        collected.push(Object.freeze({
+          agent: result.agent,
+          tool: result.tool,
+          item
+        }));
+      }
+    }
+  }
+  return collected;
+}
+
+function createDecisionsRequired(request, agentResults = []) {
+  return [
+    ...createApprovalDecisions(request),
+    ...createBusinessDecisions(agentResults)
+  ];
+}
+
+function createApprovalDecisions(request) {
+  return (request.approvals ?? []).map((approval) => Object.freeze({
+    type: "approval",
+    approvalId: approval.id,
+    status: approval.status,
+    agent: approval.requestingAgent,
+    action: approval.requestedAction,
+    risk: approval.risk,
+    reason: approval.reason
+  }));
+}
+
+function createBusinessDecisions(agentResults) {
+  return collectItems(agentResults, ({ item }) => item.requiresDecision === true)
+    .map((entry) => Object.freeze({
+      type: "business_decision",
+      agent: entry.agent,
+      tool: entry.tool,
+      itemId: entry.item.id ?? entry.item.orderId ?? entry.item.subject ?? entry.item.label,
+      priority: entry.item.urgency ?? entry.item.priority ?? entry.item.delayRisk ?? entry.item.status ?? "attention",
+      reason: entry.item.decision ?? "Review this demo signal before acting."
+    }));
+}
+
+function summarizeAuditEvents(events) {
+  return events.map((event) => Object.freeze({
+    type: event.type,
+    agentId: event.agentId,
+    resourceType: event.resourceType,
+    resourceId: event.resourceId,
+    executionId: event.executionId,
+    createdAt: event.createdAt
+  }));
 }
 
 function normalizeRequestBody(body) {

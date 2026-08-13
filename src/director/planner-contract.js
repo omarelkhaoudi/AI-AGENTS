@@ -1,5 +1,39 @@
 import { redact } from "../observability/logger.js";
 
+export const PLANNER_PLAN_VERSION = "1";
+const PLAN_FIELDS = Object.freeze(["version", "requestId", "intent", "summary", "planner", "agents", "steps", "metadata"]);
+const STEP_FIELDS = Object.freeze([
+  "id",
+  "agentId",
+  "sequence",
+  "actionKind",
+  "actionType",
+  "toolName",
+  "resource",
+  "reason",
+  "input",
+  "requiresApproval"
+]);
+const FORBIDDEN_INPUT_KEYS = Object.freeze([
+  "command",
+  "commands",
+  "exec",
+  "eval",
+  "function",
+  "script",
+  "shell",
+  "sql",
+  "url"
+]);
+const FORBIDDEN_INPUT_PATTERNS = Object.freeze([
+  /\beval\s*\(/i,
+  /\bfunction\s*\(/i,
+  /\bnew\s+Function\b/i,
+  /\b(select|insert|update|delete|drop|alter)\s+.+\b(from|into|table|where)\b/i,
+  /\b(?:curl|wget|powershell|cmd\.exe|bash|sh)\b/i,
+  /^https?:\/\//i
+]);
+
 export class PlannerContractError extends Error {
   constructor(message, code = "PLAN_INVALID", details = {}) {
     super(message);
@@ -76,20 +110,21 @@ export function normalizePlannerPlan(plan, planner = null) {
     throw new PlannerContractError("Planner must return a structured plan object.", "PLAN_INVALID");
   }
 
-  const plannerId = plan.planner ?? planner?.id ?? plan.metadata?.planner ?? "unknown";
   const steps = Array.isArray(plan.steps)
     ? plan.steps.map((step, index) => normalizePlannerStep(step, index))
     : null;
 
   return Object.freeze({
+    version: plan.version,
+    requestId: plan.requestId,
+    intent: plan.intent,
     summary: plan.summary,
-    planner: plannerId,
-    agents: Array.isArray(plan.agents) ? [...plan.agents] : inferAgents(steps),
+    planner: plan.planner,
+    agents: Array.isArray(plan.agents) ? [...plan.agents] : plan.agents,
     steps,
-    metadata: {
-      ...(plan.metadata ?? {}),
-      planner: plannerId
-    }
+    metadata: plan.metadata && typeof plan.metadata === "object" && !Array.isArray(plan.metadata)
+      ? { ...plan.metadata }
+      : plan.metadata
   });
 }
 
@@ -100,8 +135,18 @@ export async function validatePlannerPlan(plan, { repository, toolRegistry } = {
     throwPlanInvalid(["plan must be an object"]);
   }
 
+  collectUnexpectedFields(plan, PLAN_FIELDS, "plan", errors);
+  requireExactText(plan.version, PLANNER_PLAN_VERSION, "version", errors);
+  requireText(plan.requestId, "requestId", errors);
+  requireText(plan.intent, "intent", errors);
   requireText(plan.summary, "summary", errors);
   requireText(plan.planner, "planner", errors);
+
+  if (plan.metadata !== undefined && (!plan.metadata || typeof plan.metadata !== "object" || Array.isArray(plan.metadata))) {
+    errors.push("metadata must be an object when provided");
+  } else if (plan.metadata !== undefined) {
+    validateJsonValue(plan.metadata, "metadata", errors);
+  }
 
   if (!Array.isArray(plan.agents)) {
     errors.push("agents must be an array");
@@ -112,8 +157,15 @@ export async function validatePlannerPlan(plan, { repository, toolRegistry } = {
   } else if (plan.steps.length === 0) {
     errors.push("steps must contain at least one step");
   } else {
+    const stepIds = new Set();
     for (const [index, step] of plan.steps.entries()) {
       await validatePlannerStep(step, index, { repository, toolRegistry, errors });
+      if (typeof step?.id === "string") {
+        if (stepIds.has(step.id)) {
+          errors.push(`steps[${index}].id is duplicated: ${step.id}`);
+        }
+        stepIds.add(step.id);
+      }
     }
   }
 
@@ -146,9 +198,6 @@ function normalizePlannerStep(step, index) {
 
   return Object.freeze({
     ...step,
-    sequence: step.sequence ?? index + 1,
-    actionKind: step.actionKind ?? step.actionType,
-    requiresApproval: step.requiresApproval ?? false,
     input: step.input && typeof step.input === "object" && !Array.isArray(step.input) ? { ...step.input } : step.input
   });
 }
@@ -159,13 +208,24 @@ async function validatePlannerStep(step, index, { repository, toolRegistry, erro
     return;
   }
 
+  collectUnexpectedFields(step, STEP_FIELDS, `steps[${index}]`, errors);
+  requireText(step.id, `steps[${index}].id`, errors);
   requireText(step.agentId, `steps[${index}].agentId`, errors);
   requireText(step.actionType, `steps[${index}].actionType`, errors);
   requireText(step.actionKind, `steps[${index}].actionKind`, errors);
   requireText(step.toolName, `steps[${index}].toolName`, errors);
+  requireText(step.resource, `steps[${index}].resource`, errors);
+  requireText(step.reason, `steps[${index}].reason`, errors);
+
+  if (!Number.isInteger(step.sequence) || step.sequence < 1) {
+    errors.push(`steps[${index}].sequence must be a positive integer`);
+  }
 
   if (!step.input || typeof step.input !== "object" || Array.isArray(step.input)) {
     errors.push(`steps[${index}].input must be an object`);
+  } else {
+    validateJsonValue(step.input, `steps[${index}].input`, errors);
+    validateSafeToolInput(step.input, `steps[${index}].input`, errors);
   }
 
   if (typeof step.requiresApproval !== "boolean") {
@@ -181,16 +241,64 @@ async function validatePlannerStep(step, index, { repository, toolRegistry, erro
   }
 }
 
-function inferAgents(steps) {
-  if (!Array.isArray(steps)) {
-    return [];
-  }
-  return [...new Set(steps.map((step) => step?.agentId).filter(Boolean))];
-}
-
 function requireText(value, field, errors) {
   if (typeof value !== "string" || value.trim().length === 0) {
     errors.push(`${field} is required`);
+  }
+}
+
+function requireExactText(value, expected, field, errors) {
+  if (value !== expected) {
+    errors.push(`${field} must be ${JSON.stringify(expected)}`);
+  }
+}
+
+function collectUnexpectedFields(value, allowed, path, errors) {
+  for (const field of Object.keys(value)) {
+    if (!allowed.includes(field)) {
+      errors.push(`${path}.${field} is not allowed`);
+    }
+  }
+}
+
+function validateJsonValue(value, path, errors) {
+  if (value === undefined || typeof value === "function" || typeof value === "symbol" || typeof value === "bigint") {
+    errors.push(`${path} must be JSON-compatible`);
+    return;
+  }
+  if (!value || typeof value !== "object") {
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => validateJsonValue(entry, `${path}[${index}]`, errors));
+    return;
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    validateJsonValue(nested, `${path}.${key}`, errors);
+  }
+}
+
+function validateSafeToolInput(input, path, errors) {
+  if (Array.isArray(input)) {
+    input.forEach((entry, index) => {
+      if (entry && typeof entry === "object") {
+        validateSafeToolInput(entry, `${path}[${index}]`, errors);
+      }
+    });
+    return;
+  }
+
+  for (const [key, value] of Object.entries(input)) {
+    const normalizedKey = key.toLowerCase();
+    if (FORBIDDEN_INPUT_KEYS.some((forbidden) => normalizedKey.includes(forbidden))) {
+      errors.push(`${path}.${key} is not allowed in planner tool input`);
+    }
+    if (typeof value === "string" && FORBIDDEN_INPUT_PATTERNS.some((pattern) => pattern.test(value.trim()))) {
+      errors.push(`${path}.${key} contains executable or unsafe content`);
+    }
+    if (value && typeof value === "object") {
+      validateSafeToolInput(value, `${path}.${key}`, errors);
+    }
   }
 }
 

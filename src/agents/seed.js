@@ -6,7 +6,11 @@ const AGENT_ROLES = Object.freeze({
   commercial: "specialized_agent",
   finance: "specialized_agent",
   production: "specialized_agent",
-  purchasing: "specialized_agent"
+  purchasing: "specialized_agent",
+  after_sales: "specialized_agent",
+  marketing: "specialized_agent",
+  community_manager: "specialized_agent",
+  legal: "specialized_agent"
 });
 
 export function createMvpAgentSeedRecords() {
@@ -19,7 +23,16 @@ export function createMvpAgentSeedRecords() {
         kind: "read_analyze",
         resource: "request:*",
         scope: "mvp_orchestration"
-      })
+      }),
+      ...(agent.id === "finance"
+        ? [
+            createPermission({
+              kind: "prepare_action",
+              resource: "request:*",
+              scope: "mvp_sensitive_action_preparation"
+            })
+          ]
+        : [])
     ],
     metadata: {
       ...agent.metadata,

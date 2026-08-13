@@ -1,8 +1,18 @@
 import { createMockToolAdapter } from "./adapters/mock-adapter.js";
 import { createToolDefinition, createToolInputSchema } from "./contract.js";
 import { ToolRegistry } from "./registry.js";
-
-const DEMO_NOTICE = "Demonstration data only. This is not real company data.";
+import {
+  DEMO_NOTICE,
+  createCompanyOverview,
+  getAfterSalesOverview,
+  getCommunityOverview,
+  getDelayedProductionOrders,
+  getLegalOverview,
+  getMarketingOverview,
+  getPendingPayments,
+  getPendingQuotes,
+  getPurchaseNeeds
+} from "../demo/company-data.js";
 
 const baseInputSchema = createToolInputSchema({
   required: ["requestId"],
@@ -20,12 +30,7 @@ export function createMvpTools() {
       category: "overview",
       requiredPermission: "read_analyze",
       allowedAgents: ["director", "finance"],
-      items: [
-        { label: "Cash collection attention", status: "watch" },
-        { label: "Commercial follow-ups", status: "watch" },
-        { label: "Production delays", status: "watch" },
-        { label: "Purchase needs", status: "watch" }
-      ]
+      resolveItems: createCompanyOverview
     }),
     createMvpMockTool({
       id: "get_pending_payments",
@@ -34,10 +39,7 @@ export function createMvpTools() {
       category: "finance",
       requiredPermission: "read_analyze",
       allowedAgents: ["finance"],
-      items: [
-        { customer: "Demo Client A", amount: 12000, currency: "MAD", due: "this_week" },
-        { customer: "Demo Client B", amount: 8500, currency: "MAD", due: "this_week" }
-      ]
+      resolveItems: getPendingPayments
     }),
     createMvpMockTool({
       id: "get_pending_quotes",
@@ -46,10 +48,7 @@ export function createMvpTools() {
       category: "commercial",
       requiredPermission: "read_analyze",
       allowedAgents: ["commercial"],
-      items: [
-        { customer: "Demo Prospect A", quoteAgeDays: 6, priority: "high" },
-        { customer: "Demo Prospect B", quoteAgeDays: 3, priority: "medium" }
-      ]
+      resolveItems: getPendingQuotes
     }),
     createMvpMockTool({
       id: "get_delayed_production_orders",
@@ -58,10 +57,7 @@ export function createMvpTools() {
       category: "production",
       requiredPermission: "read_analyze",
       allowedAgents: ["production"],
-      items: [
-        { order: "DEMO-PO-001", delayRisk: "high", reason: "Mock material delay" },
-        { order: "DEMO-PO-002", delayRisk: "medium", reason: "Mock capacity conflict" }
-      ]
+      resolveItems: getDelayedProductionOrders
     }),
     createMvpMockTool({
       id: "get_purchase_needs",
@@ -70,10 +66,43 @@ export function createMvpTools() {
       category: "purchasing",
       requiredPermission: "read_analyze",
       allowedAgents: ["purchasing"],
-      items: [
-        { item: "Demo Raw Material A", urgency: "high", suggestedAction: "prepare_purchase_request" },
-        { item: "Demo Packaging B", urgency: "medium", suggestedAction: "review_stock" }
-      ]
+      resolveItems: getPurchaseNeeds
+    }),
+    createMvpMockTool({
+      id: "get_after_sales_overview",
+      name: "Get After Sales Overview",
+      description: "Returns mocked after-sales and quality issue items for MVP demonstrations.",
+      category: "after_sales",
+      requiredPermission: "read_analyze",
+      allowedAgents: ["after_sales"],
+      resolveItems: getAfterSalesOverview
+    }),
+    createMvpMockTool({
+      id: "get_marketing_overview",
+      name: "Get Marketing Overview",
+      description: "Returns mocked marketing campaign and content signals for MVP demonstrations.",
+      category: "marketing",
+      requiredPermission: "read_analyze",
+      allowedAgents: ["marketing"],
+      resolveItems: getMarketingOverview
+    }),
+    createMvpMockTool({
+      id: "get_community_overview",
+      name: "Get Community Overview",
+      description: "Returns mocked community management and editorial signals for MVP demonstrations.",
+      category: "community",
+      requiredPermission: "read_analyze",
+      allowedAgents: ["community_manager"],
+      resolveItems: getCommunityOverview
+    }),
+    createMvpMockTool({
+      id: "get_legal_overview",
+      name: "Get Legal Overview",
+      description: "Returns mocked legal document and contract attention items for MVP demonstrations.",
+      category: "legal",
+      requiredPermission: "read_analyze",
+      allowedAgents: ["legal"],
+      resolveItems: getLegalOverview
     })
   ]);
 }
@@ -83,6 +112,7 @@ export function createMvpToolRegistry({ repository = null } = {}) {
   for (const tool of createMvpTools()) {
     registry.register(tool);
   }
+  registry.register(createSensitiveInvoicePaymentTool());
   return registry;
 }
 
@@ -96,6 +126,26 @@ function createDemoResult(context, items) {
   });
 }
 
+function createSensitiveInvoicePaymentTool() {
+  return createMvpMockTool({
+    id: "execute_invoice_payment",
+    name: "Execute Invoice Payment",
+    description: "Prepares a mocked sensitive invoice payment action for human approval. It never performs a real payment.",
+    category: "finance",
+    requiredPermission: "execute_action",
+    allowedAgents: ["finance"],
+    resolveItems: () => [
+      Object.freeze({
+        id: "demo-payment-action",
+        status: "prepared_only",
+        demo: true,
+        requiresDecision: true,
+        decision: "Human approval is required before any payment execution."
+      })
+    ]
+  });
+}
+
 function createMvpMockTool({
   id,
   name,
@@ -103,7 +153,7 @@ function createMvpMockTool({
   category,
   requiredPermission,
   allowedAgents,
-  items
+  resolveItems
 }) {
   return createToolDefinition({
     id,
@@ -120,7 +170,7 @@ function createMvpMockTool({
         category,
         dataSource: "demo_mock"
       },
-      resolve: async (context) => createDemoResult(context, items)
+      resolve: async (context) => createDemoResult(context, resolveItems())
     })
   });
 }

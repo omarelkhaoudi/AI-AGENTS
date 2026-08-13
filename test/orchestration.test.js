@@ -36,10 +36,21 @@ test("MVP agent seed is idempotent and creates active agent records", async () =
   const agents = await repository.listAgents();
   assert.deepEqual(
     agents.map((agent) => agent.id),
-    ["director", "commercial", "finance", "production", "purchasing"]
+    [
+      "director",
+      "commercial",
+      "finance",
+      "production",
+      "purchasing",
+      "after_sales",
+      "marketing",
+      "community_manager",
+      "legal"
+    ]
   );
   assert.equal((await repository.getAgent("director")).role, "orchestrator");
   assert.equal((await repository.getAgent("finance")).status, "available");
+  assert.deepEqual((await repository.getAgent("marketing")).tools, ["get_marketing_overview"]);
 });
 
 test("Request Finance routes to finance agent", async () => {
@@ -65,9 +76,42 @@ test("Request Purchasing routes to purchasing agent", async () => {
   assert.deepEqual(selectedAgents(request), ["purchasing"]);
 });
 
+test("Request After Sales routes to after_sales agent", async () => {
+  const request = await createOrchestratedRequest("donne-moi les problemes SAV");
+  assert.deepEqual(selectedAgents(request), ["after_sales"]);
+  assert.equal(request.plans[0].steps[0].toolName, "get_after_sales_overview");
+});
+
+test("Request Marketing routes to marketing agent", async () => {
+  const request = await createOrchestratedRequest("prepare-moi le point marketing");
+  assert.deepEqual(selectedAgents(request), ["marketing"]);
+  assert.equal(request.plans[0].steps[0].toolName, "get_marketing_overview");
+});
+
+test("Request Community Manager routes to community_manager agent", async () => {
+  const request = await createOrchestratedRequest("quelles publications reseaux sociaux sont urgentes");
+  assert.deepEqual(selectedAgents(request), ["community_manager"]);
+  assert.equal(request.plans[0].steps[0].toolName, "get_community_overview");
+});
+
+test("Request Legal routes to legal agent", async () => {
+  const request = await createOrchestratedRequest("y a-t-il des sujets juridiques urgents");
+  assert.deepEqual(selectedAgents(request), ["legal"]);
+  assert.equal(request.plans[0].steps[0].toolName, "get_legal_overview");
+});
+
 test("Global request routes to all specialized agents", async () => {
   const request = await createOrchestratedRequest("fais-moi le point sur mon entreprise");
-  assert.deepEqual(selectedAgents(request), ["finance", "commercial", "production", "purchasing"]);
+  assert.deepEqual(selectedAgents(request), [
+    "finance",
+    "commercial",
+    "production",
+    "purchasing",
+    "after_sales",
+    "marketing",
+    "community_manager",
+    "legal"
+  ]);
 });
 
 test("orchestration creates a Plan", async () => {
@@ -79,10 +123,10 @@ test("orchestration creates a Plan", async () => {
 
 test("orchestration creates PlanSteps", async () => {
   const request = await createOrchestratedRequest("fais-moi le point sur mon entreprise");
-  assert.equal(request.plans[0].steps.length, 4);
+  assert.equal(request.plans[0].steps.length, 8);
   assert.deepEqual(
     request.plans[0].steps.map((step) => step.sequence),
-    [1, 2, 3, 4]
+    [1, 2, 3, 4, 5, 6, 7, 8]
   );
 });
 
@@ -154,9 +198,10 @@ test("GET /api/requests/:id returns full request orchestration details", async (
   assert.equal(response.statusCode, 200);
   assert.equal(body.request.status, "orchestrated");
   assert.equal(body.request.plans.length, 1);
-  assert.equal(body.request.plans[0].steps.length, 4);
+  assert.equal(body.request.plans[0].steps.length, 8);
   assert.equal(body.request.plans[0].steps[0].agent.id, "finance");
-  assert.equal(body.request.executions.length, 4);
+  assert.equal(body.request.executions.length, 8);
+  assert.equal(body.request.result.summary.completedExecutions, 8);
   assert.ok(body.request.auditEvents.length >= 1);
   assert.deepEqual(body.request.approvals, []);
 });

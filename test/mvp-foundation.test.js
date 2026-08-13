@@ -232,9 +232,15 @@ test("POST /api/requests rejects an invalid plan when the planner selects an unk
   const app = buildApi({
     repository,
     planner: async ({ request }) => ({
+      version: "1",
+      requestId: request.id,
+      intent: "unknown_agent_test",
       summary: "Unknown agent test plan.",
+      planner: "unknown-agent-test",
+      agents: ["unknown-agent"],
       steps: [
         {
+          id: `${request.id}:unknown-agent-test:1:unknown-agent`,
           agentId: "unknown-agent",
           sequence: 1,
           actionKind: "read_analyze",
@@ -242,11 +248,10 @@ test("POST /api/requests rejects an invalid plan when the planner selects an unk
           toolName: "get_company_overview",
           resource: `request:${request.id}`,
           input: { requestId: request.id },
-          requiresApproval: false
+          requiresApproval: false,
+          reason: "Unknown agent validation test."
         }
       ],
-      planner: "unknown-agent-test",
-      agents: ["unknown-agent"],
       metadata: { test: true }
     })
   });

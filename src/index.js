@@ -13,6 +13,7 @@ export * from "./director/planner-prompt.js";
 export * from "./director/planner-contract.js";
 export * from "./director/request-orchestration.js";
 export * from "./director/stub-llm-planner.js";
+export * from "./demo/company-data.js";
 export * from "./integrations/ai-provider.js";
 export * from "./integrations/workflow-boundary.js";
 export * from "./llm/mock-provider.js";

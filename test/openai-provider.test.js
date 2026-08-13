@@ -4,6 +4,8 @@ import {
   InMemoryRepository,
   LlmProviderError,
   PlannerConfigurationError,
+  PlanningError,
+  buildApi,
   createOpenAIProvider,
   createPlannerConfig,
   createPlannerFromConfig,
@@ -42,9 +44,11 @@ test("OpenAI provider sends the configured model and planner prompt", async () =
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].model, "configured-model");
-  assert.equal(calls[0].input[0].content, "system prompt");
-  assert.equal(calls[0].input[1].content, "user prompt");
-  assert.deepEqual(calls[0].response_format, { type: "json_object" });
+  assert.equal(calls[0].instructions, "system prompt");
+  assert.equal(calls[0].input[0].content[0].text, "user prompt");
+  assert.equal(calls[0].text.format.type, "json_schema");
+  assert.equal(calls[0].text.format.name, "ai_agents_planner_plan");
+  assert.equal(calls[0].text.format.schema.required.includes("steps"), true);
 });
 
 test("OpenAI provider extracts structured output from object responses", async () => {
@@ -111,8 +115,27 @@ test("OpenAI provider transforms client failures safely", async () => {
   );
 });
 
-test("OpenAI provider rejects missing clients", async () => {
-  const provider = createOpenAIProvider({ apiKey: "test" });
+test("OpenAI provider creates the SDK client lazily when no client is injected", async () => {
+  const calls = [];
+  const provider = createOpenAIProvider({
+    apiKey: "x",
+    clientFactory: async ({ apiKey }) => {
+      calls.push({ apiKey });
+      return createFakeOpenAIClient({ response: { structuredPlan: createPlan("req-client-factory") } });
+    }
+  });
+
+  const plan = await provider.generateStructuredPlan(createProviderInput("req-client-factory"));
+
+  assert.deepEqual(calls, [{ apiKey: "x" }]);
+  assert.equal(plan.requestId, "req-client-factory");
+});
+
+test("OpenAI provider rejects invalid clients created by the client factory", async () => {
+  const provider = createOpenAIProvider({
+    apiKey: "test",
+    clientFactory: async () => ({})
+  });
 
   await assert.rejects(
     () => provider.generateStructuredPlan(createProviderInput("req-client")),
@@ -155,11 +178,11 @@ test("OpenAI provider never performs network calls without an injected client im
   };
 
   try {
-    const provider = createOpenAIProvider({ apiKey: "test" });
-    await assert.rejects(
-      () => provider.generateStructuredPlan(createProviderInput("req-network")),
-      /injected client/
-    );
+    const provider = createOpenAIProvider({
+      apiKey: "test",
+      clientFactory: async () => createFakeOpenAIClient({ response: { structuredPlan: createPlan("req-network") } })
+    });
+    await provider.generateStructuredPlan(createProviderInput("req-network"));
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -221,6 +244,103 @@ test("PLANNER_PROVIDER=llm_openai selects LlmPlanner with OpenAIProvider and fak
   assert.equal(result.executions[0].status, "completed");
 });
 
+test("OpenAI planner end-to-end stays inside Director and ToolExecutionService with a fake client", async () => {
+  const repository = new InMemoryRepository();
+  await seedMvpAgents(repository);
+  const app = buildApi({
+    repository,
+    config: {
+      planner: {
+        provider: "llm_openai",
+        openai: {
+          apiKey: "test",
+          model: "test-model"
+        }
+      }
+    },
+    planner: createPlannerFromConfig({
+      provider: "llm_openai",
+      openai: {
+        apiKey: "test",
+        model: "test-model"
+      }
+    }, {
+      openaiClient: createFakeOpenAIClient({
+        response: (payload) => ({
+          structuredPlan: createPlan(extractRequestIdFromPrompt(payload) ?? "req-openai-e2e")
+        })
+      })
+    })
+  });
+
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/requests",
+      payload: {
+        title: "OpenAI offline e2e",
+        payload: { question: "Fais-moi le point" },
+        metadata: { testRequestId: "req-openai-e2e" }
+      }
+    });
+    const body = JSON.parse(response.body);
+    const events = await repository.listAuditEvents({ requestId: body.request.id });
+
+    assert.equal(response.statusCode, 201);
+    assert.equal(body.request.status, "orchestrated");
+    assert.equal(body.request.plans[0].metadata.planner, "openai");
+    assert.equal(body.request.executions[0].status, "completed");
+    assert.equal(body.request.executions[0].output.result.demo, true);
+    assert.ok(events.some((event) => event.type === "permission_checked"));
+    assert.ok(events.some((event) => event.type === "tool_called"));
+  } finally {
+    await app.close();
+  }
+});
+
+test("invalid OpenAI plan stops before tool execution and does not persist business execution", async () => {
+  const repository = new InMemoryRepository();
+  await seedMvpAgents(repository);
+  const request = await repository.createRequest({
+    title: "invalid openai plan",
+    payload: { question: "invalid openai plan" }
+  });
+  const planner = createPlannerFromConfig({
+    provider: "llm_openai",
+    openai: {
+      apiKey: "test",
+      model: "test-model"
+    }
+  }, {
+    openaiClient: createFakeOpenAIClient({
+      response: {
+        structuredPlan: {
+          version: "1",
+          requestId: "req-invalid-openai-plan",
+          intent: "invalid",
+          summary: "Invalid plan.",
+          planner: "openai",
+          agents: ["finance"],
+          steps: [],
+          metadata: { planner: "openai" }
+        }
+      }
+    })
+  });
+
+  await assert.rejects(
+    () => orchestrateRequest({ repository, requestId: request.id, planner }),
+    (error) => error instanceof PlanningError && error.code === "PLANNING_FAILED"
+  );
+
+  const saved = await repository.getRequest(request.id);
+  const events = await repository.listAuditEvents({ requestId: request.id });
+
+  assert.equal(saved.plans.length, 0);
+  assert.equal(saved.executions.length, 0);
+  assert.equal(events.some((event) => event.type === "tool_called"), false);
+});
+
 function createFakeOpenAIClient({ response = null, error = null, calls = [] } = {}) {
   return Object.freeze({
     responses: Object.freeze({
@@ -229,10 +349,16 @@ function createFakeOpenAIClient({ response = null, error = null, calls = [] } = 
         if (error) {
           throw error;
         }
-        return response;
+        return typeof response === "function" ? response(payload) : response;
       }
     })
   });
+}
+
+function extractRequestIdFromPrompt(payload) {
+  const text = payload?.input?.[0]?.content?.[0]?.text;
+  const match = typeof text === "string" ? text.match(/"requestId":\s*"([^"]+)"/) : null;
+  return match?.[1] ?? null;
 }
 
 function createProviderInput(requestId) {
@@ -248,11 +374,15 @@ function createProviderInput(requestId) {
 
 function createPlan(requestId) {
   return Object.freeze({
+    version: "1",
+    requestId,
+    intent: "openai_fake_planning",
     summary: "OpenAI fake structured plan.",
     planner: "openai",
     agents: ["finance"],
     steps: [
       Object.freeze({
+        id: `${requestId}:openai:1:finance`,
         agentId: "finance",
         sequence: 1,
         actionKind: "read_analyze",
@@ -260,7 +390,8 @@ function createPlan(requestId) {
         toolName: "get_company_overview",
         resource: `request:${requestId}`,
         input: { requestId },
-        requiresApproval: false
+        requiresApproval: false,
+        reason: "OpenAI fake planner reason."
       })
     ],
     metadata: { planner: "openai" }

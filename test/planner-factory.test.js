@@ -119,6 +119,30 @@ test("PLANNER_PROVIDER=llm_openai selects LlmPlanner only with explicit OpenAI c
   assert.equal(result.plans[0].metadata.planner, "openai");
 });
 
+test("PLANNER_PROVIDER=llm_openai selection does not perform network calls", () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  globalThis.fetch = async () => {
+    fetchCalled = true;
+    throw new Error("Network calls are forbidden during planner selection.");
+  };
+
+  try {
+    const planner = createPlannerFromConfig({
+      provider: "llm_openai",
+      openai: {
+        apiKey: "test",
+        model: "test-model"
+      }
+    });
+    assert.equal(planner.kind, "llm");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(fetchCalled, false);
+});
+
 test("PLANNER_PROVIDER=deterministic does not require OpenAI configuration", async () => {
   const repository = await createRepositoryWithAgents();
   const request = await repository.createRequest({
@@ -290,11 +314,15 @@ function createFakeOpenAIClient(requestId) {
       async create() {
         return {
           structuredPlan: {
+            version: "1",
+            requestId,
+            intent: "factory_openai_planning",
             summary: "Factory OpenAI fake plan.",
             planner: "openai",
             agents: ["finance"],
             steps: [
               {
+                id: `${requestId}:factory-openai:1:finance`,
                 agentId: "finance",
                 sequence: 1,
                 actionKind: "read_analyze",
@@ -302,7 +330,8 @@ function createFakeOpenAIClient(requestId) {
                 toolName: "get_company_overview",
                 resource: `request:${requestId}`,
                 input: { requestId },
-                requiresApproval: false
+                requiresApproval: false,
+                reason: "Factory fake OpenAI reason."
               }
             ],
             metadata: { planner: "openai" }

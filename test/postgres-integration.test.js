@@ -81,16 +81,17 @@ test("API with PostgreSQL persists POST /api/requests and returns full GET detai
     assert.equal(postBody.request.title, "Fais-moi le point sur mon entreprise aujourd'hui");
     assert.equal(postBody.request.payload.message, "Fais-moi le point sur mon entreprise aujourd'hui");
     assert.equal(postBody.request.plans.length, 1);
-    assert.equal(postBody.request.plans[0].steps.length, 4);
-    assert.equal(postBody.request.executions.length, 4);
+    assert.equal(postBody.request.plans[0].steps.length, 8);
+    assert.equal(postBody.request.executions.length, 8);
+    assert.equal(postBody.request.result.summary.completedExecutions, 8);
 
     const persistedCounts = await countPersistedRequestGraph(prisma, requestId);
     assert.deepEqual(persistedCounts, {
       requests: 1,
       plans: 1,
-      planSteps: 4,
-      executions: 4,
-      auditEvents: 34
+      planSteps: 8,
+      executions: 8,
+      auditEvents: 66
     });
 
     const getResponse = await app.inject({
@@ -104,9 +105,18 @@ test("API with PostgreSQL persists POST /api/requests and returns full GET detai
     assert.equal(getBody.request.plans[0].steps[0].agent.id, "finance");
     assert.deepEqual(
       getBody.request.plans[0].steps.map((step) => step.agentId),
-      ["finance", "commercial", "production", "purchasing"]
+      [
+        "finance",
+        "commercial",
+        "production",
+        "purchasing",
+        "after_sales",
+        "marketing",
+        "community_manager",
+        "legal"
+      ]
     );
-    assert.equal(getBody.request.executions.length, 4);
+    assert.equal(getBody.request.executions.length, 8);
     assert.ok(getBody.request.auditEvents.some((event) => event.type === "request_created"));
     assert.ok(getBody.request.auditEvents.some((event) => event.type === "execution_completed"));
     assert.deepEqual(getBody.request.approvals, []);

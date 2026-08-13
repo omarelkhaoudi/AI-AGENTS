@@ -22,15 +22,22 @@ export function buildPlannerPrompt({
     payload: request?.payload ?? {}
   });
   const outputContract = {
+    version: "1",
+    requestId: "string",
+    intent: "string",
     summary: "string",
     planner: "string",
     agents: ["agentId"],
     steps: [
       {
+        id: "string",
         agentId: "string",
+        sequence: "positive integer",
         actionType: "string",
         actionKind: "read_analyze | prepare_action | execute_action | human_approval_required",
         toolName: "string",
+        resource: "request:<requestId>",
+        reason: "string",
         input: { requestId: "string" },
         requiresApproval: "boolean"
       }
@@ -41,7 +48,8 @@ export function buildPlannerPrompt({
     system: [
       "You are a planning component for an enterprise AI agent operating system.",
       "Return only valid JSON matching the provided planner contract.",
-      "Do not execute tools, call APIs, request secrets, or produce prose outside JSON."
+      "Use version 1, the provided request id, stable unique step ids, and only known agents/tools.",
+      "Do not execute tools, call APIs, request secrets, invent tools, or produce prose outside JSON."
     ].join(" "),
     user: JSON.stringify({
       request: safeRequest,

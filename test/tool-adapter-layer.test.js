@@ -248,7 +248,11 @@ test("all MVP tools still execute through mock adapters with unchanged demo resp
     ["get_pending_payments", "finance"],
     ["get_pending_quotes", "commercial"],
     ["get_delayed_production_orders", "production"],
-    ["get_purchase_needs", "purchasing"]
+    ["get_purchase_needs", "purchasing"],
+    ["get_after_sales_overview", "after_sales"],
+    ["get_marketing_overview", "marketing"],
+    ["get_community_overview", "community_manager"],
+    ["get_legal_overview", "legal"]
   ];
 
   for (const [toolId, agentId] of cases) {

@@ -39,14 +39,26 @@ test("validates the agent contract", () => {
   );
 });
 
-test("registers and discovers the five MVP agent identities", () => {
+test("registers and discovers the MVP agent identities", () => {
   const registry = createDefaultAgentRegistry();
   assert.deepEqual(
     registry.list().map((agent) => agent.id),
-    ["director", "commercial", "finance", "production", "purchasing"]
+    [
+      "director",
+      "commercial",
+      "finance",
+      "production",
+      "purchasing",
+      "after_sales",
+      "marketing",
+      "community_manager",
+      "legal"
+    ]
   );
   assert.equal(registry.has("finance"), true);
-  assert.equal(registry.get("commercial").capabilities.length, 0);
+  assert.ok(registry.get("marketing").tools.includes("get_marketing_overview"));
+  assert.ok(registry.get("community_manager").metadata.accessibleInformation.includes("public_content"));
+  assert.ok(registry.get("legal").metadata.approvalRequiredActions.includes("human_approval_required"));
 });
 
 test("rejects duplicate agent registration", () => {

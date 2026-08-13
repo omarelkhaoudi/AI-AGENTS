@@ -145,7 +145,11 @@ async function orchestrateRequestInTransaction({ requestId, repository, planner,
       }
     });
 
-    if (!canExecuteAction(policyDecision)) {
+    const canDelegateToToolExecutionService =
+      plannedStep.toolName &&
+      plannedStep.requiresApproval === true &&
+      policyDecision.canPrepare === true;
+    if (!canExecuteAction(policyDecision) && !canDelegateToToolExecutionService) {
       await audit(repository, {
         type: "permission_denied",
         actorUserId: request.createdById,
@@ -283,7 +287,15 @@ async function orchestrateRequestInTransaction({ requestId, repository, planner,
     result: {
       planId: plan.id,
       agents: executions.map((execution) => execution.agentId),
-      executionIds: executions.map((execution) => execution.id)
+      executionIds: executions.map((execution) => execution.id),
+      summary: createDirectorResultSummary({ finalStatus, executions, blockedSteps }),
+      toolResults: executions.map((execution) => ({
+        agentId: execution.agentId,
+        status: execution.status,
+        toolId: execution.output?.toolId ?? execution.metadata?.toolName ?? null,
+        demo: execution.output?.result?.demo === true,
+        itemCount: Array.isArray(execution.output?.result?.items) ? execution.output.result.items.length : undefined
+      }))
     }
   });
 
@@ -443,4 +455,13 @@ function isAgentActive(agent) {
 
 async function audit(repository, event) {
   return repository.createAuditEvent(createAuditEvent(event));
+}
+
+function createDirectorResultSummary({ finalStatus, executions, blockedSteps }) {
+  return Object.freeze({
+    status: finalStatus,
+    completedExecutions: executions.filter((execution) => execution.status === "completed").length,
+    blockedSteps: blockedSteps.length,
+    agents: [...new Set(executions.map((execution) => execution.agentId))]
+  });
 }

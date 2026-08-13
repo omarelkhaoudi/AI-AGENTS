@@ -92,10 +92,8 @@ function normalizeProviderPlan(rawPlan, plannerId) {
   try {
     return normalizePlannerPlan({
       ...parsed,
-      planner: parsed?.planner ?? plannerId,
       metadata: {
         ...(parsed?.metadata ?? {}),
-        planner: parsed?.planner ?? plannerId,
         source: "llm_provider"
       }
     }, { id: plannerId });

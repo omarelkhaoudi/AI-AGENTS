@@ -402,9 +402,15 @@ async function grantFinanceExecution(repository) {
 
 function createSensitivePlanner() {
   return async ({ request }) => ({
+    version: "1",
+    requestId: request.id,
+    intent: "sensitive_approval_flow_test",
     summary: "Sensitive approval flow test plan.",
+    planner: "test_sensitive",
+    agents: ["finance"],
     steps: [
       {
+        id: `${request.id}:test-sensitive:1:finance`,
         agentId: "finance",
         sequence: 1,
         actionKind: "execute_action",
@@ -414,7 +420,8 @@ function createSensitivePlanner() {
         reason: "Test sensitive action requires approval.",
         input: {
           requestId: request.id
-        }
+        },
+        requiresApproval: false
       }
     ],
     metadata: {

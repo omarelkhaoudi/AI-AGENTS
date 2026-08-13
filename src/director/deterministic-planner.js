@@ -1,4 +1,4 @@
-import { createPlanner } from "./planner-contract.js";
+import { PLANNER_PLAN_VERSION, createPlanner } from "./planner-contract.js";
 
 const GLOBAL_PATTERNS = [
   "point sur mon entreprise",
@@ -7,8 +7,25 @@ const GLOBAL_PATTERNS = [
   "entreprise",
   "global",
   "synthese",
-  "tableau de bord"
+  "tableau de bord",
+  "point complet",
+  "problemes urgents"
 ];
+
+const COMMUNICATION_PATTERNS = Object.freeze([
+  "communication",
+  "communiquer",
+  "communique",
+  "planning editorial",
+  "calendrier editorial"
+]);
+
+const SENSITIVE_PAYMENT_PATTERNS = Object.freeze([
+  "effectue le paiement",
+  "execute le paiement",
+  "payer cette facture",
+  "paiement de cette facture"
+]);
 
 const AGENT_PATTERNS = Object.freeze([
   {
@@ -30,23 +47,62 @@ const AGENT_PATTERNS = Object.freeze([
     agentId: "purchasing",
     reason: "The request contains purchasing or procurement intent.",
     patterns: ["commander", "commande fournisseur", "achat", "achats", "acheter", "fournisseur", "approvisionnement"]
+  },
+  {
+    agentId: "after_sales",
+    reason: "The request contains after-sales, support, quality, or customer issue intent.",
+    patterns: ["sav", "qualite", "support", "reclamation", "reclamations", "probleme client", "problemes clients"]
+  },
+  {
+    agentId: "marketing",
+    reason: "The request contains marketing, campaign, content, or performance intent.",
+    patterns: ["marketing", "campagne", "campagnes", "contenu", "performance marketing", "acquisition", "communication"]
+  },
+  {
+    agentId: "community_manager",
+    reason: "The request contains community management, social content, or editorial intent.",
+    patterns: ["community", "community manager", "reseaux sociaux", "social", "publication", "publications", "editorial"]
+  },
+  {
+    agentId: "legal",
+    reason: "The request contains legal, contract, compliance, or juridical intent.",
+    patterns: ["juridique", "legal", "contrat", "contrats", "conformite", "litige", "litiges"]
   }
 ]);
 
-const GLOBAL_AGENT_IDS = Object.freeze(["finance", "commercial", "production", "purchasing"]);
+const GLOBAL_AGENT_IDS = Object.freeze([
+  "finance",
+  "commercial",
+  "production",
+  "purchasing",
+  "after_sales",
+  "marketing",
+  "community_manager",
+  "legal"
+]);
+
+const COMMUNICATION_AGENT_IDS = Object.freeze(["marketing", "community_manager"]);
 
 const DEFAULT_TOOL_BY_AGENT = Object.freeze({
-  finance: "get_company_overview",
+  finance: "get_pending_payments",
   commercial: "get_pending_quotes",
   production: "get_delayed_production_orders",
-  purchasing: "get_purchase_needs"
+  purchasing: "get_purchase_needs",
+  after_sales: "get_after_sales_overview",
+  marketing: "get_marketing_overview",
+  community_manager: "get_community_overview",
+  legal: "get_legal_overview"
 });
 
 const INTENT_TOOL_BY_AGENT = Object.freeze({
   finance: "get_pending_payments",
   commercial: "get_pending_quotes",
   production: "get_delayed_production_orders",
-  purchasing: "get_purchase_needs"
+  purchasing: "get_purchase_needs",
+  after_sales: "get_after_sales_overview",
+  marketing: "get_marketing_overview",
+  community_manager: "get_community_overview",
+  legal: "get_legal_overview"
 });
 
 export function createDeterministicPlanner() {
@@ -61,26 +117,40 @@ export function createDeterministicPlanner() {
 export function createDeterministicPlan(request) {
   const text = normalizeRequestText(request);
   const agentIds = selectAgentIds(text);
+  const requestId = request.id ?? request.requestId;
 
   return Object.freeze({
+    version: PLANNER_PLAN_VERSION,
+    requestId,
+    intent: inferIntent(text, agentIds),
     summary: "Deterministic MVP plan generated from request wording.",
     planner: "deterministic",
     agents: agentIds,
     steps: agentIds.map((agentId, index) => {
       const definition = AGENT_PATTERNS.find((pattern) => pattern.agentId === agentId);
+      const sensitivePayment = agentId === "finance" && isSensitivePaymentRequest(text);
       return Object.freeze({
+        id: createStepId(requestId, agentId, index),
         agentId,
         sequence: index + 1,
-        actionKind: "read_analyze",
-        actionType: "analyze_request",
+        actionKind: sensitivePayment ? "execute_action" : "read_analyze",
+        actionType: sensitivePayment ? "execute_invoice_payment" : "analyze_request",
         toolName: selectToolName(agentId, text),
-        resource: `request:${request.id ?? request.requestId}`,
-        reason: definition?.reason ?? "Global company overview requires this specialized agent.",
+        resource: `request:${requestId}`,
+        reason: sensitivePayment
+          ? "The request asks for a sensitive payment action that requires human approval."
+          : definition?.reason ?? "Global company overview requires this specialized agent.",
         input: {
-          requestId: request.id ?? request.requestId,
-          planner: "deterministic"
+          requestId,
+          planner: "deterministic",
+          ...(agentId === "marketing" && agentIds.includes("community_manager")
+            ? { supervisedAgentIds: ["community_manager"] }
+            : {}),
+          ...(agentId === "community_manager" && agentIds.includes("marketing")
+            ? { delegatedByAgentId: "marketing", reportsToAgentId: "marketing" }
+            : {})
         },
-        requiresApproval: false
+        requiresApproval: sensitivePayment
       });
     }),
     metadata: {
@@ -91,6 +161,10 @@ export function createDeterministicPlan(request) {
 }
 
 function selectToolName(agentId, text) {
+  if (agentId === "finance" && isSensitivePaymentRequest(text)) {
+    return "execute_invoice_payment";
+  }
+
   if (agentId === "finance" && AGENT_PATTERNS[0].patterns.some((pattern) => text.includes(pattern))) {
     return INTENT_TOOL_BY_AGENT.finance;
   }
@@ -98,7 +172,29 @@ function selectToolName(agentId, text) {
   return DEFAULT_TOOL_BY_AGENT[agentId] ?? null;
 }
 
+function inferIntent(text, agentIds) {
+  if (isSensitivePaymentRequest(text)) {
+    return "sensitive_invoice_payment";
+  }
+  if (agentIds.length > 1) {
+    return "global_company_overview";
+  }
+  return AGENT_PATTERNS.find((entry) => entry.agentId === agentIds[0])?.agentId ?? text;
+}
+
+function createStepId(requestId, agentId, index) {
+  return `${requestId}:deterministic:${index + 1}:${agentId}`;
+}
+
 export function selectAgentIds(text) {
+  if (isSensitivePaymentRequest(text)) {
+    return ["finance"];
+  }
+
+  if (COMMUNICATION_PATTERNS.some((pattern) => text.includes(pattern))) {
+    return [...COMMUNICATION_AGENT_IDS];
+  }
+
   if (GLOBAL_PATTERNS.some((pattern) => text.includes(pattern))) {
     return [...GLOBAL_AGENT_IDS];
   }
@@ -108,6 +204,10 @@ export function selectAgentIds(text) {
     .map((entry) => entry.agentId);
 
   return selected.length > 0 ? selected : [...GLOBAL_AGENT_IDS];
+}
+
+function isSensitivePaymentRequest(text) {
+  return SENSITIVE_PAYMENT_PATTERNS.some((pattern) => text.includes(pattern));
 }
 
 function normalizeRequestText(request = {}) {

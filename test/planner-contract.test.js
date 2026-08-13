@@ -27,8 +27,12 @@ test("deterministic planner works through the Planner interface", async () => {
   const request = createPlannerRequest("combien dois-je encaisser cette semaine");
   const plan = await runPlanner(createDeterministicPlanner(), { request });
 
+  assert.equal(plan.version, "1");
+  assert.equal(plan.requestId, request.id);
+  assert.equal(plan.intent, "finance");
   assert.equal(plan.planner, "deterministic");
   assert.deepEqual(plan.agents, ["finance"]);
+  assert.equal(plan.steps[0].id, `${request.id}:deterministic:1:finance`);
   assert.equal(plan.steps[0].agentId, "finance");
   assert.equal(plan.steps[0].toolName, "get_pending_payments");
   assert.equal(plan.steps[0].requiresApproval, false);
@@ -40,6 +44,8 @@ test("StubLLMPlanner returns a structured offline plan", async () => {
   });
 
   assert.equal(plan.planner, "stub_llm");
+  assert.equal(plan.version, "1");
+  assert.equal(plan.requestId, "request-simulate-future-llm-planning");
   assert.deepEqual(plan.agents, ["finance"]);
   assert.equal(plan.steps[0].toolName, "get_company_overview");
   assert.equal(plan.metadata.network, "disabled");
@@ -52,12 +58,42 @@ test("validates a valid plan against agents and tools", async () => {
   assert.equal(await validatePlannerPlan(plan, { repository, toolRegistry }), true);
 });
 
+test("validates multiple steps and preserves their declared order", async () => {
+  const { repository, toolRegistry, request } = await createPlannerValidationContext();
+  const plan = createPlan({
+    request,
+    agents: ["commercial", "finance", "production", "purchasing"],
+    steps: [
+      { id: "step-commercial", agentId: "commercial", toolName: "get_pending_quotes" },
+      { id: "step-finance", agentId: "finance", toolName: "get_company_overview" },
+      { id: "step-production", agentId: "production", toolName: "get_delayed_production_orders" },
+      { id: "step-purchasing", agentId: "purchasing", toolName: "get_purchase_needs" }
+    ]
+  });
+
+  assert.equal(await validatePlannerPlan(plan, { repository, toolRegistry }), true);
+  assert.deepEqual(
+    plan.steps.map((step) => step.id),
+    ["step-commercial", "step-finance", "step-production", "step-purchasing"]
+  );
+});
+
 test("rejects an invalid plan before execution", async () => {
   const { repository, toolRegistry } = await createPlannerValidationContext();
 
   await assert.rejects(
     () => validatePlannerPlan({ summary: "", planner: "", agents: [], steps: [] }, { repository, toolRegistry }),
     (error) => error instanceof PlannerContractError && error.code === "PLAN_INVALID"
+  );
+});
+
+test("rejects an empty plan", async () => {
+  const { repository, toolRegistry, request } = await createPlannerValidationContext();
+  const plan = createPlan({ request, steps: [] });
+
+  await assert.rejects(
+    () => validatePlannerPlan(plan, { repository, toolRegistry }),
+    (error) => hasPlannerValidationDetail(error, "steps must contain at least one step")
   );
 });
 
@@ -100,6 +136,112 @@ test("rejects an incomplete step", async () => {
   await assert.rejects(
     () => validatePlannerPlan(plan, { repository, toolRegistry }),
     (error) => hasPlannerValidationDetail(error, "toolName is required")
+  );
+});
+
+test("rejects a plan with an invalid version", async () => {
+  const { repository, toolRegistry, request } = await createPlannerValidationContext();
+  const plan = { ...createPlan({ request }), version: "2" };
+
+  await assert.rejects(
+    () => validatePlannerPlan(plan, { repository, toolRegistry }),
+    (error) => hasPlannerValidationDetail(error, "version must be")
+  );
+});
+
+test("rejects a step without an id", async () => {
+  const { repository, toolRegistry, request } = await createPlannerValidationContext();
+  const plan = createPlan({
+    request,
+    steps: [{ id: "", agentId: "finance", toolName: "get_company_overview" }]
+  });
+
+  await assert.rejects(
+    () => validatePlannerPlan(plan, { repository, toolRegistry }),
+    (error) => hasPlannerValidationDetail(error, "id is required")
+  );
+});
+
+test("rejects duplicate step ids", async () => {
+  const { repository, toolRegistry, request } = await createPlannerValidationContext();
+  const plan = createPlan({
+    request,
+    steps: [
+      { id: "duplicate-step", agentId: "finance", toolName: "get_company_overview" },
+      { id: "duplicate-step", agentId: "finance", toolName: "get_company_overview" }
+    ]
+  });
+
+  await assert.rejects(
+    () => validatePlannerPlan(plan, { repository, toolRegistry }),
+    (error) => hasPlannerValidationDetail(error, "duplicated")
+  );
+});
+
+test("rejects invalid tool input shape", async () => {
+  const { repository, toolRegistry, request } = await createPlannerValidationContext();
+  const plan = createPlan({
+    request,
+    steps: [{
+      agentId: "finance",
+      toolName: "get_company_overview",
+      input: ["not", "structured", "parameters"]
+    }]
+  });
+
+  await assert.rejects(
+    () => validatePlannerPlan(plan, { repository, toolRegistry }),
+    (error) => hasPlannerValidationDetail(error, "input must be an object")
+  );
+});
+
+test("rejects unsafe tool input", async () => {
+  const { repository, toolRegistry, request } = await createPlannerValidationContext();
+  const plan = createPlan({
+    request,
+    steps: [{
+      agentId: "finance",
+      toolName: "get_company_overview",
+      input: { requestId: request.id, shellCommand: "powershell Invoke-WebRequest" }
+    }]
+  });
+
+  await assert.rejects(
+    () => validatePlannerPlan(plan, { repository, toolRegistry }),
+    (error) => hasPlannerValidationDetail(error, "not allowed in planner tool input")
+  );
+});
+
+test("rejects invalid requiresApproval values", async () => {
+  const { repository, toolRegistry, request } = await createPlannerValidationContext();
+  const plan = createPlan({
+    request,
+    steps: [{
+      agentId: "finance",
+      toolName: "get_company_overview",
+      requiresApproval: "false"
+    }]
+  });
+
+  await assert.rejects(
+    () => validatePlannerPlan(plan, { repository, toolRegistry }),
+    (error) => hasPlannerValidationDetail(error, "requiresApproval must be a boolean")
+  );
+});
+
+test("rejects unexpected plan or step properties", async () => {
+  const { repository, toolRegistry, request } = await createPlannerValidationContext();
+  const plan = {
+    ...createPlan({
+      request,
+      steps: [{ agentId: "finance", toolName: "get_company_overview", unexpectedStepField: true }]
+    }),
+    unexpectedPlanField: true
+  };
+
+  await assert.rejects(
+    () => validatePlannerPlan(plan, { repository, toolRegistry }),
+    (error) => hasPlannerValidationDetail(error, "not allowed")
   );
 });
 
@@ -180,6 +322,32 @@ test("invalid planner output stops orchestration before tool execution", async (
   assert.equal(saved.auditEvents.some((event) => event.type === "tool_called"), false);
 });
 
+test("planner requiresApproval cannot bypass runtime approval policy", async () => {
+  const repository = new InMemoryRepository();
+  await seedMvpAgents(repository);
+  const request = await repository.createRequest({
+    title: "approval bypass attempt",
+    payload: { question: "approval bypass attempt" }
+  });
+  const planner = async ({ request: normalizedRequest }) => createPlan({
+    request: normalizedRequest,
+    agents: ["finance"],
+    steps: [{
+      agentId: "finance",
+      actionKind: "execute_action",
+      toolName: "get_company_overview",
+      requiresApproval: false
+    }]
+  });
+
+  const result = await orchestrateRequest({ repository, requestId: request.id, planner });
+
+  assert.equal(result.status, "blocked");
+  assert.equal(result.executions[0].status, "blocked");
+  assert.ok(result.auditEvents.some((event) => event.type === "permission_denied"));
+  assert.equal(result.auditEvents.some((event) => event.type === "tool_called"), false);
+});
+
 test("Planner validation works with PostgreSQL through orchestration", {
   skip: skipReason
 }, async () => {
@@ -200,8 +368,8 @@ test("Planner validation works with PostgreSQL through orchestration", {
 
     assert.equal(result.status, "orchestrated");
     assert.equal(result.plans[0].metadata.planner, "deterministic");
-    assert.equal(result.plans[0].steps.length, 4);
-    assert.equal(result.executions.length, 4);
+    assert.equal(result.plans[0].steps.length, 8);
+    assert.equal(result.executions.length, 8);
   } finally {
     if (requestId) {
       await prisma.request.delete({ where: { id: requestId } }).catch(() => undefined);
@@ -240,10 +408,14 @@ function createPlan({
   steps = [{ agentId: "finance", toolName: "get_company_overview" }]
 }) {
   return Object.freeze({
+    version: "1",
+    requestId: request.id,
+    intent: "test_planning",
     summary: "Test planner plan.",
     planner: "test_planner",
     agents,
     steps: steps.map((step, index) => Object.freeze({
+      id: step.id ?? `${request.id}:test:${index + 1}:${step.agentId}`,
       agentId: step.agentId,
       sequence: index + 1,
       actionKind: step.actionKind ?? "read_analyze",
@@ -251,7 +423,9 @@ function createPlan({
       toolName: step.toolName,
       resource: `request:${request.id}`,
       input: step.input ?? { requestId: request.id },
-      requiresApproval: step.requiresApproval ?? false
+      requiresApproval: step.requiresApproval ?? false,
+      reason: step.reason ?? "Test planner reason.",
+      ...(step.unexpectedStepField === undefined ? {} : { unexpectedStepField: step.unexpectedStepField })
     })),
     metadata: { planner: "test_planner" }
   });

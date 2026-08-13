@@ -113,10 +113,22 @@ test("LLM planner rejects incomplete steps", async () => {
   const planner = createLlmPlanner({
     provider: createMockLlmProvider({
       plan: {
+        version: "1",
+        requestId: "request-incomplete",
+        intent: "incomplete_step",
         summary: "Incomplete step.",
         planner: "llm_mock",
         agents: ["finance"],
-        steps: [{ agentId: "finance", toolName: "get_company_overview" }]
+        steps: [{
+          id: "request-incomplete:llm_mock:1:finance",
+          agentId: "finance",
+          sequence: 1,
+          toolName: "get_company_overview",
+          resource: "request:request-incomplete",
+          reason: "Incomplete by design.",
+          input: { requestId: "request-incomplete" },
+          requiresApproval: false
+        }]
       }
     })
   });
@@ -262,10 +274,14 @@ function createPlan({
   steps = [{ agentId: "finance", toolName: "get_company_overview" }]
 }) {
   return Object.freeze({
+    version: "1",
+    requestId,
+    intent: "mock_provider_test",
     summary: "Mock provider test plan.",
     planner: "llm_mock",
     agents,
     steps: steps.map((step, index) => Object.freeze({
+      id: step.id ?? `${requestId}:llm_mock:${index + 1}:${step.agentId}`,
       agentId: step.agentId,
       sequence: index + 1,
       actionKind: step.actionKind ?? "read_analyze",
@@ -273,7 +289,8 @@ function createPlan({
       toolName: step.toolName,
       resource: `request:${requestId}`,
       input: step.input ?? { requestId },
-      requiresApproval: step.requiresApproval ?? false
+      requiresApproval: step.requiresApproval ?? false,
+      reason: step.reason ?? "Mock provider test reason."
     })),
     metadata: { planner: "llm_mock" }
   });

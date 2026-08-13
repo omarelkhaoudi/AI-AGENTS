@@ -6,17 +6,21 @@ export function createOpenAIProvider({
   client,
   apiKey,
   model = DEFAULT_OPENAI_MODEL,
-  timeoutMs = 30000
+  timeoutMs = 30000,
+  clientFactory = createDefaultOpenAIClient
 } = {}) {
+  let resolvedClient = client ?? null;
+
   return Object.freeze({
     id: "openai_provider",
     model,
     async generateStructuredPlan(input) {
       assertApiKey(apiKey);
-      assertOpenAIClient(client);
+      resolvedClient ??= await clientFactory({ apiKey });
+      assertOpenAIClient(resolvedClient);
 
       const response = await callOpenAIClient({
-        client,
+        client: resolvedClient,
         model,
         input,
         timeoutMs
@@ -24,6 +28,11 @@ export function createOpenAIProvider({
       return extractStructuredPlan(response);
     }
   });
+}
+
+export async function createDefaultOpenAIClient({ apiKey } = {}) {
+  const { default: OpenAI } = await import("openai");
+  return new OpenAI({ apiKey });
 }
 
 function assertApiKey(apiKey) {
@@ -63,22 +72,91 @@ async function callOpenAIClient({ client, model, input, timeoutMs }) {
 export function createOpenAIRequestPayload({ model, input }) {
   return Object.freeze({
     model,
+    instructions: input.prompt?.system ?? "",
     input: [
       {
-        role: "system",
-        content: input.prompt?.system ?? ""
-      },
-      {
         role: "user",
-        content: input.prompt?.user ?? ""
+        content: [
+          {
+            type: "input_text",
+            text: input.prompt?.user ?? ""
+          }
+        ]
       }
     ],
-    response_format: {
-      type: "json_object"
+    text: {
+      format: {
+        type: "json_schema",
+        name: "ai_agents_planner_plan",
+        strict: false,
+        schema: createPlannerPlanJsonSchema()
+      }
     },
     metadata: {
       component: "llm_planner",
       output: input.output ?? "planner_contract_json"
+    }
+  });
+}
+
+function createPlannerPlanJsonSchema() {
+  return Object.freeze({
+    type: "object",
+    additionalProperties: false,
+    required: ["version", "requestId", "intent", "summary", "planner", "agents", "steps", "metadata"],
+    properties: {
+      version: { type: "string", const: "1" },
+      requestId: { type: "string", minLength: 1 },
+      intent: { type: "string", minLength: 1 },
+      summary: { type: "string", minLength: 1 },
+      planner: { type: "string", minLength: 1 },
+      agents: {
+        type: "array",
+        items: { type: "string", minLength: 1 },
+        minItems: 1
+      },
+      steps: {
+        type: "array",
+        minItems: 1,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "id",
+            "agentId",
+            "sequence",
+            "actionKind",
+            "actionType",
+            "toolName",
+            "resource",
+            "reason",
+            "input",
+            "requiresApproval"
+          ],
+          properties: {
+            id: { type: "string", minLength: 1 },
+            agentId: { type: "string", minLength: 1 },
+            sequence: { type: "integer", minimum: 1 },
+            actionKind: {
+              type: "string",
+              enum: ["read_analyze", "prepare_action", "execute_action", "human_approval_required"]
+            },
+            actionType: { type: "string", minLength: 1 },
+            toolName: { type: "string", minLength: 1 },
+            resource: { type: "string", minLength: 1 },
+            reason: { type: "string", minLength: 1 },
+            input: {
+              type: "object",
+              additionalProperties: true
+            },
+            requiresApproval: { type: "boolean" }
+          }
+        }
+      },
+      metadata: {
+        type: "object",
+        additionalProperties: true
+      }
     }
   });
 }

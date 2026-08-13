@@ -1,0 +1,78 @@
+import { redact } from "../observability/logger.js";
+
+export const DEFAULT_PLANNER_SECURITY_CONSTRAINTS = Object.freeze([
+  "The planner must only produce a structured plan.",
+  "The planner must never execute a tool.",
+  "The planner must never bypass permissions or human approvals.",
+  "Use only listed agent ids.",
+  "Use only listed tool names.",
+  "Set requiresApproval=true for sensitive actions.",
+  "Do not include secrets, API keys, credentials, tokens, or passwords."
+]);
+
+export function buildPlannerPrompt({
+  request,
+  agents = [],
+  tools = [],
+  securityConstraints = DEFAULT_PLANNER_SECURITY_CONSTRAINTS
+} = {}) {
+  const safeRequest = redact({
+    id: request?.id ?? request?.requestId,
+    title: request?.title ?? null,
+    payload: request?.payload ?? {}
+  });
+  const outputContract = {
+    summary: "string",
+    planner: "string",
+    agents: ["agentId"],
+    steps: [
+      {
+        agentId: "string",
+        actionType: "string",
+        actionKind: "read_analyze | prepare_action | execute_action | human_approval_required",
+        toolName: "string",
+        input: { requestId: "string" },
+        requiresApproval: "boolean"
+      }
+    ]
+  };
+
+  return Object.freeze({
+    system: [
+      "You are a planning component for an enterprise AI agent operating system.",
+      "Return only valid JSON matching the provided planner contract.",
+      "Do not execute tools, call APIs, request secrets, or produce prose outside JSON."
+    ].join(" "),
+    user: JSON.stringify({
+      request: safeRequest,
+      availableAgents: agents.map(summarizeAgent),
+      availableTools: tools.map(summarizeTool),
+      securityConstraints,
+      outputContract
+    })
+  });
+}
+
+function summarizeAgent(agent) {
+  return redact({
+    id: agent.id,
+    name: agent.name,
+    role: agent.role,
+    description: agent.description,
+    status: agent.status,
+    permissions: agent.permissions,
+    capabilities: agent.capabilities
+  });
+}
+
+function summarizeTool(tool) {
+  return redact({
+    id: tool.id,
+    name: tool.name,
+    description: tool.description,
+    category: tool.category,
+    requiredPermission: tool.requiredPermission,
+    allowedAgents: tool.allowedAgents,
+    inputSchema: tool.inputSchema
+  });
+}

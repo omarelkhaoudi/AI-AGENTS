@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import { seedMvpAgents } from "../agents/seed.js";
+import { PlannerContractError } from "../director/planner-contract.js";
 import { orchestrateRequest } from "../director/request-orchestration.js";
 import { createAuditEvent } from "../observability/audit.js";
 import { InMemoryRepository } from "../persistence/in-memory-repository.js";
@@ -133,7 +134,7 @@ export function buildApi({
 
       return reply.code(201).send({ request: orchestratedRequest });
     } catch (error) {
-      return reply.code(500).send(createErrorResponse("Request orchestration failed.", error));
+      return sendDomainError(reply, "Request orchestration failed.", error);
     }
   });
 
@@ -225,6 +226,10 @@ function sendDomainError(reply, message, error) {
 }
 
 function statusCodeForError(error) {
+  if (error instanceof PlannerContractError) {
+    return 400;
+  }
+
   if (error instanceof ApprovalStateError || error instanceof ToolExecutionServiceError) {
     if (error.code === "APPROVAL_NOT_FOUND") {
       return 404;

@@ -33,7 +33,11 @@ export function createMvpAgentSeedRecords() {
 export async function seedMvpAgents(repository) {
   const seeded = [];
   for (const agent of createMvpAgentSeedRecords()) {
-    seeded.push(await repository.upsertAgent(agent));
+    const existing = await repository.getAgent(agent.id);
+    seeded.push(await repository.upsertAgent({
+      ...agent,
+      permissions: existing?.permissions?.length ? existing.permissions : agent.permissions
+    }));
   }
   return Object.freeze(seeded);
 }

@@ -227,7 +227,7 @@ test("GET /api/requests/:id returns a clean response when the repository fails",
   assert.deepEqual(body.details, { name: "DatabaseError" });
 });
 
-test("POST /api/requests returns a blocked request when the planner selects an unknown agent", async (t) => {
+test("POST /api/requests rejects an invalid plan when the planner selects an unknown agent", async (t) => {
   const repository = new InMemoryRepository();
   const app = buildApi({
     repository,
@@ -239,10 +239,14 @@ test("POST /api/requests returns a blocked request when the planner selects an u
           sequence: 1,
           actionKind: "read_analyze",
           actionType: "analyze_request",
+          toolName: "get_company_overview",
           resource: `request:${request.id}`,
-          input: { requestId: request.id }
+          input: { requestId: request.id },
+          requiresApproval: false
         }
       ],
+      planner: "unknown-agent-test",
+      agents: ["unknown-agent"],
       metadata: { test: true }
     })
   });
@@ -257,11 +261,10 @@ test("POST /api/requests returns a blocked request when the planner selects an u
   });
   const body = JSON.parse(response.body);
 
-  assert.equal(response.statusCode, 201);
-  assert.equal(body.request.status, "blocked");
-  assert.equal(body.request.plans.length, 1);
-  assert.equal(body.request.plans[0].steps.length, 0);
-  assert.ok(body.request.auditEvents.some((event) => event.type === "permission_denied"));
+  assert.equal(response.statusCode, 400);
+  assert.equal(body.error, "Request orchestration failed.");
+  assert.equal(body.details.name, "PlannerContractError");
+  assert.equal(body.details.code, "PLAN_INVALID");
 });
 
 test("POST /api/requests returns a blocked request when an agent is inactive", async (t) => {

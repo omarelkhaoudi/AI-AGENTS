@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { AgentRegistryError } from "../agents/registry.js";
 import { createExecutionLogger } from "../observability/logger.js";
+import { runPlanner } from "./planner-contract.js";
 
 export class DirectorExecutionError extends Error {
   constructor(message, details = {}) {
@@ -43,7 +44,7 @@ export class DirectorOrchestrator {
     const executionId = request?.requestId ?? randomUUID();
 
     try {
-      const plan = await this.planner({ request, registry: this.registry });
+      const plan = await runPlanner(this.planner, { request, registry: this.registry });
       validateDelegationPlan(plan);
 
       const results = [];

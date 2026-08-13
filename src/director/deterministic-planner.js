@@ -1,3 +1,5 @@
+import { createPlanner } from "./planner-contract.js";
+
 const GLOBAL_PATTERNS = [
   "point sur mon entreprise",
   "point entreprise",
@@ -48,7 +50,12 @@ const INTENT_TOOL_BY_AGENT = Object.freeze({
 });
 
 export function createDeterministicPlanner() {
-  return async ({ request }) => createDeterministicPlan(request);
+  return createPlanner({
+    id: "deterministic",
+    kind: "deterministic",
+    description: "Deterministic MVP planner generated from request wording.",
+    plan: async ({ request }) => createDeterministicPlan(request)
+  });
 }
 
 export function createDeterministicPlan(request) {
@@ -57,6 +64,8 @@ export function createDeterministicPlan(request) {
 
   return Object.freeze({
     summary: "Deterministic MVP plan generated from request wording.",
+    planner: "deterministic",
+    agents: agentIds,
     steps: agentIds.map((agentId, index) => {
       const definition = AGENT_PATTERNS.find((pattern) => pattern.agentId === agentId);
       return Object.freeze({
@@ -70,7 +79,8 @@ export function createDeterministicPlan(request) {
         input: {
           requestId: request.id ?? request.requestId,
           planner: "deterministic"
-        }
+        },
+        requiresApproval: false
       });
     }),
     metadata: {

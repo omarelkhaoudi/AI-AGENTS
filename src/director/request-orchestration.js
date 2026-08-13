@@ -4,6 +4,7 @@ import { ToolExecutionService } from "../tools/execution-service.js";
 import { createMvpToolRegistry } from "../tools/mvp-tools.js";
 import { createDeterministicPlanner } from "./deterministic-planner.js";
 import { DirectorExecutionError } from "./orchestrator.js";
+import { runPlanner, validatePlannerPlan } from "./planner-contract.js";
 
 export async function orchestrateRequest({
   requestId,
@@ -36,7 +37,9 @@ async function orchestrateRequestInTransaction({ requestId, repository, planner,
     repository,
     toolRegistry: registry
   });
-  const planned = await planner({ request, repository });
+  const planned = await runPlanner(planner, { request, repository });
+  await validatePlannerPlan(planned, { repository, toolRegistry: registry });
+
   const plan = await repository.createPlan({
     requestId: request.id,
     createdByAgentId: "director",
@@ -198,7 +201,7 @@ async function orchestrateRequestInTransaction({ requestId, repository, planner,
           planId: plan.id,
           planStepId: planStep.id,
           metadata: {
-            planner: "deterministic",
+            planner: planned.planner,
             toolName: plannedStep.toolName ?? null,
             policyDecision
           }
@@ -223,7 +226,7 @@ async function orchestrateRequestInTransaction({ requestId, repository, planner,
           status: "executing",
           input: plannedStep.input,
           metadata: {
-            planner: "deterministic",
+            planner: planned.planner,
             toolName: plannedStep.toolName ?? null,
             policyDecision
           }
@@ -244,7 +247,7 @@ async function orchestrateRequestInTransaction({ requestId, repository, planner,
             input: plannedStep.input,
             output,
             metadata: {
-              planner: "deterministic",
+              planner: planned.planner,
               toolName: plannedStep.toolName ?? null,
               policyDecision
             }

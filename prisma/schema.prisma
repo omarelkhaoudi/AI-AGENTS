@@ -1,0 +1,198 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id          String       @id @default(uuid())
+  email       String?      @unique
+  name        String
+  role        String       @default("leader")
+  metadata    Json?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  requests    Request[]    @relation("RequestCreator")
+  approvals   Approval[]   @relation("ApprovalApprover")
+  auditEvents AuditEvent[] @relation("AuditActor")
+  documents   Document[]   @relation("DocumentUploader")
+}
+
+model Agent {
+  id                 String       @id
+  name               String
+  role               String       @default("specialized_agent")
+  description        String
+  status             String       @default("available")
+  capabilities       Json?
+  tools              Json?
+  permissions        Json?
+  metadata           Json?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  plansCreated       Plan[]       @relation("PlanCreatorAgent")
+  planSteps          PlanStep[]
+  executions         Execution[]
+  requestedApprovals Approval[]   @relation("ApprovalRequestingAgent")
+  auditEvents        AuditEvent[]
+}
+
+model Request {
+  id          String       @id @default(uuid())
+  title       String?
+  source      String       @default("api")
+  status      String       @default("received")
+  payload     Json
+  metadata    Json?
+  result      Json?
+  createdById String?
+  createdBy   User?        @relation("RequestCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  plans       Plan[]
+  executions  Execution[]
+  approvals   Approval[]
+  auditEvents AuditEvent[]
+  documents   Document[]
+}
+
+model Plan {
+  id               String       @id @default(uuid())
+  requestId        String
+  request          Request      @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  createdByAgentId String?
+  createdByAgent   Agent?       @relation("PlanCreatorAgent", fields: [createdByAgentId], references: [id], onDelete: SetNull)
+  status           String       @default("created")
+  summary          String?
+  metadata         Json?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  steps            PlanStep[]
+  executions       Execution[]
+  auditEvents      AuditEvent[]
+}
+
+model PlanStep {
+  id               String       @id @default(uuid())
+  planId           String
+  plan             Plan         @relation(fields: [planId], references: [id], onDelete: Cascade)
+  agentId          String
+  agent            Agent        @relation(fields: [agentId], references: [id], onDelete: Restrict)
+  sequence         Int
+  status           String       @default("pending")
+  actionType       String?
+  toolName         String?
+  input            Json?
+  output           Json?
+  error            Json?
+  requiresApproval Boolean      @default(false)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  executions       Execution[]
+  approvals        Approval[]
+  auditEvents      AuditEvent[]
+
+  @@unique([planId, sequence])
+  @@index([agentId])
+}
+
+model Execution {
+  id          String       @id @default(uuid())
+  requestId   String
+  request     Request      @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  planId      String?
+  plan        Plan?        @relation(fields: [planId], references: [id], onDelete: SetNull)
+  planStepId  String?
+  planStep    PlanStep?    @relation(fields: [planStepId], references: [id], onDelete: SetNull)
+  agentId     String?
+  agent       Agent?       @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  status      String
+  input       Json?
+  output      Json?
+  error       Json?
+  metadata    Json?
+  startedAt   DateTime     @default(now())
+  finishedAt  DateTime?
+  durationMs  Int?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  auditEvents AuditEvent[]
+
+  @@index([requestId])
+  @@index([agentId])
+}
+
+model Approval {
+  id                 String    @id @default(uuid())
+  requestId          String?
+  request            Request?  @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  planStepId         String?
+  planStep           PlanStep? @relation(fields: [planStepId], references: [id], onDelete: SetNull)
+  requestingAgent    String
+  requestedByAgentId String?
+  requestedByAgent   Agent?    @relation("ApprovalRequestingAgent", fields: [requestedByAgentId], references: [id], onDelete: SetNull)
+  approverId         String?
+  approver           User?     @relation("ApprovalApprover", fields: [approverId], references: [id], onDelete: SetNull)
+  requestedAction    String
+  reason             String
+  affectedResource   String
+  risk               String    @default("medium")
+  status             String    @default("requested")
+  decisionReason     String?
+  metadata           Json?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  decidedAt          DateTime?
+
+  @@index([requestId])
+  @@index([status])
+}
+
+model AuditEvent {
+  id           String     @id @default(uuid())
+  type         String
+  actorUserId  String?
+  actorUser    User?      @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  agentId      String?
+  agent        Agent?     @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  requestId    String?
+  request      Request?   @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  planId       String?
+  plan         Plan?      @relation(fields: [planId], references: [id], onDelete: SetNull)
+  planStepId   String?
+  planStep     PlanStep?  @relation(fields: [planStepId], references: [id], onDelete: SetNull)
+  executionId  String?
+  execution    Execution? @relation(fields: [executionId], references: [id], onDelete: SetNull)
+  documentId   String?
+  document     Document?  @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  resourceType String?
+  resourceId   String?
+  metadata     Json?
+  createdAt    DateTime   @default(now())
+
+  @@index([type])
+  @@index([requestId])
+  @@index([createdAt])
+}
+
+model Document {
+  id           String       @id @default(uuid())
+  requestId    String?
+  request      Request?     @relation(fields: [requestId], references: [id], onDelete: SetNull)
+  uploadedById String?
+  uploadedBy   User?        @relation("DocumentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  name         String
+  mimeType     String?
+  storageKey   String
+  checksum     String?
+  sizeBytes    Int?
+  metadata     Json?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  auditEvents  AuditEvent[]
+
+  @@index([requestId])
+  @@index([storageKey])
+}

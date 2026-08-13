@@ -5,13 +5,23 @@
   "description": "Phase 0 technical foundation for an enterprise AI agent platform.",
   "type": "module",
   "scripts": {
+    "start": "node src/server.js",
     "test": "node --test",
     "lint": "node scripts/lint.mjs",
     "typecheck": "node scripts/typecheck.mjs",
     "build": "node scripts/build.mjs",
-    "scan:secrets": "node scripts/scan-secrets.mjs"
+    "scan:secrets": "node scripts/scan-secrets.mjs",
+    "db:validate": "prisma validate",
+    "db:generate": "prisma generate"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@prisma/client": "^7.9.1",
+    "fastify": "^5.11.3"
+  },
+  "devDependencies": {
+    "prisma": "^7.9.1"
   }
 }

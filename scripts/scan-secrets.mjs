@@ -12,6 +12,9 @@ const patterns = [
 const files = [
   ...(await listJavaScriptFiles()),
   "package.json",
+  "package-lock.json",
+  ".env.example",
+  "prisma/schema.prisma",
   "docs/AI_AGENTS_FOUNDATION_ARCHITECTURE.md",
   "docs/AGENT-MVP-BOUNDARIES.md"
 ];

@@ -13,8 +13,13 @@ export const REPOSITORY_METHODS = Object.freeze([
   "getExecution",
   "listExecutions",
   "saveApproval",
+  "createApproval",
   "getApproval",
   "listApprovals",
+  "listPendingApprovals",
+  "approveApproval",
+  "rejectApproval",
+  "markApprovalExecuted",
   "createAuditEvent",
   "listAuditEvents",
   "createDocument",
@@ -87,12 +92,32 @@ export class AgentPlatformRepository {
     throw new RepositoryContractError("saveApproval is not implemented.");
   }
 
+  createApproval() {
+    throw new RepositoryContractError("createApproval is not implemented.");
+  }
+
   getApproval() {
     throw new RepositoryContractError("getApproval is not implemented.");
   }
 
   listApprovals() {
     throw new RepositoryContractError("listApprovals is not implemented.");
+  }
+
+  listPendingApprovals() {
+    throw new RepositoryContractError("listPendingApprovals is not implemented.");
+  }
+
+  approveApproval() {
+    throw new RepositoryContractError("approveApproval is not implemented.");
+  }
+
+  rejectApproval() {
+    throw new RepositoryContractError("rejectApproval is not implemented.");
+  }
+
+  markApprovalExecuted() {
+    throw new RepositoryContractError("markApprovalExecuted is not implemented.");
   }
 
   createAuditEvent() {

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createAuditEvent as createAuditEventRecord } from "../observability/audit.js";
+import { ApprovalStateError } from "../security/approval.js";
 import { AgentPlatformRepository } from "./repository-contract.js";
 
 export class PrismaRepository extends AgentPlatformRepository {
@@ -211,12 +212,109 @@ export class PrismaRepository extends AgentPlatformRepository {
     });
   }
 
+  async createApproval(input = {}) {
+    return this.prisma.approval.create({
+      data: approvalData({
+        id: input.id ?? randomUUID(),
+        requestId: input.requestId ?? null,
+        planStepId: input.planStepId ?? null,
+        requestingAgent: input.requestingAgent,
+        requestedByAgentId: input.requestedByAgentId ?? null,
+        approverId: input.approverId ?? null,
+        requestedAction: input.requestedAction,
+        reason: input.reason,
+        affectedResource: input.affectedResource,
+        risk: input.risk ?? "medium",
+        status: input.status ?? "pending",
+        decisionReason: input.decisionReason ?? null,
+        metadata: input.metadata ?? {},
+        createdAt: input.createdAt,
+        updatedAt: input.updatedAt,
+        decidedAt: input.decidedAt ?? null
+      })
+    });
+  }
+
   async getApproval(approvalId) {
     return this.prisma.approval.findUnique({ where: { id: approvalId } });
   }
 
   async listApprovals() {
     return this.prisma.approval.findMany({ orderBy: { createdAt: "desc" } });
+  }
+
+  async listPendingApprovals(filters = {}) {
+    return this.prisma.approval.findMany({
+      where: stripUndefined({
+        status: { in: ["pending", "requested"] },
+        requestId: filters.requestId,
+        planStepId: filters.planStepId
+      }),
+      orderBy: { createdAt: "asc" }
+    });
+  }
+
+  async approveApproval(approvalId, { approverId = null, decisionReason = null, metadata = {} } = {}) {
+    const approval = await requirePrismaApproval(this.prisma, approvalId);
+    assertApprovalCanTransition(approval);
+    return this.prisma.approval.update({
+      where: { id: approvalId },
+      data: {
+        status: "approved",
+        approverId,
+        decisionReason,
+        metadata: {
+          ...(approval.metadata ?? {}),
+          ...metadata
+        },
+        decidedAt: new Date()
+      }
+    });
+  }
+
+  async rejectApproval(approvalId, { approverId = null, decisionReason = null, metadata = {} } = {}) {
+    const approval = await requirePrismaApproval(this.prisma, approvalId);
+    assertApprovalCanTransition(approval);
+    return this.prisma.approval.update({
+      where: { id: approvalId },
+      data: {
+        status: "rejected",
+        approverId,
+        decisionReason,
+        metadata: {
+          ...(approval.metadata ?? {}),
+          ...metadata
+        },
+        decidedAt: new Date()
+      }
+    });
+  }
+
+  async markApprovalExecuted(approvalId, { executionId, executedAt = new Date().toISOString() } = {}) {
+    const approval = await requirePrismaApproval(this.prisma, approvalId);
+    if (approval.status !== "approved") {
+      throw new ApprovalStateError("Approval must be approved before execution.", statusToExecutionCode(approval.status), {
+        approvalId,
+        status: approval.status
+      });
+    }
+    if (approval.metadata?.executedAt || approval.metadata?.executionId) {
+      throw new ApprovalStateError("Approval has already been executed.", "APPROVAL_ALREADY_EXECUTED", {
+        approvalId,
+        executionId: approval.metadata.executionId
+      });
+    }
+
+    return this.prisma.approval.update({
+      where: { id: approvalId },
+      data: {
+        metadata: {
+          ...(approval.metadata ?? {}),
+          executionId,
+          executedAt
+        }
+      }
+    });
   }
 
   async createAuditEvent(event) {
@@ -321,4 +419,45 @@ function approvalData(approval) {
 
 function stripUndefined(value) {
   return Object.fromEntries(Object.entries(value).filter(([, nested]) => nested !== undefined));
+}
+
+async function requirePrismaApproval(prisma, approvalId) {
+  const approval = await prisma.approval.findUnique({ where: { id: approvalId } });
+  if (!approval) {
+    throw new ApprovalStateError(`Approval not found: ${approvalId}`, "APPROVAL_NOT_FOUND", {
+      approvalId
+    });
+  }
+  return approval;
+}
+
+function assertApprovalCanTransition(approval) {
+  if (approval.status === "approved") {
+    throw new ApprovalStateError("Approval is already approved.", "APPROVAL_ALREADY_APPROVED", {
+      approvalId: approval.id,
+      status: approval.status
+    });
+  }
+  if (approval.status === "rejected") {
+    throw new ApprovalStateError("Approval is already rejected.", "APPROVAL_ALREADY_REJECTED", {
+      approvalId: approval.id,
+      status: approval.status
+    });
+  }
+  if (!["pending", "requested"].includes(approval.status)) {
+    throw new ApprovalStateError("Approval cannot be processed from its current status.", "APPROVAL_ALREADY_PROCESSED", {
+      approvalId: approval.id,
+      status: approval.status
+    });
+  }
+}
+
+function statusToExecutionCode(status) {
+  if (status === "rejected") {
+    return "APPROVAL_REJECTED";
+  }
+  if (status === "pending" || status === "requested") {
+    return "APPROVAL_REQUIRED";
+  }
+  return "APPROVAL_NOT_APPROVED";
 }

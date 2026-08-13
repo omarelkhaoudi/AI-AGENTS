@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 export const APPROVAL_STATUSES = Object.freeze([
+  "pending",
   "requested",
   "approved",
   "rejected",
@@ -17,16 +18,31 @@ export class ApprovalModelError extends Error {
   }
 }
 
+export class ApprovalStateError extends Error {
+  constructor(message, code, details = {}) {
+    super(message);
+    this.name = "ApprovalStateError";
+    this.code = code;
+    this.details = details;
+  }
+}
+
 export function createApprovalRequest({
   id = randomUUID(),
+  requestId = null,
+  planStepId = null,
   requestedAction,
   requestingAgent,
+  requestedByAgentId = null,
   reason,
   affectedResource,
   risk = "medium",
   status = "requested",
   approver = null,
+  approverId = null,
+  decisionReason = null,
   metadata = {},
+  decidedAt = null,
   createdAt = new Date().toISOString(),
   updatedAt = createdAt
 }) {
@@ -45,16 +61,22 @@ export function createApprovalRequest({
 
   return Object.freeze({
     id,
+    requestId,
+    planStepId,
     requestedAction,
     requestingAgent,
+    requestedByAgentId,
     reason,
     affectedResource,
     risk,
     status,
     approver,
+    approverId,
+    decisionReason,
     metadata: { ...metadata },
     createdAt,
-    updatedAt
+    updatedAt,
+    decidedAt
   });
 }
 

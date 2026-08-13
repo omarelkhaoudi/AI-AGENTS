@@ -1,5 +1,11 @@
 import { createAuditEvent } from "../observability/audit.js";
 import { evaluateActionPolicy } from "../security/permissions.js";
+import {
+  ToolAdapterError,
+  executeToolAdapter,
+  getToolAdapterMetadata,
+  validateToolAdapter
+} from "./adapters/contract.js";
 import { ToolContractError, validateToolDefinition, validateToolInput } from "./contract.js";
 
 export class ToolRegistryError extends Error {
@@ -13,10 +19,14 @@ export class ToolRegistryError extends Error {
 
 export class ToolRegistry {
   #tools = new Map();
+  #adapters = new Map();
   #repository;
 
-  constructor({ repository = null } = {}) {
+  constructor({ repository = null, adapters = [] } = {}) {
     this.#repository = repository;
+    for (const adapter of adapters) {
+      this.registerAdapter(adapter);
+    }
   }
 
   register(tool) {
@@ -26,8 +36,25 @@ export class ToolRegistry {
       throw new ToolRegistryError(`Tool already registered: ${tool.id}`, "TOOL_ALREADY_REGISTERED");
     }
 
+    if (tool.adapter) {
+      this.registerAdapter(tool.adapter);
+    }
+
     this.#tools.set(tool.id, tool);
     return tool;
+  }
+
+  registerAdapter(adapter) {
+    validateToolAdapter(adapter);
+
+    if (this.#adapters.has(adapter.toolId)) {
+      throw new ToolRegistryError(`Adapter already registered for tool: ${adapter.toolId}`, "ADAPTER_ALREADY_REGISTERED", {
+        toolId: adapter.toolId
+      });
+    }
+
+    this.#adapters.set(adapter.toolId, adapter);
+    return adapter;
   }
 
   get(toolId) {
@@ -38,19 +65,33 @@ export class ToolRegistry {
     return [...this.#tools.values()];
   }
 
+  getAdapter(toolId) {
+    return this.#adapters.get(toolId) ?? null;
+  }
+
+  listAdapters() {
+    return [...this.#adapters.values()];
+  }
+
   has(toolId) {
     return this.#tools.has(toolId);
+  }
+
+  hasAdapter(toolId) {
+    return this.#adapters.has(toolId);
   }
 
   async execute(toolId, context = {}, input = {}) {
     const repository = context.repository ?? this.#repository;
     const auditContext = createAuditContext(context, toolId);
+    const auditEnabled = context.audit !== false;
 
-    await audit(repository, {
+    await audit(repository, auditEnabled, {
       type: "tool_called",
       ...auditContext,
       metadata: {
-        category: this.get(toolId)?.category ?? null
+        category: this.get(toolId)?.category ?? null,
+        adapter: summarizeAdapter(this.getAdapter(toolId))
       }
     });
 
@@ -59,7 +100,7 @@ export class ToolRegistry {
       const error = new ToolRegistryError(`Tool is not registered: ${toolId}`, "TOOL_NOT_FOUND", {
         toolId
       });
-      await auditFailure(repository, auditContext, error);
+      await auditFailure(repository, auditEnabled, auditContext, error);
       throw error;
     }
 
@@ -69,7 +110,7 @@ export class ToolRegistry {
         "AGENT_NOT_ALLOWED",
         { toolId, agentId: context.agentId }
       );
-      await audit(repository, {
+      await audit(repository, auditEnabled, {
         type: "permission_denied",
         ...auditContext,
         metadata: {
@@ -77,16 +118,24 @@ export class ToolRegistry {
           reason: error.message
         }
       });
-      await auditFailure(repository, auditContext, error);
+      await auditFailure(repository, auditEnabled, auditContext, error);
       throw error;
     }
 
-    const permissionDecision = evaluateActionPolicy({
-      permissions: context.agentPermissions ?? [],
-      actionKind: tool.requiredPermission,
-      resource: `request:${context.requestId}`,
-      requiresApproval: tool.requiredPermission === "human_approval_required"
-    });
+    const permissionDecision = context.approvalGranted === true
+      ? {
+          decision: "execute_directly",
+          allowed: true,
+          canPrepare: false,
+          requiresApproval: false,
+          reason: "Tool execution is covered by an approved human approval."
+        }
+      : evaluateActionPolicy({
+          permissions: context.agentPermissions ?? [],
+          actionKind: tool.requiredPermission,
+          resource: `request:${context.requestId}`,
+          requiresApproval: tool.requiredPermission === "human_approval_required"
+        });
 
     if (!permissionDecision.allowed || permissionDecision.requiresApproval) {
       const error = new ToolRegistryError("Tool permission denied.", "PERMISSION_DENIED", {
@@ -94,7 +143,7 @@ export class ToolRegistry {
         agentId: context.agentId,
         permissionDecision
       });
-      await audit(repository, {
+      await audit(repository, auditEnabled, {
         type: "permission_denied",
         ...auditContext,
         metadata: {
@@ -103,14 +152,19 @@ export class ToolRegistry {
           reason: permissionDecision.reason
         }
       });
-      await auditFailure(repository, auditContext, error);
+      await auditFailure(repository, auditEnabled, auditContext, error);
       throw error;
     }
 
     try {
       validateToolInput(tool.inputSchema, input);
-      const output = await tool.execute(createToolExecutionContext(context), input);
-      await audit(repository, {
+      const output = await executeRegisteredTool({
+        tool,
+        adapter: this.getAdapter(tool.id),
+        context: createToolExecutionContext(context),
+        input
+      });
+      await audit(repository, auditEnabled, {
         type: "tool_completed",
         ...auditContext,
         metadata: {
@@ -126,13 +180,34 @@ export class ToolRegistry {
     } catch (cause) {
       const error = cause instanceof ToolContractError
         ? new ToolRegistryError(cause.message, "INVALID_INPUT", { toolId })
+        : cause instanceof ToolAdapterError && cause.code === "INVALID_INPUT"
+        ? new ToolRegistryError(cause.message, "INVALID_INPUT", { toolId })
+        : cause instanceof ToolAdapterError
+        ? new ToolRegistryError(cause.message, "TOOL_FAILED", {
+            toolId,
+            adapterCode: cause.code
+          })
         : cause instanceof ToolRegistryError
         ? cause
         : new ToolRegistryError(cause?.message ?? String(cause), "TOOL_FAILED", { toolId });
-      await auditFailure(repository, auditContext, error);
+      await auditFailure(repository, auditEnabled, auditContext, error);
       throw error;
     }
   }
+}
+
+async function executeRegisteredTool({ tool, adapter, context, input }) {
+  if (adapter) {
+    return executeToolAdapter(adapter, context, input);
+  }
+
+  if (tool.adapterRequired) {
+    throw new ToolRegistryError(`No adapter is registered for tool: ${tool.id}`, "ADAPTER_NOT_FOUND", {
+      toolId: tool.id
+    });
+  }
+
+  return tool.execute(context, input);
 }
 
 function createToolExecutionContext(context) {
@@ -157,8 +232,8 @@ function createAuditContext(context, toolId) {
   };
 }
 
-async function auditFailure(repository, auditContext, error) {
-  await audit(repository, {
+async function auditFailure(repository, auditEnabled, auditContext, error) {
+  await audit(repository, auditEnabled, {
     type: "tool_failed",
     ...auditContext,
     metadata: {
@@ -170,8 +245,8 @@ async function auditFailure(repository, auditContext, error) {
   });
 }
 
-async function audit(repository, event) {
-  if (!repository) {
+async function audit(repository, auditEnabled, event) {
+  if (!repository || !auditEnabled) {
     return null;
   }
   return repository.createAuditEvent(createAuditEvent(event));
@@ -185,5 +260,18 @@ function summarizeOutput(output) {
   return {
     demo: output.demo === true,
     itemCount: Array.isArray(output.items) ? output.items.length : undefined
+  };
+}
+
+function summarizeAdapter(adapter) {
+  if (!adapter) {
+    return null;
+  }
+
+  const metadata = getToolAdapterMetadata(adapter);
+  return {
+    toolId: adapter.toolId,
+    kind: adapter.kind,
+    metadata
   };
 }

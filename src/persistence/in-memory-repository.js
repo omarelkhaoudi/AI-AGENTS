@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createAuditEvent as createAuditEventRecord } from "../observability/audit.js";
+import { ApprovalStateError } from "../security/approval.js";
 import { AgentPlatformRepository } from "./repository-contract.js";
 
 export class InMemoryRepository extends AgentPlatformRepository {
@@ -243,10 +244,50 @@ export class InMemoryRepository extends AgentPlatformRepository {
   saveApproval(approval) {
     const record = freezeRecord({
       ...approval,
-      metadata: cloneValue(approval.metadata ?? {})
+      id: approval.id ?? randomUUID(),
+      metadata: cloneValue(approval.metadata ?? {}),
+      updatedAt: approval.updatedAt ?? new Date().toISOString()
     });
     this.#approvals.set(record.id, record);
     return record;
+  }
+
+  createApproval({
+    id = randomUUID(),
+    requestId = null,
+    planStepId = null,
+    requestingAgent,
+    requestedByAgentId = null,
+    approverId = null,
+    requestedAction,
+    reason,
+    affectedResource,
+    risk = "medium",
+    status = "pending",
+    decisionReason = null,
+    metadata = {},
+    createdAt = new Date().toISOString(),
+    updatedAt = createdAt,
+    decidedAt = null
+  } = {}) {
+    return this.saveApproval({
+      id,
+      requestId,
+      planStepId,
+      requestingAgent,
+      requestedByAgentId,
+      approverId,
+      requestedAction,
+      reason,
+      affectedResource,
+      risk,
+      status,
+      decisionReason,
+      metadata,
+      createdAt,
+      updatedAt,
+      decidedAt
+    });
   }
 
   getApproval(approvalId) {
@@ -255,6 +296,78 @@ export class InMemoryRepository extends AgentPlatformRepository {
 
   listApprovals() {
     return [...this.#approvals.values()];
+  }
+
+  listPendingApprovals(filters = {}) {
+    return [...this.#approvals.values()].filter((approval) => {
+      if (!["pending", "requested"].includes(approval.status)) {
+        return false;
+      }
+      if (filters.requestId && approval.requestId !== filters.requestId) {
+        return false;
+      }
+      if (filters.planStepId && approval.planStepId !== filters.planStepId) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  approveApproval(approvalId, { approverId = null, decisionReason = null, metadata = {} } = {}) {
+    const approval = requireApproval(this.getApproval(approvalId), approvalId);
+    assertApprovalCanTransition(approval);
+    return this.saveApproval({
+      ...approval,
+      status: "approved",
+      approverId,
+      decisionReason,
+      metadata: {
+        ...cloneValue(approval.metadata ?? {}),
+        ...cloneValue(metadata)
+      },
+      decidedAt: new Date().toISOString()
+    });
+  }
+
+  rejectApproval(approvalId, { approverId = null, decisionReason = null, metadata = {} } = {}) {
+    const approval = requireApproval(this.getApproval(approvalId), approvalId);
+    assertApprovalCanTransition(approval);
+    return this.saveApproval({
+      ...approval,
+      status: "rejected",
+      approverId,
+      decisionReason,
+      metadata: {
+        ...cloneValue(approval.metadata ?? {}),
+        ...cloneValue(metadata)
+      },
+      decidedAt: new Date().toISOString()
+    });
+  }
+
+  markApprovalExecuted(approvalId, { executionId, executedAt = new Date().toISOString() } = {}) {
+    const approval = requireApproval(this.getApproval(approvalId), approvalId);
+    if (approval.status !== "approved") {
+      throw new ApprovalStateError("Approval must be approved before execution.", statusToExecutionCode(approval.status), {
+        approvalId,
+        status: approval.status
+      });
+    }
+    if (approval.metadata?.executedAt || approval.metadata?.executionId) {
+      throw new ApprovalStateError("Approval has already been executed.", "APPROVAL_ALREADY_EXECUTED", {
+        approvalId,
+        executionId: approval.metadata.executionId
+      });
+    }
+
+    return this.saveApproval({
+      ...approval,
+      metadata: {
+        ...cloneValue(approval.metadata ?? {}),
+        executionId,
+        executedAt
+      }
+    });
   }
 
   createAuditEvent(event) {
@@ -324,4 +437,44 @@ function cloneValue(value) {
 
 function freezeRecord(record) {
   return Object.freeze(record);
+}
+
+function requireApproval(approval, approvalId) {
+  if (!approval) {
+    throw new ApprovalStateError(`Approval not found: ${approvalId}`, "APPROVAL_NOT_FOUND", {
+      approvalId
+    });
+  }
+  return approval;
+}
+
+function assertApprovalCanTransition(approval) {
+  if (approval.status === "approved") {
+    throw new ApprovalStateError("Approval is already approved.", "APPROVAL_ALREADY_APPROVED", {
+      approvalId: approval.id,
+      status: approval.status
+    });
+  }
+  if (approval.status === "rejected") {
+    throw new ApprovalStateError("Approval is already rejected.", "APPROVAL_ALREADY_REJECTED", {
+      approvalId: approval.id,
+      status: approval.status
+    });
+  }
+  if (!["pending", "requested"].includes(approval.status)) {
+    throw new ApprovalStateError("Approval cannot be processed from its current status.", "APPROVAL_ALREADY_PROCESSED", {
+      approvalId: approval.id,
+      status: approval.status
+    });
+  }
+}
+
+function statusToExecutionCode(status) {
+  if (status === "rejected") {
+    return "APPROVAL_REJECTED";
+  }
+  if (status === "pending" || status === "requested") {
+    return "APPROVAL_REQUIRED";
+  }
+  return "APPROVAL_NOT_APPROVED";
 }

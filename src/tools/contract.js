@@ -16,6 +16,8 @@ export function createToolDefinition({
   requiredPermission,
   allowedAgents = [],
   inputSchema = createToolInputSchema(),
+  adapter = null,
+  adapterRequired = false,
   execute
 }) {
   const tool = {
@@ -26,6 +28,8 @@ export function createToolDefinition({
     requiredPermission,
     allowedAgents: [...allowedAgents],
     inputSchema,
+    adapter,
+    adapterRequired: adapterRequired || adapter !== null,
     execute
   };
 
@@ -73,8 +77,16 @@ export function validateToolDefinition(tool) {
 
   validateInputSchema(tool.inputSchema, errors);
 
-  if (typeof tool.execute !== "function") {
-    errors.push("execute must be a function");
+  if (tool.adapter !== null && tool.adapter !== undefined) {
+    validateAdapterReference(tool, errors);
+  }
+
+  if (typeof tool.adapterRequired !== "boolean") {
+    errors.push("adapterRequired must be a boolean");
+  }
+
+  if (typeof tool.execute !== "function" && !tool.adapter && tool.adapterRequired !== true) {
+    errors.push("execute must be a function when no adapter is configured");
   }
 
   if (errors.length > 0) {
@@ -106,6 +118,25 @@ export function validateToolInput(inputSchema, input) {
   }
 
   return true;
+}
+
+function validateAdapterReference(tool, errors) {
+  if (!tool.adapter || typeof tool.adapter !== "object" || Array.isArray(tool.adapter)) {
+    errors.push("adapter must be an object when provided");
+    return;
+  }
+
+  if (tool.adapter.toolId !== tool.id) {
+    errors.push("adapter.toolId must match tool id");
+  }
+
+  if (typeof tool.adapter.execute !== "function") {
+    errors.push("adapter.execute must be a function");
+  }
+
+  if (typeof tool.adapter.validateInput !== "function") {
+    errors.push("adapter.validateInput must be a function");
+  }
 }
 
 function validateInputSchema(schema, errors) {

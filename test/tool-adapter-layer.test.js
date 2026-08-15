@@ -47,7 +47,7 @@ test("tool adapter contract accepts a valid adapter and exposes redacted metadat
   assert.equal(adapter.toolId, "adapter_contract_tool");
   assert.equal(getToolAdapterMetadata(adapter)[sensitiveKey], "[REDACTED]");
   assert.equal(N8N_TOOL_ADAPTER_INTERFACE.kind, "n8n");
-  assert.equal(N8N_TOOL_ADAPTER_INTERFACE.status, "planned_not_implemented");
+  assert.equal(N8N_TOOL_ADAPTER_INTERFACE.status, "contract_prepared_not_connected");
 });
 
 test("ToolRegistry reports TOOL_NOT_FOUND for unknown tools", async () => {

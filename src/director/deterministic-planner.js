@@ -7,15 +7,21 @@ const GLOBAL_PATTERNS = [
   "entreprise",
   "global",
   "synthese",
-  "tableau de bord",
+  "tableau de bord"
+];
+
+const CDC_PRIORITY_PATTERNS = [
   "point complet",
-  "problemes urgents"
+  "problemes urgents",
+  "problemes importants",
+  "important aujourd"
 ];
 
 const COMMUNICATION_PATTERNS = Object.freeze([
   "communication",
   "communiquer",
   "communique",
+  "publier",
   "planning editorial",
   "calendrier editorial"
 ]);
@@ -49,6 +55,11 @@ const AGENT_PATTERNS = Object.freeze([
     patterns: ["commander", "commande fournisseur", "achat", "achats", "acheter", "fournisseur", "approvisionnement"]
   },
   {
+    agentId: "hr",
+    reason: "The request contains HR, attendance, leave, hiring, or workforce administration intent.",
+    patterns: ["rh", "ressources humaines", "salarie", "salaries", "presence", "presences", "absence", "absences", "conge", "conges", "recrutement", "recrutements", "personnel"]
+  },
+  {
     agentId: "after_sales",
     reason: "The request contains after-sales, support, quality, or customer issue intent.",
     patterns: ["sav", "qualite", "support", "reclamation", "reclamations", "probleme client", "problemes clients"]
@@ -75,6 +86,15 @@ const GLOBAL_AGENT_IDS = Object.freeze([
   "commercial",
   "production",
   "purchasing",
+  "after_sales"
+]);
+
+const EXTENDED_GLOBAL_AGENT_IDS = Object.freeze([
+  "finance",
+  "commercial",
+  "production",
+  "purchasing",
+  "hr",
   "after_sales",
   "marketing",
   "community_manager",
@@ -88,6 +108,7 @@ const DEFAULT_TOOL_BY_AGENT = Object.freeze({
   commercial: "get_pending_quotes",
   production: "get_delayed_production_orders",
   purchasing: "get_purchase_needs",
+  hr: "get_hr_overview",
   after_sales: "get_after_sales_overview",
   marketing: "get_marketing_overview",
   community_manager: "get_community_overview",
@@ -99,6 +120,7 @@ const INTENT_TOOL_BY_AGENT = Object.freeze({
   commercial: "get_pending_quotes",
   production: "get_delayed_production_orders",
   purchasing: "get_purchase_needs",
+  hr: "get_hr_overview",
   after_sales: "get_after_sales_overview",
   marketing: "get_marketing_overview",
   community_manager: "get_community_overview",
@@ -195,8 +217,12 @@ export function selectAgentIds(text) {
     return [...COMMUNICATION_AGENT_IDS];
   }
 
-  if (GLOBAL_PATTERNS.some((pattern) => text.includes(pattern))) {
+  if (CDC_PRIORITY_PATTERNS.some((pattern) => text.includes(pattern))) {
     return [...GLOBAL_AGENT_IDS];
+  }
+
+  if (GLOBAL_PATTERNS.some((pattern) => text.includes(pattern))) {
+    return [...EXTENDED_GLOBAL_AGENT_IDS];
   }
 
   const selected = AGENT_PATTERNS

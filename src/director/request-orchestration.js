@@ -83,6 +83,12 @@ async function orchestrateRequestInTransaction({ requestId, repository, planner,
       continue;
     }
 
+    const plannedTool = plannedStep.toolName ? registry.get(plannedStep.toolName) : null;
+    const stepRequiresApproval = Boolean(
+      plannedStep.requiresApproval === true ||
+      (plannedTool && plannedTool.requiredPermission !== "read_analyze")
+    );
+
     const planStep = await repository.createPlanStep({
       planId: plan.id,
       agentId: agent.id,
@@ -91,7 +97,7 @@ async function orchestrateRequestInTransaction({ requestId, repository, planner,
       actionType: plannedStep.actionType,
       toolName: plannedStep.toolName ?? null,
       input: plannedStep.input,
-      requiresApproval: plannedStep.requiresApproval ?? false
+      requiresApproval: stepRequiresApproval
     });
 
     await audit(repository, {
@@ -124,7 +130,7 @@ async function orchestrateRequestInTransaction({ requestId, repository, planner,
           permissions: agent.permissions ?? [],
           actionKind: plannedStep.actionKind,
           resource: plannedStep.resource,
-          requiresApproval: plannedStep.requiresApproval
+          requiresApproval: stepRequiresApproval
         })
       : activeCheck;
 
@@ -147,7 +153,7 @@ async function orchestrateRequestInTransaction({ requestId, repository, planner,
 
     const canDelegateToToolExecutionService =
       plannedStep.toolName &&
-      plannedStep.requiresApproval === true &&
+      stepRequiresApproval === true &&
       policyDecision.canPrepare === true;
     if (!canExecuteAction(policyDecision) && !canDelegateToToolExecutionService) {
       await audit(repository, {

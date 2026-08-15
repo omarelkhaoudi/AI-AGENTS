@@ -49,6 +49,7 @@ test("registers and discovers the MVP agent identities", () => {
       "finance",
       "production",
       "purchasing",
+      "hr",
       "after_sales",
       "marketing",
       "community_manager",
@@ -56,7 +57,9 @@ test("registers and discovers the MVP agent identities", () => {
     ]
   );
   assert.equal(registry.has("finance"), true);
+  assert.equal(registry.has("hr"), true);
   assert.ok(registry.get("marketing").tools.includes("get_marketing_overview"));
+  assert.ok(registry.get("hr").tools.includes("get_hr_overview"));
   assert.ok(registry.get("community_manager").metadata.accessibleInformation.includes("public_content"));
   assert.ok(registry.get("legal").metadata.approvalRequiredActions.includes("human_approval_required"));
 });

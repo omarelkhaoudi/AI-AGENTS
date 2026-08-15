@@ -1,12 +1,14 @@
 import { createMockToolAdapter } from "./adapters/mock-adapter.js";
 import { createToolDefinition, createToolInputSchema } from "./contract.js";
 import { ToolRegistry } from "./registry.js";
+import { createBusinessMemoryRepository } from "../business-memory/repository-factory.js";
 import {
   DEMO_NOTICE,
   createCompanyOverview,
   getAfterSalesOverview,
   getCommunityOverview,
   getDelayedProductionOrders,
+  getHrOverview,
   getLegalOverview,
   getMarketingOverview,
   getPendingPayments,
@@ -21,7 +23,7 @@ const baseInputSchema = createToolInputSchema({
   }
 });
 
-export function createMvpTools() {
+export function createMvpTools({ businessMemory = createBusinessMemoryRepository() } = {}) {
   return Object.freeze([
     createMvpMockTool({
       id: "get_company_overview",
@@ -39,6 +41,8 @@ export function createMvpTools() {
       category: "finance",
       requiredPermission: "read_analyze",
       allowedAgents: ["finance"],
+      businessMemory,
+      domain: "payments",
       resolveItems: getPendingPayments
     }),
     createMvpMockTool({
@@ -48,6 +52,8 @@ export function createMvpTools() {
       category: "commercial",
       requiredPermission: "read_analyze",
       allowedAgents: ["commercial"],
+      businessMemory,
+      domain: "quotes",
       resolveItems: getPendingQuotes
     }),
     createMvpMockTool({
@@ -57,6 +63,8 @@ export function createMvpTools() {
       category: "production",
       requiredPermission: "read_analyze",
       allowedAgents: ["production"],
+      businessMemory,
+      domain: "production",
       resolveItems: getDelayedProductionOrders
     }),
     createMvpMockTool({
@@ -66,7 +74,18 @@ export function createMvpTools() {
       category: "purchasing",
       requiredPermission: "read_analyze",
       allowedAgents: ["purchasing"],
+      businessMemory,
+      domain: "purchase_needs",
       resolveItems: getPurchaseNeeds
+    }),
+    createMvpMockTool({
+      id: "get_hr_overview",
+      name: "Get HR Overview",
+      description: "Returns mocked HR administration and workforce signals for MVP demonstrations. It never exposes real personal data.",
+      category: "hr",
+      requiredPermission: "read_analyze",
+      allowedAgents: ["hr"],
+      resolveItems: getHrOverview
     }),
     createMvpMockTool({
       id: "get_after_sales_overview",
@@ -75,6 +94,8 @@ export function createMvpTools() {
       category: "after_sales",
       requiredPermission: "read_analyze",
       allowedAgents: ["after_sales"],
+      businessMemory,
+      domain: "after_sales_tickets",
       resolveItems: getAfterSalesOverview
     }),
     createMvpMockTool({
@@ -107,9 +128,9 @@ export function createMvpTools() {
   ]);
 }
 
-export function createMvpToolRegistry({ repository = null } = {}) {
+export function createMvpToolRegistry({ repository = null, businessMemory = createBusinessMemoryRepository() } = {}) {
   const registry = new ToolRegistry({ repository });
-  for (const tool of createMvpTools()) {
+  for (const tool of createMvpTools({ businessMemory })) {
     registry.register(tool);
   }
   registry.register(createSensitiveInvoicePaymentTool());
@@ -153,6 +174,8 @@ function createMvpMockTool({
   category,
   requiredPermission,
   allowedAgents,
+  businessMemory = null,
+  domain = null,
   resolveItems
 }) {
   return createToolDefinition({
@@ -170,7 +193,35 @@ function createMvpMockTool({
         category,
         dataSource: "demo_mock"
       },
-      resolve: async (context) => createDemoResult(context, resolveItems())
+      resolve: async (context) => createDemoResult(context, await resolveDemoItems({
+        businessMemory,
+        domain,
+        context,
+        resolveItems
+      }))
     })
   });
+}
+
+async function resolveDemoItems({ businessMemory, domain, context, resolveItems }) {
+  if (!businessMemory || !domain) {
+    return resolveItems();
+  }
+
+  const records = await businessMemory.listBusinessRecords({
+    domain,
+    agentId: context.agentId,
+    source: "demo_mock"
+  });
+  return resolveItems(createDemoDataSlice(domain, records.map((record) => record.data)));
+}
+
+function createDemoDataSlice(domain, items) {
+  return {
+    payments: domain === "payments" ? items : [],
+    quotes: domain === "quotes" ? items : [],
+    production: domain === "production" ? items : [],
+    purchaseNeeds: domain === "purchase_needs" ? items : [],
+    afterSales: domain === "after_sales_tickets" ? items : []
+  };
 }

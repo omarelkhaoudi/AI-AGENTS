@@ -298,6 +298,88 @@ test("OpenAI planner end-to-end stays inside Director and ToolExecutionService w
   }
 });
 
+test("OpenAI planner can produce the central CDC Director plan with the five priority agents", async () => {
+  const repository = new InMemoryRepository();
+  await seedMvpAgents(repository);
+  const request = await repository.createRequest({
+    title: "Fais-moi le point complet de l'entreprise aujourd'hui.",
+    payload: { question: "Fais-moi le point complet de l'entreprise aujourd'hui." }
+  });
+  const planner = createPlannerFromConfig({
+    provider: "llm_openai",
+    openai: {
+      apiKey: "test",
+      model: "test-model"
+    }
+  }, {
+    openaiClient: createFakeOpenAIClient({
+      response: { structuredPlan: createCentralCompanyPlan(request.id) }
+    })
+  });
+
+  const result = await orchestrateRequest({
+    repository,
+    requestId: request.id,
+    planner
+  });
+  const events = await repository.listAuditEvents({ requestId: request.id });
+
+  assert.equal(result.status, "orchestrated");
+  assert.deepEqual(result.plans[0].steps.map((step) => step.agentId), [
+    "finance",
+    "commercial",
+    "production",
+    "purchasing",
+    "after_sales"
+  ]);
+  assert.deepEqual(result.executions.map((execution) => execution.status), [
+    "completed",
+    "completed",
+    "completed",
+    "completed",
+    "completed"
+  ]);
+  assert.equal(result.executions.every((execution) => execution.output.result.demo === true), true);
+  assert.equal(events.filter((event) => event.type === "tool_called").length, 5);
+});
+
+test("OpenAI planner sensitive execution request still creates approval and does not execute automatically", async () => {
+  const repository = new InMemoryRepository();
+  await seedMvpAgents(repository);
+  const request = await repository.createRequest({
+    title: "Effectue le paiement de cette facture.",
+    payload: { question: "Effectue le paiement de cette facture." }
+  });
+  const planner = createPlannerFromConfig({
+    provider: "llm_openai",
+    openai: {
+      apiKey: "test",
+      model: "test-model"
+    }
+  }, {
+    openaiClient: createFakeOpenAIClient({
+      response: { structuredPlan: createSensitivePaymentPlan(request.id) }
+    })
+  });
+
+  const result = await orchestrateRequest({
+    repository,
+    requestId: request.id,
+    planner
+  });
+  const approvals = await repository.listApprovals();
+  const events = await repository.listAuditEvents({ requestId: request.id });
+
+  assert.equal(result.status, "blocked");
+  assert.equal(result.plans[0].steps[0].requiresApproval, true);
+  assert.equal(result.executions.length, 0);
+  assert.equal(approvals.length, 1);
+  assert.equal(approvals[0].status, "pending");
+  assert.equal(approvals[0].requestedAction, "execute_invoice_payment");
+  assert.equal(events.some((event) => event.type === "approval_requested"), true);
+  assert.equal(events.some((event) => event.type === "tool_completed"), false);
+});
+
 test("invalid OpenAI plan stops before tool execution and does not persist business execution", async () => {
   const repository = new InMemoryRepository();
   await seedMvpAgents(repository);
@@ -395,5 +477,63 @@ function createPlan(requestId) {
       })
     ],
     metadata: { planner: "openai" }
+  });
+}
+
+function createCentralCompanyPlan(requestId) {
+  const steps = [
+    ["finance", "get_pending_payments"],
+    ["commercial", "get_pending_quotes"],
+    ["production", "get_delayed_production_orders"],
+    ["purchasing", "get_purchase_needs"],
+    ["after_sales", "get_after_sales_overview"]
+  ].map(([agentId, toolName], index) => ({
+    id: `${requestId}:openai-central:${index + 1}:${agentId}`,
+    agentId,
+    sequence: index + 1,
+    actionKind: "read_analyze",
+    actionType: "analyze_request",
+    toolName,
+    resource: `request:${requestId}`,
+    input: { requestId },
+    requiresApproval: false,
+    reason: "OpenAI fake central CDC planning step."
+  }));
+
+  return Object.freeze({
+    version: "1",
+    requestId,
+    intent: "global_company_overview",
+    summary: "OpenAI fake central CDC structured plan.",
+    planner: "openai",
+    agents: steps.map((step) => step.agentId),
+    steps,
+    metadata: { planner: "openai", scenario: "central_cdc" }
+  });
+}
+
+function createSensitivePaymentPlan(requestId) {
+  return Object.freeze({
+    version: "1",
+    requestId,
+    intent: "sensitive_invoice_payment",
+    summary: "OpenAI fake sensitive payment plan.",
+    planner: "openai",
+    agents: ["finance"],
+    steps: [
+      Object.freeze({
+        id: `${requestId}:openai-sensitive:1:finance`,
+        agentId: "finance",
+        sequence: 1,
+        actionKind: "execute_action",
+        actionType: "execute_invoice_payment",
+        toolName: "execute_invoice_payment",
+        resource: `request:${requestId}`,
+        input: { requestId },
+        requiresApproval: false,
+        reason: "OpenAI fake planner requested sensitive payment execution."
+      })
+    ],
+    metadata: { planner: "openai", scenario: "sensitive_payment" }
   });
 }

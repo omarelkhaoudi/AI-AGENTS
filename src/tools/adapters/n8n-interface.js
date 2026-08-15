@@ -1,6 +1,6 @@
 export const N8N_TOOL_ADAPTER_INTERFACE = Object.freeze({
   kind: "n8n",
-  status: "planned_not_implemented",
+  status: "contract_prepared_not_connected",
   requiredOptions: Object.freeze([
     "toolId",
     "workflowId",
@@ -12,5 +12,5 @@ export const N8N_TOOL_ADAPTER_INTERFACE = Object.freeze({
     "execute(context, input)",
     "getMetadata()"
   ]),
-  notes: "Future N8nToolAdapter must implement the generic ToolAdapter contract and stay behind ToolRegistry."
+  notes: "Future N8nToolAdapter must implement the generic ToolAdapter contract, stay behind ToolRegistry and ToolExecutionService, and never bypass approvals."
 });

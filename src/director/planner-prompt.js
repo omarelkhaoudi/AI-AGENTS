@@ -69,7 +69,18 @@ function summarizeAgent(agent) {
     description: agent.description,
     status: agent.status,
     permissions: agent.permissions,
-    capabilities: agent.capabilities
+    capabilities: agent.capabilities,
+    mission: agent.metadata?.mission,
+    responsibilities: agent.metadata?.responsibilities,
+    accessibleInformation: agent.metadata?.accessibleInformation,
+    authorizedActions: agent.metadata?.authorizedActions,
+    approvalRequiredActions: agent.metadata?.approvalRequiredActions,
+    businessRules: agent.metadata?.businessRules,
+    procedures: agent.metadata?.procedures,
+    promptInstructions: agent.metadata?.promptInstructions,
+    supervisorAgentId: agent.metadata?.supervisorAgentId,
+    supervisedAgentIds: agent.metadata?.supervisedAgentIds,
+    sensitivity: agent.metadata?.sensitivity
   });
 }
 

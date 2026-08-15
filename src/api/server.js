@@ -1,4 +1,7 @@
 import Fastify from "fastify";
+import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createMvpAgentHierarchy } from "../agents/default-agents.js";
 import { seedMvpAgents } from "../agents/seed.js";
 import { loadFoundationConfig } from "../config.js";
@@ -15,6 +18,14 @@ import {
   rejectApprovalRequest
 } from "../security/approval-flow.js";
 import { ToolExecutionServiceError } from "../tools/execution-service.js";
+
+const FRONTEND_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "frontend");
+const FRONTEND_ASSETS = Object.freeze({
+  "/": { file: "index.html", type: "text/html; charset=utf-8" },
+  "/app/": { file: "index.html", type: "text/html; charset=utf-8" },
+  "/app/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
+  "/app/styles.css": { file: "styles.css", type: "text/css; charset=utf-8" }
+});
 
 export function buildApi({
   repository = new InMemoryRepository(),
@@ -39,6 +50,11 @@ export function buildApi({
     service: "ai-agents",
     timestamp: new Date().toISOString()
   }));
+
+  app.get("/", async (_request, reply) => serveFrontendAsset(reply, "/"));
+  app.get("/app/", async (_request, reply) => serveFrontendAsset(reply, "/app/"));
+  app.get("/app/app.js", async (_request, reply) => serveFrontendAsset(reply, "/app/app.js"));
+  app.get("/app/styles.css", async (_request, reply) => serveFrontendAsset(reply, "/app/styles.css"));
 
   app.get("/api/approvals", async (request, reply) => {
     try {
@@ -170,6 +186,20 @@ export function buildApi({
   });
 
   return app;
+}
+
+async function serveFrontendAsset(reply, route) {
+  const asset = FRONTEND_ASSETS[route];
+  if (!asset) {
+    return reply.code(404).send({ error: "Frontend asset not found." });
+  }
+
+  try {
+    const content = await readFile(join(FRONTEND_DIR, asset.file), "utf8");
+    return reply.type(asset.type).send(content);
+  } catch (error) {
+    return reply.code(500).send(createErrorResponse("Frontend asset loading failed.", error));
+  }
 }
 
 async function createAndOrchestrateRequest({

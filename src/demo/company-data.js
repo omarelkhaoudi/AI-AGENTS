@@ -35,10 +35,36 @@ export function createDemoCompanyData() {
         opportunity: "Demo upsell opportunity"
       })
     ]),
+    invoices: Object.freeze([
+      Object.freeze({
+        id: "invoice-atlas-deposit",
+        customerId: "customer-atlas",
+        quoteId: "quote-atlas-001",
+        orderId: "order-atlas-001",
+        status: "issued",
+        amount: 12000,
+        currency: "MAD",
+        issuedAt: "2026-08-10",
+        dueAt: "2026-08-16",
+        linkedPaymentId: "payment-atlas-deposit"
+      }),
+      Object.freeze({
+        id: "invoice-nova-balance",
+        customerId: "customer-nova",
+        orderId: "order-nova-002",
+        status: "issued",
+        amount: 8500,
+        currency: "MAD",
+        issuedAt: "2026-08-12",
+        dueAt: "2026-08-18",
+        linkedPaymentId: "payment-nova-balance"
+      })
+    ]),
     payments: Object.freeze([
       Object.freeze({
         id: "payment-atlas-deposit",
         customerId: "customer-atlas",
+        invoiceId: "invoice-atlas-deposit",
         quoteId: "quote-atlas-001",
         orderId: "order-atlas-001",
         type: "deposit",
@@ -53,6 +79,7 @@ export function createDemoCompanyData() {
       Object.freeze({
         id: "payment-nova-balance",
         customerId: "customer-nova",
+        invoiceId: "invoice-nova-balance",
         type: "balance",
         amount: 8500,
         currency: "MAD",
@@ -136,6 +163,43 @@ export function createDemoCompanyData() {
     suppliers: Object.freeze([
       Object.freeze({ id: "supplier-metal-one", name: "Demo Supplier Metal One", leadTimeDays: 2 }),
       Object.freeze({ id: "supplier-pack-two", name: "Demo Supplier Pack Two", leadTimeDays: 5 })
+    ]),
+    hr: Object.freeze([
+      Object.freeze({
+        id: "hr-presence-demo-001",
+        category: "attendance",
+        label: "Demo attendance review",
+        status: "watch",
+        priority: "medium",
+        headcountConcern: false,
+        requiresDecision: false
+      }),
+      Object.freeze({
+        id: "hr-leave-demo-001",
+        category: "leave",
+        label: "Demo overlapping leave request",
+        status: "attention_required",
+        priority: "high",
+        requiresDecision: true,
+        decision: "Review staffing coverage before approving the demo leave request."
+      }),
+      Object.freeze({
+        id: "hr-recruitment-demo-001",
+        category: "recruitment",
+        label: "Demo production staffing need",
+        status: "open",
+        priority: "medium",
+        linkedDepartment: "production",
+        requiresDecision: false
+      }),
+      Object.freeze({
+        id: "hr-contract-demo-001",
+        category: "contract",
+        label: "Demo HR contract document follow-up",
+        status: "watch",
+        priority: "medium",
+        requiresDecision: false
+      })
     ]),
     afterSales: Object.freeze([
       Object.freeze({
@@ -243,6 +307,10 @@ export function getDelayedProductionOrders(data = createDemoCompanyData()) {
 
 export function getPurchaseNeeds(data = createDemoCompanyData()) {
   return data.purchaseNeeds.filter((need) => ["high", "medium"].includes(need.urgency));
+}
+
+export function getHrOverview(data = createDemoCompanyData()) {
+  return data.hr;
 }
 
 export function getAfterSalesOverview(data = createDemoCompanyData()) {

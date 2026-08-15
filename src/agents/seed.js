@@ -7,6 +7,7 @@ const AGENT_ROLES = Object.freeze({
   finance: "specialized_agent",
   production: "specialized_agent",
   purchasing: "specialized_agent",
+  hr: "specialized_agent",
   after_sales: "specialized_agent",
   marketing: "specialized_agent",
   community_manager: "specialized_agent",

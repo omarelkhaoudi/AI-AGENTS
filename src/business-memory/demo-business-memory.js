@@ -1,0 +1,164 @@
+import { createDemoCompanyData } from "../demo/company-data.js";
+import { createBusinessRecord } from "./domain-contract.js";
+import { InMemoryBusinessMemoryRepository } from "./in-memory-business-memory.js";
+import { BUSINESS_DATA_SOURCES } from "./source.js";
+
+export function createDemoBusinessMemoryRepository(data = createDemoCompanyData()) {
+  return new InMemoryBusinessMemoryRepository({
+    records: createDemoBusinessRecords(data)
+  });
+}
+
+export function createDemoBusinessRecords(data = createDemoCompanyData()) {
+  return Object.freeze([
+    ...data.customers.map((customer) => createBusinessRecord({
+      id: customer.id,
+      domain: "customers",
+      recordType: "customer",
+      status: customer.status ?? "active",
+      source: BUSINESS_DATA_SOURCES.DEMO_MOCK,
+      data: customer,
+      dates: {
+        createdAt: customer.createdAt ?? data.company.operatingDate,
+        updatedAt: customer.updatedAt ?? data.company.operatingDate
+      },
+      metadata: { companyId: data.company.id, draft: true }
+    })),
+    ...data.quotes.map((quote) => createBusinessRecord({
+      id: quote.id,
+      domain: "quotes",
+      recordType: "quote",
+      status: quote.status,
+      source: BUSINESS_DATA_SOURCES.DEMO_MOCK,
+      data: quote,
+      relations: {
+        customerId: quote.customerId ?? null,
+        prospectId: quote.prospectId ?? null,
+        linkedOrderId: quote.linkedOrderId ?? null
+      },
+      dates: {
+        issuedAt: quote.issuedAt ?? data.company.operatingDate,
+        validUntil: quote.validUntil ?? null
+      },
+      metadata: { companyId: data.company.id, draft: true }
+    })),
+    ...data.invoices.map((invoice) => createBusinessRecord({
+      id: invoice.id,
+      domain: "invoices",
+      recordType: "invoice",
+      status: invoice.status,
+      source: BUSINESS_DATA_SOURCES.DEMO_MOCK,
+      data: invoice,
+      relations: {
+        customerId: invoice.customerId ?? null,
+        quoteId: invoice.quoteId ?? null,
+        orderId: invoice.orderId ?? null
+      },
+      dates: {
+        issuedAt: invoice.issuedAt ?? null,
+        dueAt: invoice.dueAt ?? null
+      },
+      metadata: { companyId: data.company.id, draft: true }
+    })),
+    ...data.payments.map((payment) => createBusinessRecord({
+      id: payment.id,
+      domain: "payments",
+      recordType: "payment",
+      status: payment.status,
+      source: BUSINESS_DATA_SOURCES.DEMO_MOCK,
+      data: payment,
+      relations: {
+        customerId: payment.customerId ?? null,
+        invoiceId: payment.invoiceId ?? null,
+        quoteId: payment.quoteId ?? null,
+        orderId: payment.orderId ?? null
+      },
+      dates: {
+        dueAt: payment.dueAt ?? payment.due ?? null
+      },
+      metadata: { companyId: data.company.id, draft: true }
+    })),
+    ...data.orders.map((order) => createBusinessRecord({
+      id: order.id,
+      domain: "orders",
+      recordType: "order",
+      status: order.status,
+      source: BUSINESS_DATA_SOURCES.DEMO_MOCK,
+      data: order,
+      relations: {
+        customerId: order.customerId ?? null,
+        quoteId: order.quoteId ?? null
+      },
+      dates: {
+        dueAt: order.due ?? null
+      },
+      metadata: { companyId: data.company.id, draft: true }
+    })),
+    ...data.production.map((production) => createBusinessRecord({
+      id: production.id ?? production.orderId,
+      domain: "production",
+      recordType: "production_signal",
+      status: production.status,
+      source: BUSINESS_DATA_SOURCES.DEMO_MOCK,
+      data: production,
+      relations: {
+        orderId: production.orderId ?? null,
+        missingMaterialId: production.missingMaterialId ?? null
+      },
+      dates: {
+        dueAt: production.dueAt ?? findOrderDueDate(data, production.orderId)
+      },
+      metadata: { companyId: data.company.id, draft: true }
+    })),
+    ...data.purchaseNeeds.map((need) => createBusinessRecord({
+      id: need.id,
+      domain: "purchase_needs",
+      recordType: "purchase_need",
+      status: need.status ?? need.urgency,
+      source: BUSINESS_DATA_SOURCES.DEMO_MOCK,
+      data: need,
+      relations: {
+        supplierId: need.supplierId ?? null,
+        linkedOrderId: need.linkedOrderId ?? null,
+        materialId: need.materialId ?? null
+      },
+      dates: {
+        neededAt: need.neededAt ?? data.company.operatingDate
+      },
+      metadata: { companyId: data.company.id, draft: true }
+    })),
+    ...data.suppliers.map((supplier) => createBusinessRecord({
+      id: supplier.id,
+      domain: "suppliers",
+      recordType: "supplier",
+      status: supplier.status ?? "active",
+      source: BUSINESS_DATA_SOURCES.DEMO_MOCK,
+      data: supplier,
+      dates: {
+        createdAt: supplier.createdAt ?? data.company.operatingDate,
+        updatedAt: supplier.updatedAt ?? data.company.operatingDate
+      },
+      metadata: { companyId: data.company.id, draft: true }
+    })),
+    ...data.afterSales.map((ticket) => createBusinessRecord({
+      id: ticket.id,
+      domain: "after_sales_tickets",
+      recordType: "after_sales_ticket",
+      status: ticket.status,
+      source: BUSINESS_DATA_SOURCES.DEMO_MOCK,
+      data: ticket,
+      relations: {
+        customerId: ticket.customerId ?? null,
+        orderId: ticket.orderId ?? null
+      },
+      dates: {
+        openedAt: ticket.openedAt ?? data.company.operatingDate
+      },
+      metadata: { companyId: data.company.id, draft: true }
+    }))
+  ]);
+}
+
+function findOrderDueDate(data, orderId) {
+  return data.orders.find((order) => order.id === orderId)?.due ?? null;
+}

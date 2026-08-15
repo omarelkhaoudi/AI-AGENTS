@@ -196,3 +196,205 @@ model Document {
   @@index([requestId])
   @@index([storageKey])
 }
+
+model Customer {
+  id          String             @id @default(uuid())
+  businessId  String
+  source      String
+  name        String
+  segment     String?
+  status      String             @default("draft")
+  data        Json
+  metadata    Json?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@unique([source, businessId])
+  @@index([source])
+  @@index([status])
+  @@map("customers")
+}
+
+model Quote {
+  id                 String     @id @default(uuid())
+  businessId         String
+  source             String
+  customerBusinessId String?
+  prospectId         String?
+  linkedOrderId      String?
+  status             String     @default("draft")
+  issuedAt           DateTime?
+  validUntil         DateTime?
+  data               Json
+  metadata           Json?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  @@unique([source, businessId])
+  @@index([source])
+  @@index([customerBusinessId])
+  @@index([status])
+  @@map("quotes")
+}
+
+model Invoice {
+  id                 String     @id @default(uuid())
+  businessId         String
+  source             String
+  customerBusinessId String?
+  quoteBusinessId    String?
+  orderBusinessId    String?
+  status             String     @default("draft")
+  amount             Decimal?
+  currency           String?
+  issuedAt           DateTime?
+  dueAt              DateTime?
+  data               Json
+  metadata           Json?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  @@unique([source, businessId])
+  @@index([source])
+  @@index([customerBusinessId])
+  @@index([quoteBusinessId])
+  @@index([orderBusinessId])
+  @@index([status])
+  @@index([dueAt])
+  @@map("invoices")
+}
+
+model Payment {
+  id                 String     @id @default(uuid())
+  businessId         String
+  source             String
+  customerBusinessId String?
+  invoiceBusinessId  String?
+  quoteBusinessId    String?
+  orderBusinessId    String?
+  status             String     @default("draft")
+  amount             Decimal?
+  currency           String?
+  dueAt              DateTime?
+  data               Json
+  metadata           Json?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  @@unique([source, businessId])
+  @@index([source])
+  @@index([customerBusinessId])
+  @@index([invoiceBusinessId])
+  @@index([status])
+  @@index([dueAt])
+  @@map("payments")
+}
+
+model BusinessOrder {
+  id                 String             @id @default(uuid())
+  businessId         String
+  source             String
+  customerBusinessId String?
+  quoteBusinessId    String?
+  status             String             @default("draft")
+  risk               String?
+  dueAt              DateTime?
+  data               Json
+  metadata           Json?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@unique([source, businessId])
+  @@index([source])
+  @@index([customerBusinessId])
+  @@index([quoteBusinessId])
+  @@index([status])
+  @@index([dueAt])
+  @@map("orders")
+}
+
+model ProductionRecord {
+  id              String         @id @default(uuid())
+  businessId      String
+  source          String
+  orderBusinessId String?
+  status          String         @default("draft")
+  delayRisk       String?
+  dueAt           DateTime?
+  data            Json
+  metadata        Json?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@unique([source, businessId])
+  @@index([source])
+  @@index([orderBusinessId])
+  @@index([status])
+  @@index([delayRisk])
+  @@map("production")
+}
+
+model Supplier {
+  id            String         @id @default(uuid())
+  businessId    String
+  source        String
+  name          String
+  status        String         @default("draft")
+  leadTimeDays  Int?
+  data          Json
+  metadata      Json?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@unique([source, businessId])
+  @@index([source])
+  @@index([status])
+  @@map("suppliers")
+}
+
+model PurchaseNeed {
+  id                 String         @id @default(uuid())
+  businessId         String
+  source             String
+  supplierBusinessId String?
+  linkedOrderId      String?
+  status             String         @default("draft")
+  urgency            String?
+  neededAt           DateTime?
+  data               Json
+  metadata           Json?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@unique([source, businessId])
+  @@index([source])
+  @@index([supplierBusinessId])
+  @@index([linkedOrderId])
+  @@index([status])
+  @@index([urgency])
+  @@map("purchase_needs")
+}
+
+model AfterSalesTicket {
+  id                 String         @id @default(uuid())
+  businessId         String
+  source             String
+  customerBusinessId String?
+  orderBusinessId    String?
+  status             String         @default("draft")
+  priority           String?
+  openedAt           DateTime?
+  resolvedAt         DateTime?
+  data               Json
+  metadata           Json?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@unique([source, businessId])
+  @@index([source])
+  @@index([customerBusinessId])
+  @@index([orderBusinessId])
+  @@index([status])
+  @@index([priority])
+  @@map("after_sales_tickets")
+}

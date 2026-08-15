@@ -1,5 +1,6 @@
 import { createAiProviderConfig } from "./integrations/ai-provider.js";
 import { createWorkflowConfig } from "./integrations/workflow-boundary.js";
+import { createBusinessMemoryConfig } from "./business-memory/repository-factory.js";
 import { createPlannerConfig } from "./director/planner-factory.js";
 
 export function loadFoundationConfig(env = process.env) {
@@ -14,6 +15,7 @@ export function loadFoundationConfig(env = process.env) {
       enabled: Boolean(databaseUrl),
       hasUrl: Boolean(databaseUrl)
     }),
+    businessMemory: createBusinessMemoryConfig(env),
     aiProvider: createAiProviderConfig({
       provider: env.AI_PROVIDER ?? "openai",
       apiKey: env.AI_PROVIDER_API_KEY,

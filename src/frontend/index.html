@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Director IA - AI Agents</title>
+    <link rel="stylesheet" href="/app/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="workspace" aria-labelledby="director-title">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Plateforme AI Agents</p>
+            <h1 id="director-title">Director IA</h1>
+          </div>
+          <span class="status-pill" id="api-status">Demo mock</span>
+        </header>
+
+        <section class="panel composer" aria-labelledby="request-title">
+          <div class="panel-heading">
+            <div>
+              <h2 id="request-title">Demande dirigeant</h2>
+              <p>Les reponses utilisent uniquement des donnees de demonstration.</p>
+            </div>
+          </div>
+          <form id="director-form" class="request-form">
+            <label for="director-message">Votre demande</label>
+            <textarea id="director-message" name="message" rows="5">Fais-moi le point complet de l'entreprise aujourd'hui.</textarea>
+            <div class="actions">
+              <button type="submit">Envoyer au Director</button>
+              <button type="button" class="secondary" data-scenario="Fais-moi le point complet de l'entreprise aujourd'hui.">Point complet</button>
+              <button type="button" class="secondary" data-scenario="Effectue le paiement de cette facture.">Action sensible</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="grid">
+          <section class="panel" aria-labelledby="summary-title">
+            <div class="panel-heading">
+              <div>
+                <h2 id="summary-title">Synthese Director</h2>
+                <p id="summary-subtitle">En attente d'une demande.</p>
+              </div>
+            </div>
+            <div id="summary-content" class="empty">Aucune synthese disponible.</div>
+          </section>
+
+          <section class="panel" aria-labelledby="plan-title">
+            <div class="panel-heading">
+              <div>
+                <h2 id="plan-title">Plan genere</h2>
+                <p>Director -> agents specialises -> outils securises.</p>
+              </div>
+            </div>
+            <ol id="plan-list" class="timeline"></ol>
+          </section>
+        </section>
+
+        <section class="panel" aria-labelledby="agents-title">
+          <div class="panel-heading">
+            <div>
+              <h2 id="agents-title">Agents sollicites</h2>
+              <p>Les executions passent par ToolExecutionService.</p>
+            </div>
+          </div>
+          <div id="agent-results" class="agent-grid"></div>
+        </section>
+
+        <section class="panel approvals" aria-labelledby="approval-title">
+          <div class="panel-heading">
+            <div>
+              <h2 id="approval-title">Actions necessitant votre validation</h2>
+              <p>Aucune action sensible n'est executee automatiquement.</p>
+            </div>
+            <button type="button" class="secondary" id="refresh-approvals">Rafraichir</button>
+          </div>
+          <div id="approval-list" class="approval-list"></div>
+        </section>
+      </section>
+
+      <aside class="history panel" aria-labelledby="history-title">
+        <h2 id="history-title">Historique</h2>
+        <div id="history-list" class="history-list"></div>
+      </aside>
+    </main>
+    <script type="module" src="/app/app.js"></script>
+  </body>
+</html>

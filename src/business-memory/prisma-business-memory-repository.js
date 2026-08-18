@@ -2,6 +2,8 @@ import {
   BUSINESS_DOMAINS,
   BusinessMemoryError,
   createBusinessRecord,
+  filterBusinessRecords,
+  normalizeBusinessDomain,
   validateBusinessDomainAccess,
   validateDomain
 } from "./domain-contract.js";
@@ -89,9 +91,10 @@ export class PrismaBusinessMemoryRepository {
     return toBusinessRecord(record.domain, saved);
   }
 
-  async getBusinessRecord({ domain, id, agentId = "director", source = null } = {}) {
-    validateBusinessDomainAccess({ domain, agentId });
-    const config = getDomainModelConfig(domain);
+  async getBusinessRecord({ domain, id, agentId = "director", source = null, filters = null } = {}) {
+    const normalizedDomain = normalizeBusinessDomain(domain);
+    validateBusinessDomainAccess({ domain: normalizedDomain, agentId });
+    const config = getDomainModelConfig(normalizedDomain);
     const normalizedSource = source === null ? null : normalizeBusinessDataSource(source);
     const saved = normalizedSource
       ? await this.prisma[config.delegate].findUnique({
@@ -107,24 +110,29 @@ export class PrismaBusinessMemoryRepository {
           orderBy: { createdAt: "asc" }
         });
 
-    return saved ? toBusinessRecord(domain, saved) : null;
+    const record = saved ? toBusinessRecord(normalizedDomain, saved) : null;
+    return record && filterBusinessRecords([record], { source: null, filters }).length === 1 ? record : null;
   }
 
-  async listBusinessRecords({ domain, agentId = "director", source = BUSINESS_DATA_SOURCES.DEMO_MOCK } = {}) {
-    validateBusinessDomainAccess({ domain, agentId });
-    const config = getDomainModelConfig(domain);
+  async listBusinessRecords({ domain, agentId = "director", source = BUSINESS_DATA_SOURCES.DEMO_MOCK, filters = null } = {}) {
+    const normalizedDomain = normalizeBusinessDomain(domain);
+    validateBusinessDomainAccess({ domain: normalizedDomain, agentId });
+    const config = getDomainModelConfig(normalizedDomain);
     const records = await this.prisma[config.delegate].findMany({
-      where: { source: normalizeBusinessDataSource(source) },
+      where: source === null ? {} : { source: normalizeBusinessDataSource(source) },
       orderBy: { businessId: "asc" }
     });
-    return Object.freeze(records.map((record) => toBusinessRecord(domain, record)));
+    return filterBusinessRecords(records.map((record) => toBusinessRecord(normalizedDomain, record)), {
+      source: null,
+      filters
+    });
   }
 
-  async listBusinessRecordsByDomain({ agentId = "director", source = BUSINESS_DATA_SOURCES.DEMO_MOCK } = {}) {
+  async listBusinessRecordsByDomain({ agentId = "director", source = BUSINESS_DATA_SOURCES.DEMO_MOCK, filters = null } = {}) {
     const entries = [];
     for (const domain of BUSINESS_DOMAINS) {
       try {
-        entries.push([domain, await this.listBusinessRecords({ domain, agentId, source })]);
+        entries.push([domain, await this.listBusinessRecords({ domain, agentId, source, filters })]);
       } catch (error) {
         if (error instanceof BusinessMemoryError && error.code === "BUSINESS_DOMAIN_ACCESS_DENIED") {
           entries.push([domain, Object.freeze([])]);
@@ -138,8 +146,9 @@ export class PrismaBusinessMemoryRepository {
 }
 
 function getDomainModelConfig(domain) {
-  validateDomain(domain);
-  return DOMAIN_MODEL_MAP[domain];
+  const normalizedDomain = normalizeBusinessDomain(domain);
+  validateDomain(normalizedDomain);
+  return DOMAIN_MODEL_MAP[normalizedDomain];
 }
 
 function toBusinessRecord(domain, saved) {

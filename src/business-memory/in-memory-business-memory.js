@@ -2,14 +2,15 @@ import {
   BUSINESS_DOMAINS,
   BusinessMemoryError,
   createBusinessRecord,
+  filterBusinessRecords,
+  normalizeBusinessDomain,
   validateBusinessDomainAccess,
   validateDomain
 } from "./domain-contract.js";
 import {
   BUSINESS_DATA_PROVIDERS,
   BUSINESS_DATA_SOURCES,
-  createBusinessDataSourceDescriptor,
-  normalizeBusinessDataSource
+  createBusinessDataSourceDescriptor
 } from "./source.js";
 
 export class InMemoryBusinessMemoryRepository {
@@ -41,21 +42,23 @@ export class InMemoryBusinessMemoryRepository {
     return record;
   }
 
-  getBusinessRecord({ domain, id, agentId = "director", source = null } = {}) {
-    validateBusinessDomainAccess({ domain, agentId });
-    const records = this.#listRawRecords({ domain, source });
+  getBusinessRecord({ domain, id, agentId = "director", source = null, filters = null } = {}) {
+    const normalizedDomain = normalizeBusinessDomain(domain);
+    validateBusinessDomainAccess({ domain: normalizedDomain, agentId });
+    const records = this.#listRawRecords({ domain: normalizedDomain, source, filters });
     return records.find((record) => record.id === id) ?? null;
   }
 
-  listBusinessRecords({ domain, agentId = "director", source = BUSINESS_DATA_SOURCES.DEMO_MOCK } = {}) {
-    validateBusinessDomainAccess({ domain, agentId });
-    return this.#listRawRecords({ domain, source });
+  listBusinessRecords({ domain, agentId = "director", source = BUSINESS_DATA_SOURCES.DEMO_MOCK, filters = null } = {}) {
+    const normalizedDomain = normalizeBusinessDomain(domain);
+    validateBusinessDomainAccess({ domain: normalizedDomain, agentId });
+    return this.#listRawRecords({ domain: normalizedDomain, source, filters });
   }
 
-  listBusinessRecordsByDomain({ agentId = "director", source = BUSINESS_DATA_SOURCES.DEMO_MOCK } = {}) {
+  listBusinessRecordsByDomain({ agentId = "director", source = BUSINESS_DATA_SOURCES.DEMO_MOCK, filters = null } = {}) {
     return Object.freeze(Object.fromEntries(BUSINESS_DOMAINS.map((domain) => {
       try {
-        return [domain, this.listBusinessRecords({ domain, agentId, source })];
+        return [domain, this.listBusinessRecords({ domain, agentId, source, filters })];
       } catch (error) {
         if (error instanceof BusinessMemoryError && error.code === "BUSINESS_DOMAIN_ACCESS_DENIED") {
           return [domain, Object.freeze([])];
@@ -65,14 +68,13 @@ export class InMemoryBusinessMemoryRepository {
     })));
   }
 
-  #listRawRecords({ domain, source }) {
-    validateDomain(domain);
-    const normalizedSource = source === null ? null : normalizeBusinessDataSource(source);
-    const records = [...this.#records.values()].filter((record) =>
-      record.domain === domain &&
-      (normalizedSource === null || record.source === normalizedSource)
+  #listRawRecords({ domain, source, filters }) {
+    const normalizedDomain = normalizeBusinessDomain(domain);
+    validateDomain(normalizedDomain);
+    return filterBusinessRecords(
+      [...this.#records.values()].filter((record) => record.domain === normalizedDomain),
+      { source, filters }
     );
-    return Object.freeze(records);
   }
 }
 

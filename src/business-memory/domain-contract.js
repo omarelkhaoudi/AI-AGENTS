@@ -12,6 +12,11 @@ export const BUSINESS_DOMAINS = Object.freeze([
   "after_sales_tickets"
 ]);
 
+export const BUSINESS_DOMAIN_ALIASES = Object.freeze({
+  purchasing: "purchase_needs",
+  after_sales: "after_sales_tickets"
+});
+
 export const BUSINESS_DOMAIN_DEFINITIONS = Object.freeze({
   customers: createBusinessDomainDefinition({
     label: "Clients",
@@ -89,13 +94,14 @@ export function createBusinessRecord({
   dates = {},
   metadata = {}
 } = {}) {
-  validateDomain(domain);
+  const normalizedDomain = normalizeBusinessDomain(domain);
+  validateDomain(normalizedDomain);
   requireText(id, "id");
   requireText(recordType, "recordType");
 
   return Object.freeze({
     id,
-    domain,
+    domain: normalizedDomain,
     recordType,
     status,
     source: normalizeBusinessDataSource(source),
@@ -104,6 +110,30 @@ export function createBusinessRecord({
     dates: freezeClone(dates),
     metadata: freezeClone(metadata)
   });
+}
+
+export function assertBusinessRecordContract(record) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    throw new BusinessMemoryError("Business record must be an object.", "INVALID_BUSINESS_RECORD", {
+      field: "record"
+    });
+  }
+
+  requireText(record.id, "id");
+  validateDomain(record.domain);
+  normalizeBusinessDataSource(record.source);
+  requireObject(record.data, "data");
+  requireObject(record.metadata, "metadata");
+  return true;
+}
+
+export function filterBusinessRecords(records, { source = null, filters = null } = {}) {
+  const normalizedSource = source === null ? null : normalizeBusinessDataSource(source);
+  return Object.freeze(records.filter((record) => {
+    assertBusinessRecordContract(record);
+    return (normalizedSource === null || record.source === normalizedSource) &&
+      matchesBusinessRecordFilters(record, filters);
+  }));
 }
 
 export function validateBusinessDomainAccess({ domain, agentId }) {
@@ -118,13 +148,18 @@ export function validateBusinessDomainAccess({ domain, agentId }) {
 }
 
 export function validateDomain(domain) {
-  const definition = BUSINESS_DOMAIN_DEFINITIONS[domain];
+  const normalizedDomain = normalizeBusinessDomain(domain);
+  const definition = BUSINESS_DOMAIN_DEFINITIONS[normalizedDomain];
   if (!definition) {
     throw new BusinessMemoryError(`Unknown business domain: ${domain}`, "UNKNOWN_BUSINESS_DOMAIN", {
       domain
     });
   }
   return definition;
+}
+
+export function normalizeBusinessDomain(domain) {
+  return BUSINESS_DOMAIN_ALIASES[domain] ?? domain;
 }
 
 function createBusinessDomainDefinition({
@@ -147,6 +182,48 @@ function requireText(value, field) {
       field
     });
   }
+}
+
+function requireObject(value, field) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new BusinessMemoryError(`${field} must be an object.`, "INVALID_BUSINESS_RECORD", {
+      field
+    });
+  }
+}
+
+function matchesBusinessRecordFilters(record, filters) {
+  if (filters === null || filters === undefined) {
+    return true;
+  }
+  if (!filters || typeof filters !== "object" || Array.isArray(filters)) {
+    throw new BusinessMemoryError("filters must be an object when provided.", "INVALID_BUSINESS_FILTER", {
+      filters
+    });
+  }
+
+  if (filters.status !== undefined && record.status !== filters.status) {
+    return false;
+  }
+  if (filters.ids !== undefined && (!Array.isArray(filters.ids) || !filters.ids.includes(record.id))) {
+    return false;
+  }
+  if (filters.data !== undefined && !matchesShallowObject(record.data, filters.data, "data")) {
+    return false;
+  }
+  if (filters.metadata !== undefined && !matchesShallowObject(record.metadata, filters.metadata, "metadata")) {
+    return false;
+  }
+  return true;
+}
+
+function matchesShallowObject(target, expected, field) {
+  if (!expected || typeof expected !== "object" || Array.isArray(expected)) {
+    throw new BusinessMemoryError(`${field} filter must be an object.`, "INVALID_BUSINESS_FILTER", {
+      field
+    });
+  }
+  return Object.entries(expected).every(([key, value]) => target[key] === value);
 }
 
 function freezeClone(value) {

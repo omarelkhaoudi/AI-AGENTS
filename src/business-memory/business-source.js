@@ -1,5 +1,10 @@
 import { createDemoCompanyData } from "../demo/company-data.js";
-import { BUSINESS_DOMAINS, BusinessMemoryError } from "./domain-contract.js";
+import {
+  BUSINESS_DOMAINS,
+  filterBusinessRecords,
+  normalizeBusinessDomain,
+  validateDomain
+} from "./domain-contract.js";
 import { createDemoBusinessRecords } from "./demo-business-memory.js";
 import {
   BUSINESS_DATA_PROVIDERS,
@@ -30,9 +35,12 @@ export class DemoBusinessSource {
     return [...BUSINESS_DOMAINS];
   }
 
-  listBusinessRecords({ domain } = {}) {
-    validateSourceDomain(domain);
-    return Object.freeze(this.records.filter((record) => record.domain === domain));
+  listBusinessRecords({ domain, source = null, filters = null } = {}) {
+    const normalizedDomain = validateSourceDomain(domain);
+    return filterBusinessRecords(
+      this.records.filter((record) => record.domain === normalizedDomain),
+      { source, filters }
+    );
   }
 
   listBusinessRecordsByDomain() {
@@ -109,9 +117,6 @@ export function collectBusinessSourceRecords(source) {
 }
 
 function validateSourceDomain(domain) {
-  if (!BUSINESS_DOMAINS.includes(domain)) {
-    throw new BusinessMemoryError(`Unknown business domain: ${domain}`, "UNKNOWN_BUSINESS_DOMAIN", {
-      domain
-    });
-  }
+  validateDomain(domain);
+  return normalizeBusinessDomain(domain);
 }

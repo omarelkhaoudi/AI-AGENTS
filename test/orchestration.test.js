@@ -98,8 +98,9 @@ test("Request Marketing routes to marketing agent", async () => {
 
 test("Request Community Manager routes to community_manager agent", async () => {
   const request = await createOrchestratedRequest("quelles publications reseaux sociaux sont urgentes");
-  assert.deepEqual(selectedAgents(request), ["community_manager"]);
-  assert.equal(request.plans[0].steps[0].toolName, "get_community_overview");
+  assert.deepEqual(selectedAgents(request), ["marketing", "community_manager"]);
+  assert.equal(request.plans[0].steps[0].toolName, "get_marketing_overview");
+  assert.equal(request.plans[0].steps[1].toolName, "get_community_overview");
 });
 
 test("Request Legal routes to legal agent", async () => {

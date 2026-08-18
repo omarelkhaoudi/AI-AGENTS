@@ -26,12 +26,18 @@
           </div>
           <form id="director-form" class="request-form">
             <label for="director-message">Votre demande</label>
-            <textarea id="director-message" name="message" rows="5">Fais-moi le point complet de l'entreprise aujourd'hui.</textarea>
+            <textarea id="director-message" name="message" rows="5">Fais-moi le point sur mon entreprise aujourd'hui.</textarea>
             <div class="actions">
               <button type="submit">Envoyer au Director</button>
-              <button type="button" class="secondary" data-scenario="Fais-moi le point complet de l'entreprise aujourd'hui.">Point complet</button>
-              <button type="button" class="secondary" data-scenario="Effectue le paiement de cette facture.">Action sensible</button>
+              <button type="button" class="secondary" data-scenario="Fais-moi le point sur mon entreprise aujourd'hui.">Point entreprise</button>
+              <button type="button" class="secondary" data-scenario="Qu'est-ce qui est urgent ?">Urgences</button>
+              <button type="button" class="secondary" data-scenario="Combien dois-je encaisser cette semaine ?">Encaissements</button>
+              <button type="button" class="secondary" data-scenario="Quelles commandes risquent d'etre en retard ?">Retards</button>
+              <button type="button" class="secondary" data-scenario="Qu'est-ce que je dois commander ?">Achats</button>
+              <button type="button" class="secondary" data-scenario="Quels clients dois-je relancer ?">Relances</button>
+              <button type="button" class="secondary" data-scenario="Effectue le paiement de cette facture.">Paiement sensible</button>
             </div>
+            <p id="ui-state" class="state-line" role="status">Pret.</p>
           </form>
         </section>
 
@@ -61,9 +67,10 @@
           <div class="panel-heading">
             <div>
               <h2 id="agents-title">Agents sollicites</h2>
-              <p>Les executions passent par ToolExecutionService.</p>
+              <p>Les executions passent par ToolExecutionService. Community Manager reste sous Marketing.</p>
             </div>
           </div>
+          <div id="agent-roster" class="agent-roster" aria-label="Agents disponibles"></div>
           <div id="agent-results" class="agent-grid"></div>
         </section>
 
@@ -76,6 +83,17 @@
             <button type="button" class="secondary" id="refresh-approvals">Rafraichir</button>
           </div>
           <div id="approval-list" class="approval-list"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="voice-title">
+          <div class="panel-heading">
+            <div>
+              <h2 id="voice-title">Voix</h2>
+              <p>Interface preparee pour une future commande vocale locale. Aucune API voix n'est connectee.</p>
+            </div>
+            <span class="tag">preparee_offline</span>
+          </div>
+          <button type="button" class="secondary" id="voice-placeholder" disabled>Voix indisponible en Phase 0</button>
         </section>
       </section>
 

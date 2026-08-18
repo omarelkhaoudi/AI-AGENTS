@@ -151,6 +151,29 @@ test("never auto-executes tools that require human approval", async () => {
   assert.equal(events.some((event) => event.type === "tool_completed"), false);
 });
 
+test("does not trust approvalGranted outside ToolExecutionService", async () => {
+  const repository = new InMemoryRepository();
+  const registry = new ToolRegistry({ repository });
+  registry.register(createEchoTool({
+    id: "sensitive_direct_bypass_tool",
+    requiredPermission: "execute_action"
+  }));
+  const context = createToolContext({
+    agentPermissions: [
+      createPermission({ kind: "execute_action", resource: "request:*" })
+    ],
+    approvalGranted: true
+  });
+
+  await assert.rejects(
+    () => registry.execute("sensitive_direct_bypass_tool", context, { requestId: context.requestId }),
+    (error) => error instanceof ToolRegistryError && error.code === "PERMISSION_DENIED"
+  );
+
+  const events = await repository.listAuditEvents({ requestId: context.requestId });
+  assert.equal(events.some((event) => event.type === "tool_completed"), false);
+});
+
 function createEchoTool({
   id = "echo_tool",
   requiredPermission = "read_analyze",
@@ -181,7 +204,8 @@ function createToolContext({
   agentId = "finance",
   agentPermissions = [
     createPermission({ kind: "read_analyze", resource: "request:*" })
-  ]
+  ],
+  approvalGranted = false
 } = {}) {
   return {
     requestId,
@@ -189,6 +213,7 @@ function createToolContext({
     stepId,
     executionId,
     agentId,
-    agentPermissions
+    agentPermissions,
+    approvalGranted
   };
 }

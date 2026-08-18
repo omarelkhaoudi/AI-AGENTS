@@ -50,6 +50,11 @@ const DOMAIN_MODEL_MAP = Object.freeze({
     recordType: "supplier",
     toPrisma: supplierData
   }),
+  hr_demo_overview: Object.freeze({
+    delegate: "hrSignal",
+    recordType: "hr_signal",
+    toPrisma: hrSignalData
+  }),
   after_sales_tickets: Object.freeze({
     delegate: "afterSalesTicket",
     recordType: "after_sales_ticket",
@@ -180,7 +185,9 @@ function baseData(record, extra = {}) {
 function customerData(record) {
   return baseData(record, {
     name: record.data.name ?? record.id,
-    segment: record.data.segment ?? null
+    segment: record.data.segment ?? null,
+    ...optionalDateField("createdAt", record.dates.createdAt),
+    ...optionalDateField("updatedAt", record.dates.updatedAt)
   });
 }
 
@@ -247,7 +254,9 @@ function purchaseNeedData(record) {
 function supplierData(record) {
   return baseData(record, {
     name: record.data.name ?? record.id,
-    leadTimeDays: record.data.leadTimeDays ?? null
+    leadTimeDays: record.data.leadTimeDays ?? null,
+    ...optionalDateField("createdAt", record.dates.createdAt),
+    ...optionalDateField("updatedAt", record.dates.updatedAt)
   });
 }
 
@@ -261,9 +270,28 @@ function afterSalesTicketData(record) {
   });
 }
 
+function hrSignalData(record) {
+  return baseData(record, {
+    employeeBusinessId: record.relations.employeeId ?? record.data.employeeId ?? null,
+    departmentId: record.relations.departmentId ?? record.data.departmentId ?? record.data.linkedDepartment ?? null,
+    recruitmentId: record.relations.recruitmentId ?? record.data.recruitmentId ?? null,
+    category: record.data.category ?? null,
+    priority: record.data.priority ?? null,
+    observedAt: parseDate(record.dates.observedAt),
+    dueAt: parseDate(record.dates.dueAt)
+  });
+}
+
 function createRelations(domain, saved) {
   if (domain === "customers" || domain === "suppliers") {
     return {};
+  }
+  if (domain === "hr_demo_overview") {
+    return {
+      employeeId: saved.employeeBusinessId ?? null,
+      departmentId: saved.departmentId ?? null,
+      recruitmentId: saved.recruitmentId ?? null
+    };
   }
   if (domain === "quotes") {
     return {
@@ -295,13 +323,15 @@ function createRelations(domain, saved) {
   }
   if (domain === "production") {
     return {
-      orderId: saved.orderBusinessId ?? null
+      orderId: saved.orderBusinessId ?? null,
+      missingMaterialId: saved.data?.missingMaterialId ?? null
     };
   }
   if (domain === "purchase_needs") {
     return {
       supplierId: saved.supplierBusinessId ?? null,
-      linkedOrderId: saved.linkedOrderId ?? null
+      linkedOrderId: saved.linkedOrderId ?? null,
+      materialId: saved.data?.materialId ?? null
     };
   }
   return {
@@ -333,6 +363,10 @@ function createDates(domain, saved) {
   if (domain === "purchase_needs") {
     common.neededAt = formatDate(saved.neededAt);
   }
+  if (domain === "hr_demo_overview") {
+    common.observedAt = formatDate(saved.observedAt);
+    common.dueAt = formatDate(saved.dueAt);
+  }
   if (domain === "after_sales_tickets") {
     common.openedAt = formatDate(saved.openedAt);
     common.resolvedAt = formatDate(saved.resolvedAt);
@@ -346,6 +380,11 @@ function parseDate(value) {
   }
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function optionalDateField(field, value) {
+  const parsed = parseDate(value);
+  return parsed ? { [field]: parsed } : {};
 }
 
 function formatDate(value) {

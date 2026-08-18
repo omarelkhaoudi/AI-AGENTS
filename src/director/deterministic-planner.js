@@ -11,7 +11,10 @@ const GLOBAL_PATTERNS = [
 ];
 
 const CDC_PRIORITY_PATTERNS = [
-  "point complet",
+  "point complet"
+];
+
+const EXTENDED_ISSUES_PATTERNS = [
   "problemes urgents",
   "problemes importants",
   "important aujourd"
@@ -22,8 +25,61 @@ const COMMUNICATION_PATTERNS = Object.freeze([
   "communiquer",
   "communique",
   "publier",
+  "publication",
+  "publications",
+  "publications de cette semaine",
+  "contenus dois-je publier",
+  "contenu dois-je publier",
+  "commentaire",
+  "commentaires",
+  "messages necessitent une reponse",
+  "message necessite une reponse",
+  "caption",
+  "captions",
+  "engagement",
+  "reseaux sociaux",
   "planning editorial",
   "calendrier editorial"
+]);
+
+const MATERIAL_NEEDS_PATTERNS = Object.freeze([
+  "besoin matiere",
+  "besoins matiere",
+  "besoin matieres",
+  "besoins matieres",
+  "matiere premiere",
+  "matieres premieres",
+  "manque matiere",
+  "rupture matiere"
+]);
+
+const FINANCE_RECEIVABLE_PATTERNS = Object.freeze([
+  "creance",
+  "creances",
+  "impaye",
+  "impayes",
+  "encaissement",
+  "encaissements",
+  "paiements sont en retard",
+  "paiements en retard",
+  "paiement est en retard",
+  "paiement en retard"
+]);
+
+const COMMERCIAL_ORDER_PATTERNS = Object.freeze([
+  "commande commerciale",
+  "commandes commerciales"
+]);
+
+const AFTER_SALES_ONLY_PATTERNS = Object.freeze([
+  "sav",
+  "reclamation",
+  "reclamations",
+  "garantie",
+  "garanties",
+  "intervention",
+  "interventions",
+  "satisfaction client"
 ]);
 
 const SENSITIVE_PAYMENT_PATTERNS = Object.freeze([
@@ -33,11 +89,35 @@ const SENSITIVE_PAYMENT_PATTERNS = Object.freeze([
   "paiement de cette facture"
 ]);
 
+const SENSITIVE_HR_PATTERNS = Object.freeze([
+  "decision de recrutement",
+  "decider de recruter",
+  "licencier",
+  "licenciement",
+  "sanction",
+  "modifier le contrat",
+  "modification contractuelle",
+  "decision rh sensible"
+]);
+
+const SENSITIVE_LEGAL_PATTERNS = Object.freeze([
+  "signe ce contrat",
+  "signer ce contrat",
+  "signature du contrat",
+  "signature juridique",
+  "valide ce contrat",
+  "validation juridique sensible",
+  "engage juridiquement",
+  "engager juridiquement",
+  "engagement juridique",
+  "engagement contractuel sensible"
+]);
+
 const AGENT_PATTERNS = Object.freeze([
   {
     agentId: "finance",
     reason: "The request contains finance or cash collection intent.",
-    patterns: ["encaisser", "encaisse", "paiement", "finance", "tresorerie", "facture", "factures"]
+    patterns: ["encaisser", "encaisse", "paiement", "paiements", "finance", "tresorerie", "facture", "factures", "creance", "creances", "impaye", "impayes"]
   },
   {
     agentId: "commercial",
@@ -57,27 +137,27 @@ const AGENT_PATTERNS = Object.freeze([
   {
     agentId: "hr",
     reason: "The request contains HR, attendance, leave, hiring, or workforce administration intent.",
-    patterns: ["rh", "ressources humaines", "salarie", "salaries", "presence", "presences", "absence", "absences", "conge", "conges", "recrutement", "recrutements", "personnel"]
+    patterns: ["rh", "ressources humaines", "salarie", "salaries", "presence", "presences", "absent", "absents", "absence", "absences", "conge", "conges", "recruter", "recrutement", "recrutements", "personnel", "dossiers rh"]
   },
   {
     agentId: "after_sales",
     reason: "The request contains after-sales, support, quality, or customer issue intent.",
-    patterns: ["sav", "qualite", "support", "reclamation", "reclamations", "probleme client", "problemes clients"]
+    patterns: ["sav", "qualite", "support", "reclamation", "reclamations", "garantie", "garanties", "intervention", "interventions", "probleme client", "problemes clients", "problemes sav", "dossiers sav", "satisfaction client"]
   },
   {
     agentId: "marketing",
     reason: "The request contains marketing, campaign, content, or performance intent.",
-    patterns: ["marketing", "campagne", "campagnes", "contenu", "performance marketing", "acquisition", "communication"]
+    patterns: ["marketing", "campagne", "campagnes", "contenu", "contenus", "performance marketing", "performent", "acquisition", "communication", "calendrier marketing", "actions marketing"]
   },
   {
     agentId: "community_manager",
     reason: "The request contains community management, social content, or editorial intent.",
-    patterns: ["community", "community manager", "reseaux sociaux", "social", "publication", "publications", "editorial"]
+    patterns: ["community", "community manager", "reseaux sociaux", "social", "publication", "publications", "editorial", "commentaire", "commentaires", "messages", "caption", "captions", "engagement"]
   },
   {
     agentId: "legal",
     reason: "The request contains legal, contract, compliance, or juridical intent.",
-    patterns: ["juridique", "legal", "contrat", "contrats", "conformite", "litige", "litiges"]
+    patterns: ["juridique", "legal", "contrat", "contrats", "conditions commerciales", "clause", "clauses", "echeance", "echeances", "engagement contractuel", "engagements contractuels", "conformite", "litige", "litiges"]
   }
 ]);
 
@@ -102,6 +182,7 @@ const EXTENDED_GLOBAL_AGENT_IDS = Object.freeze([
 ]);
 
 const COMMUNICATION_AGENT_IDS = Object.freeze(["marketing", "community_manager"]);
+const MATERIAL_NEEDS_AGENT_IDS = Object.freeze(["production", "purchasing"]);
 
 const DEFAULT_TOOL_BY_AGENT = Object.freeze({
   finance: "get_pending_payments",
@@ -151,17 +232,29 @@ export function createDeterministicPlan(request) {
     steps: agentIds.map((agentId, index) => {
       const definition = AGENT_PATTERNS.find((pattern) => pattern.agentId === agentId);
       const sensitivePayment = agentId === "finance" && isSensitivePaymentRequest(text);
+      const sensitiveHr = agentId === "hr" && isSensitiveHrRequest(text);
+      const sensitiveLegal = agentId === "legal" && isSensitiveLegalRequest(text);
       return Object.freeze({
         id: createStepId(requestId, agentId, index),
         agentId,
         sequence: index + 1,
-        actionKind: sensitivePayment ? "execute_action" : "read_analyze",
-        actionType: sensitivePayment ? "execute_invoice_payment" : "analyze_request",
+        actionKind: sensitivePayment ? "execute_action" : sensitiveHr || sensitiveLegal ? "prepare_action" : "read_analyze",
+        actionType: sensitivePayment
+          ? "execute_invoice_payment"
+          : sensitiveHr
+            ? "prepare_hr_sensitive_decision"
+            : sensitiveLegal
+              ? "prepare_legal_sensitive_decision"
+              : "analyze_request",
         toolName: selectToolName(agentId, text),
         resource: `request:${requestId}`,
         reason: sensitivePayment
           ? "The request asks for a sensitive payment action that requires human approval."
-          : definition?.reason ?? "Global company overview requires this specialized agent.",
+          : sensitiveHr
+            ? "The request asks for a sensitive HR decision that requires human approval."
+            : sensitiveLegal
+              ? "The request asks for a sensitive legal commitment that requires human approval."
+              : definition?.reason ?? "Global company overview requires this specialized agent.",
         input: {
           requestId,
           planner: "deterministic",
@@ -172,7 +265,7 @@ export function createDeterministicPlan(request) {
             ? { delegatedByAgentId: "marketing", reportsToAgentId: "marketing" }
             : {})
         },
-        requiresApproval: sensitivePayment
+        requiresApproval: sensitivePayment || sensitiveHr || sensitiveLegal
       });
     }),
     metadata: {
@@ -186,6 +279,12 @@ function selectToolName(agentId, text) {
   if (agentId === "finance" && isSensitivePaymentRequest(text)) {
     return "execute_invoice_payment";
   }
+  if (agentId === "hr" && isSensitiveHrRequest(text)) {
+    return "prepare_hr_sensitive_decision";
+  }
+  if (agentId === "legal" && isSensitiveLegalRequest(text)) {
+    return "prepare_legal_sensitive_decision";
+  }
 
   if (agentId === "finance" && AGENT_PATTERNS[0].patterns.some((pattern) => text.includes(pattern))) {
     return INTENT_TOOL_BY_AGENT.finance;
@@ -197,6 +296,12 @@ function selectToolName(agentId, text) {
 function inferIntent(text, agentIds) {
   if (isSensitivePaymentRequest(text)) {
     return "sensitive_invoice_payment";
+  }
+  if (isSensitiveHrRequest(text)) {
+    return "sensitive_hr_decision";
+  }
+  if (isSensitiveLegalRequest(text)) {
+    return "sensitive_legal_decision";
   }
   if (agentIds.length > 1) {
     return "global_company_overview";
@@ -212,13 +317,45 @@ export function selectAgentIds(text) {
   if (isSensitivePaymentRequest(text)) {
     return ["finance"];
   }
+  if (isSensitiveHrRequest(text)) {
+    return ["hr"];
+  }
+  if (isSensitiveLegalRequest(text)) {
+    return ["legal"];
+  }
 
   if (COMMUNICATION_PATTERNS.some((pattern) => text.includes(pattern))) {
     return [...COMMUNICATION_AGENT_IDS];
   }
 
+  if (MATERIAL_NEEDS_PATTERNS.some((pattern) => text.includes(pattern))) {
+    return [...MATERIAL_NEEDS_AGENT_IDS];
+  }
+
+  if (
+    AFTER_SALES_ONLY_PATTERNS.some((pattern) => text.includes(pattern)) &&
+    !["commande", "commandes", "production"].some((pattern) => text.includes(pattern))
+  ) {
+    return ["after_sales"];
+  }
+
+  if (
+    FINANCE_RECEIVABLE_PATTERNS.some((pattern) => text.includes(pattern)) &&
+    !hasExplicitMultiDomainIntent(text)
+  ) {
+    return ["finance"];
+  }
+
+  if (COMMERCIAL_ORDER_PATTERNS.some((pattern) => text.includes(pattern))) {
+    return ["commercial"];
+  }
+
   if (CDC_PRIORITY_PATTERNS.some((pattern) => text.includes(pattern))) {
     return [...GLOBAL_AGENT_IDS];
+  }
+
+  if (EXTENDED_ISSUES_PATTERNS.some((pattern) => text.includes(pattern))) {
+    return [...EXTENDED_GLOBAL_AGENT_IDS];
   }
 
   if (GLOBAL_PATTERNS.some((pattern) => text.includes(pattern))) {
@@ -234,6 +371,39 @@ export function selectAgentIds(text) {
 
 function isSensitivePaymentRequest(text) {
   return SENSITIVE_PAYMENT_PATTERNS.some((pattern) => text.includes(pattern));
+}
+
+function isSensitiveHrRequest(text) {
+  return SENSITIVE_HR_PATTERNS.some((pattern) => text.includes(pattern));
+}
+
+function isSensitiveLegalRequest(text) {
+  return SENSITIVE_LEGAL_PATTERNS.some((pattern) => text.includes(pattern));
+}
+
+function hasExplicitMultiDomainIntent(text) {
+  return [
+    "devis",
+    "relancer",
+    "relance",
+    "commercial",
+    "prospect",
+    "vente",
+    "production",
+    "commande",
+    "commandes",
+    "livraison",
+    "livrer",
+    "achat",
+    "achats",
+    "acheter",
+    "fournisseur",
+    "approvisionnement",
+    "sav",
+    "qualite",
+    "support",
+    "reclamation"
+  ].some((pattern) => text.includes(pattern));
 }
 
 function normalizeRequestText(request = {}) {

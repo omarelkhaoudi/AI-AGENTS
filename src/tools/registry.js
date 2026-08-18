@@ -122,7 +122,25 @@ export class ToolRegistry {
       throw error;
     }
 
-    const permissionDecision = context.approvalGranted === true
+    if (tool.requiredPermission !== "read_analyze" && context.executedThroughToolExecutionService !== true) {
+      const error = new ToolRegistryError("Sensitive tools must be executed through ToolExecutionService.", "PERMISSION_DENIED", {
+        toolId,
+        agentId: context.agentId,
+        requiredPermission: tool.requiredPermission
+      });
+      await audit(repository, auditEnabled, {
+        type: "permission_denied",
+        ...auditContext,
+        metadata: {
+          toolId,
+          reason: error.message
+        }
+      });
+      await auditFailure(repository, auditEnabled, auditContext, error);
+      throw error;
+    }
+
+    const permissionDecision = context.approvalGranted === true && context.executedThroughToolExecutionService === true
       ? {
           decision: "execute_directly",
           allowed: true,

@@ -1,11 +1,14 @@
-import { createDemoCompanyData } from "../demo/company-data.js";
 import {
-  BUSINESS_DOMAINS,
   filterBusinessRecords,
   normalizeBusinessDomain,
   validateDomain
 } from "./domain-contract.js";
-import { createDemoBusinessRecords } from "./demo-business-memory.js";
+import {
+  DemoBusinessProviderAdapter,
+  FutureRealDataProviderAdapter,
+  assertBusinessProviderAdapterContract,
+  createBusinessProviderAdapter
+} from "./business-provider-adapter.js";
 import {
   BUSINESS_DATA_PROVIDERS,
   createBusinessDataSourceDescriptor
@@ -20,77 +23,82 @@ export class BusinessSourceContractError extends Error {
   }
 }
 
-export class DemoBusinessSource {
-  constructor({ data = createDemoCompanyData(), descriptor = createBusinessDataSourceDescriptor() } = {}) {
-    this.descriptor = descriptor;
-    this.records = createDemoBusinessRecords(data);
+export class AdapterBusinessSource {
+  constructor({ adapter }) {
+    assertBusinessProviderAdapterContract(adapter);
+    this.adapter = adapter;
     assertBusinessSourceContract(this);
   }
 
   getSourceDescriptor() {
-    return this.descriptor;
+    return this.adapter.getProviderDescriptor();
   }
 
   listBusinessDomains() {
-    return [...BUSINESS_DOMAINS];
+    return this.adapter.listBusinessDomains();
   }
 
   listBusinessRecords({ domain, source = null, filters = null } = {}) {
     const normalizedDomain = validateSourceDomain(domain);
+    validateSupportedSourceDomain({
+      domain: normalizedDomain,
+      supportedDomains: this.listBusinessDomains()
+    });
     return filterBusinessRecords(
-      this.records.filter((record) => record.domain === normalizedDomain),
-      { source, filters }
+      this.adapter.listBusinessRecords({ domain: normalizedDomain, filters }),
+      { source }
     );
   }
 
-  listBusinessRecordsByDomain() {
+  listBusinessRecordsByDomain({ source = null, filters = null } = {}) {
     return Object.freeze(Object.fromEntries(
-      BUSINESS_DOMAINS.map((domain) => [domain, this.listBusinessRecords({ domain })])
+      this.listBusinessDomains().map((domain) => [domain, this.listBusinessRecords({ domain, source, filters })])
     ));
   }
 }
 
-export class FutureRealDataBusinessSource {
+export class DemoBusinessSource extends AdapterBusinessSource {
+  constructor({ data = undefined, descriptor = createBusinessDataSourceDescriptor(), adapter = null } = {}) {
+    super({
+      adapter: adapter ?? new DemoBusinessProviderAdapter({ data, descriptor })
+    });
+  }
+}
+
+export class FutureRealDataBusinessSource extends AdapterBusinessSource {
   constructor({
     descriptor = createBusinessDataSourceDescriptor({
       provider: BUSINESS_DATA_PROVIDERS.FUTURE_REAL_DATA
-    })
+    }),
+    adapter = null
   } = {}) {
-    this.descriptor = descriptor;
-    assertBusinessSourceContract(this);
-  }
-
-  getSourceDescriptor() {
-    return this.descriptor;
-  }
-
-  listBusinessDomains() {
-    return [...BUSINESS_DOMAINS];
-  }
-
-  listBusinessRecords({ domain } = {}) {
-    validateSourceDomain(domain);
-    return Object.freeze([]);
-  }
-
-  listBusinessRecordsByDomain() {
-    return Object.freeze(Object.fromEntries(
-      BUSINESS_DOMAINS.map((domain) => [domain, Object.freeze([])])
-    ));
+    super({
+      adapter: adapter ?? new FutureRealDataProviderAdapter({ descriptor })
+    });
   }
 }
 
 export function createBusinessSource({
   provider = BUSINESS_DATA_PROVIDERS.DEMO,
   sourceId = null,
-  data = undefined
+  data = undefined,
+  adapter = null,
+  adapterId = null
 } = {}) {
-  const descriptor = createBusinessDataSourceDescriptor({ provider, sourceId });
+  const selectedAdapter = adapter ?? createBusinessProviderAdapter({
+    provider,
+    sourceId,
+    data,
+    adapter: adapterId
+  });
+  const descriptor = selectedAdapter.getProviderDescriptor();
   if (descriptor.provider === BUSINESS_DATA_PROVIDERS.DEMO) {
-    return new DemoBusinessSource({ data, descriptor });
+    return new DemoBusinessSource({ adapter: selectedAdapter });
   }
-
-  return new FutureRealDataBusinessSource({ descriptor });
+  if (descriptor.provider === BUSINESS_DATA_PROVIDERS.FUTURE_REAL_DATA) {
+    return new FutureRealDataBusinessSource({ adapter: selectedAdapter });
+  }
+  return new AdapterBusinessSource({ adapter: selectedAdapter });
 }
 
 export function assertBusinessSourceContract(source) {
@@ -113,10 +121,21 @@ export function assertBusinessSourceContract(source) {
 export function collectBusinessSourceRecords(source) {
   assertBusinessSourceContract(source);
   const recordsByDomain = source.listBusinessRecordsByDomain();
-  return Object.freeze(BUSINESS_DOMAINS.flatMap((domain) => recordsByDomain[domain] ?? []));
+  return Object.freeze(source.listBusinessDomains().flatMap((domain) => recordsByDomain[domain] ?? []));
 }
 
 function validateSourceDomain(domain) {
   validateDomain(domain);
   return normalizeBusinessDomain(domain);
+}
+
+function validateSupportedSourceDomain({ domain, supportedDomains }) {
+  const normalizedSupportedDomains = supportedDomains.map((supportedDomain) => validateSourceDomain(supportedDomain));
+  if (!normalizedSupportedDomains.includes(domain)) {
+    throw new BusinessSourceContractError("Business source does not support this domain.", "UNSUPPORTED_BUSINESS_SOURCE_DOMAIN", {
+      domain,
+      supportedDomains: normalizedSupportedDomains
+    });
+  }
+  return true;
 }

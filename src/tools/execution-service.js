@@ -149,6 +149,7 @@ export class ToolExecutionService {
         agentPermissions,
         approvalGranted: approval?.status === "approved",
         approvalId: approval?.id ?? null,
+        executedThroughToolExecutionService: true,
         audit: false
       }, input);
 

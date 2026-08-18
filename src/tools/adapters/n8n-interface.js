@@ -4,9 +4,14 @@ export const N8N_TOOL_ADAPTER_INTERFACE = Object.freeze({
   requiredOptions: Object.freeze([
     "toolId",
     "workflowId",
-    "baseUrl",
     "inputSchema"
   ]),
+  optionalFutureOptions: Object.freeze([
+    "baseUrl",
+    "webhookPath"
+  ]),
+  externalConnectionsEnabled: false,
+  webhookEnabled: false,
   requiredMethods: Object.freeze([
     "validateInput(input)",
     "execute(context, input)",

@@ -1,19 +1,35 @@
 export class WorkflowBoundaryError extends Error {
-  constructor(message) {
+  constructor(message, code = "WORKFLOW_BOUNDARY_ERROR", details = {}) {
     super(message);
     this.name = "WorkflowBoundaryError";
+    this.code = code;
+    this.details = details;
   }
 }
 
-export function createWorkflowConfig({ provider = "n8n", baseUrl, enabled = false, metadata = {} } = {}) {
-  if (enabled && (!baseUrl || typeof baseUrl !== "string")) {
-    throw new WorkflowBoundaryError("Workflow baseUrl is required when workflows are enabled.");
+export const WORKFLOW_PROVIDERS = Object.freeze(["mock", "n8n"]);
+
+export function createWorkflowConfig({ provider = "mock", baseUrl, enabled = false, metadata = {} } = {}) {
+  if (!WORKFLOW_PROVIDERS.includes(provider)) {
+    throw new WorkflowBoundaryError("Unsupported workflow provider.", "WORKFLOW_PROVIDER_UNSUPPORTED", {
+      provider,
+      supportedProviders: WORKFLOW_PROVIDERS
+    });
+  }
+  if (enabled !== false) {
+    throw new WorkflowBoundaryError(
+      "Workflow external connections are disabled in Phase 0.",
+      "WORKFLOW_EXTERNAL_CONNECTION_FORBIDDEN",
+      { provider }
+    );
   }
 
   return Object.freeze({
     provider,
     baseUrl: baseUrl ?? null,
-    enabled,
+    enabled: false,
+    status: provider === "n8n" ? "contract_prepared_not_connected" : "offline_mock",
+    externalConnectionsEnabled: false,
     metadata: { ...metadata }
   });
 }

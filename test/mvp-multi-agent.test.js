@@ -5,7 +5,9 @@ import {
   ToolExecutionService,
   ToolExecutionServiceError,
   ToolRegistry,
+  AGENT_SECURITY_BOUNDARIES,
   listAgentBusinessConfigs,
+  listSensitiveBusinessActionsRequiringApproval,
   buildApi,
   getAgentBusinessConfig,
   createMockToolAdapter,
@@ -26,6 +28,18 @@ const CDC_CORE_AGENT_IDS = Object.freeze([
   "production",
   "purchasing",
   "after_sales"
+]);
+
+const CDC_EXTENDED_AGENT_IDS = Object.freeze([
+  "finance",
+  "commercial",
+  "production",
+  "purchasing",
+  "hr",
+  "after_sales",
+  "marketing",
+  "community_manager",
+  "legal"
 ]);
 
 const CDC_CORE_TOOL_IDS = Object.freeze([
@@ -119,6 +133,24 @@ test("POST /api/director/requests returns a clean consolidated demo response", a
   assert.equal(body.summary.delayed.length > 0, true);
   assert.equal(body.summary.blockers.length > 0, true);
   assert.equal(body.summary.decisionsRequired.length > 0, true);
+  assert.deepEqual(Object.keys(body.summary.minimumSections), [
+    "CE QUI VA BIEN",
+    "RETARDS / PROBLEMES",
+    "A ENCAISSER",
+    "A COMMANDER",
+    "RISQUES / BLOCAGES",
+    "DECISIONS NECESSAIRES"
+  ]);
+  assert.deepEqual(
+    body.summary.domainSources.map((entry) => [entry.agent, entry.domain, entry.dataSource]),
+    [
+      ["finance", "payments", "demo_mock"],
+      ["commercial", "quotes", "demo_mock"],
+      ["production", "production", "demo_mock"],
+      ["purchasing", "purchase_needs", "demo_mock"],
+      ["after_sales", "after_sales_tickets", "demo_mock"]
+    ]
+  );
   assert.equal(body.decisionsRequired.some((decision) => decision.type === "business_decision"), true);
   assert.ok(body.audit.some((event) => event.type === "request_created"));
   assert.ok(body.audit.some((event) => event.type === "plan_created"));
@@ -126,6 +158,43 @@ test("POST /api/director/requests returns a clean consolidated demo response", a
   assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 5);
   assert.equal(body.audit.filter((event) => event.type === "execution_completed").length, 5);
   assert.doesNotMatch(response.body, /api[_-]?key|password|token|secret/i);
+});
+
+test("Director handles point sur mon entreprise today as a multi-agent company overview with priority agents", async (t) => {
+  const repository = new InMemoryRepository();
+  const app = buildApi({ repository });
+  t.after(() => app.close());
+
+  const { body, response } = await postDirector(app, "Fais-moi le point sur mon entreprise aujourd'hui.");
+
+  assert.equal(response.statusCode, 201);
+  assert.equal(body.status, "completed");
+  for (const agentId of CDC_EXTENDED_AGENT_IDS) {
+    assert.equal(body.results.some((result) => result.agent === agentId), true, agentId);
+  }
+  assert.deepEqual(body.results.map((result) => result.agent), CDC_EXTENDED_AGENT_IDS);
+  assert.equal(body.results.every((result) => result.result?.demo === true), true);
+  assert.equal(body.findings.every((finding) => finding.dataSource === "demo_mock"), true);
+  assert.deepEqual(Object.keys(body.summary.minimumSections), [
+    "CE QUI VA BIEN",
+    "RETARDS / PROBLEMES",
+    "A ENCAISSER",
+    "A COMMANDER",
+    "RISQUES / BLOCAGES",
+    "DECISIONS NECESSAIRES"
+  ]);
+  assert.equal(body.summary.domainSources.every((entry) =>
+    entry.domain &&
+    entry.dataSource === "demo_mock" &&
+    entry.sourceProvider === "demo" &&
+    typeof entry.sourceId === "string" &&
+    entry.sourceId.length > 0
+  ), true);
+  assert.equal(body.summary.minimumSections["A ENCAISSER"].every((entry) => entry.domain === "payments"), true);
+  assert.equal(body.summary.minimumSections["A COMMANDER"].every((entry) => entry.domain === "purchase_needs"), true);
+  assert.equal(body.summary.minimumSections["RETARDS / PROBLEMES"].some((entry) => entry.domain === "production"), true);
+  assert.equal(body.summary.minimumSections["RISQUES / BLOCAGES"].some((entry) => entry.domain === "legal_demo_overview"), true);
+  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, CDC_EXTENDED_AGENT_IDS.length);
 });
 
 test("MVP business scenarios A to I return coherent Director summaries from demo tools only", async (t) => {
@@ -149,11 +218,13 @@ test("MVP business scenarios A to I return coherent Director summaries from demo
     {
       label: "B",
       message: "Quels sont les problemes importants aujourd'hui ?",
-      agents: CDC_CORE_AGENT_IDS,
+      agents: CDC_EXTENDED_AGENT_IDS,
       assertBody: (body) => {
         assert.equal(body.summary.urgent.length > 0, true);
         assert.equal(body.findings.some((finding) => finding.priority === "urgent"), true);
         assert.equal(body.summary.monitoring.length > 0, true);
+        assert.equal(body.results.some((result) => result.agent === "hr"), true);
+        assert.equal(body.results.some((result) => result.agent === "after_sales"), true);
       }
     },
     {
@@ -178,6 +249,26 @@ test("MVP business scenarios A to I return coherent Director summaries from demo
       }
     },
     {
+      label: "D2",
+      message: "Quels devis sont sans reponse depuis plus de 5 jours ?",
+      agents: ["commercial"],
+      assertBody: (body) => {
+        const quotes = body.results[0].result.items;
+        assert.equal(quotes.some((quote) => quote.followUpReason === "quote_without_reply" && quote.noResponseDays >= 5), true);
+        assert.equal(body.summary.domainSources[0].domain, "quotes");
+      }
+    },
+    {
+      label: "D3",
+      message: "Quelles commandes commerciales necessitent mon attention ?",
+      agents: ["commercial"],
+      assertBody: (body) => {
+        const quotes = body.results[0].result.items;
+        assert.equal(body.results[0].tool, "get_pending_quotes");
+        assert.equal(quotes.some((quote) => quote.depositRequired === true), true);
+      }
+    },
+    {
       label: "E",
       message: "Quelles commandes risquent d'etre en retard ?",
       agents: ["production"],
@@ -199,6 +290,16 @@ test("MVP business scenarios A to I return coherent Director summaries from demo
       }
     },
     {
+      label: "F2",
+      message: "Quels besoins matieres sont lies aux commandes en retard ?",
+      agents: ["production", "purchasing"],
+      assertBody: (body) => {
+        assert.deepEqual(body.results.map((result) => result.agent), ["production", "purchasing"]);
+        assert.equal(body.results[0].result.items.some((item) => item.classification === "IN_DANGER"), true);
+        assert.equal(body.results[1].result.items.some((item) => item.linkedOrderId === "order-atlas-001"), true);
+      }
+    },
+    {
       label: "G",
       message: "Prepare la communication de cette semaine.",
       agents: ["marketing", "community_manager"],
@@ -208,12 +309,23 @@ test("MVP business scenarios A to I return coherent Director summaries from demo
       }
     },
     {
+      label: "G2",
+      message: "Quels sont les besoins matieres pour les commandes en retard ?",
+      agents: ["production", "purchasing"],
+      assertBody: (body) => {
+        assert.deepEqual(body.results.map((result) => result.tool), ["get_delayed_production_orders", "get_purchase_needs"]);
+        assert.deepEqual(body.summary.domainSources.map((entry) => entry.domain), ["production", "purchase_needs"]);
+        assert.equal(body.summary.delayed.some((entry) => entry.agent === "production"), true);
+        assert.equal(body.summary.purchaseNeeds.some((entry) => entry.agent === "purchasing"), true);
+      }
+    },
+    {
       label: "H",
       message: "Quels problemes SAV devons-nous traiter ?",
       agents: ["after_sales"],
       assertBody: (body) => {
         assert.equal(body.summary.afterSales.length > 0, true);
-        assert.equal(body.results[0].result.items.every((entry) => entry.status === "open"), true);
+        assert.equal(body.results[0].result.items.every((entry) => ["OPEN", "IN_PROGRESS", "WAITING_CUSTOMER", "WAITING_INTERNAL"].includes(entry.status)), true);
       }
     },
     {
@@ -240,7 +352,9 @@ test("MVP business scenarios A to I return coherent Director summaries from demo
       finding.priority &&
       finding.title &&
       finding.description &&
-      finding.source
+      finding.source &&
+      finding.domain &&
+      finding.dataSource
     ), true, scenario.label);
     assert.doesNotMatch(JSON.stringify(body), /api[_-]?key|password|token|secret/i, scenario.label);
     scenario.assertBody(body);
@@ -286,12 +400,50 @@ test("Director API returns coherent functional MVP responses for leader requests
       }
     },
     {
+      message: "Quels paiements sont en retard ?",
+      status: "completed",
+      agents: ["finance"],
+      tools: ["get_pending_payments"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.some((item) => item.dueStatus === "overdue" && item.daysLate > 0), true);
+        assert.equal(body.summary.receivables.every((entry) => entry.domain === "payments"), true);
+      }
+    },
+    {
+      message: "Quels clients ont une creance ?",
+      status: "completed",
+      agents: ["finance"],
+      tools: ["get_pending_payments"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.every((item) => item.receivable === true), true);
+        assert.deepEqual(body.results.map((result) => result.agent), ["finance"]);
+      }
+    },
+    {
       message: "Quelles commandes risquent d'etre en retard ?",
       status: "completed",
       agents: ["production"],
       tools: ["get_delayed_production_orders"],
       verify: (body) => {
         assert.equal(body.summary.delayed.length > 0, true);
+      }
+    },
+    {
+      message: "Quelles commandes sont deja en retard ?",
+      status: "completed",
+      agents: ["production"],
+      tools: ["get_delayed_production_orders"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.some((item) => item.classification === "IN_DANGER"), true);
+      }
+    },
+    {
+      message: "Quelles sont les priorites production ?",
+      status: "completed",
+      agents: ["production"],
+      tools: ["get_delayed_production_orders"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.every((item) => ["ON_TIME", "AT_RISK", "IN_DANGER", "DELAYED"].includes(item.classification)), true);
       }
     },
     {
@@ -313,12 +465,68 @@ test("Director API returns coherent functional MVP responses for leader requests
       }
     },
     {
+      message: "Quels besoins matieres sont lies aux commandes en retard ?",
+      status: "completed",
+      agents: ["production", "purchasing"],
+      tools: ["get_delayed_production_orders", "get_purchase_needs"],
+      verify: (body) => {
+        assert.deepEqual(body.summary.domainSources.map((entry) => entry.domain), ["production", "purchase_needs"]);
+        assert.equal(body.summary.minimumSections["A COMMANDER"].some((entry) => entry.item.linkedOrderId === "order-atlas-001"), true);
+      }
+    },
+    {
       message: "Quels sont les problemes SAV importants ?",
       status: "completed",
       agents: ["after_sales"],
       tools: ["get_after_sales_overview"],
       verify: (body) => {
         assert.equal(body.summary.afterSales.length > 0, true);
+        assert.equal(body.results[0].result.items.some((item) => ["HIGH", "CRITICAL"].includes(item.priority)), true);
+      }
+    },
+    {
+      message: "Quels problemes SAV sont ouverts ?",
+      status: "completed",
+      agents: ["after_sales"],
+      tools: ["get_after_sales_overview"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.some((item) => item.status === "OPEN"), true);
+      }
+    },
+    {
+      message: "Quels dossiers SAV attendent encore une intervention ?",
+      status: "completed",
+      agents: ["after_sales"],
+      tools: ["get_after_sales_overview"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.some((item) => item.interventionStatus && item.appointmentAt), true);
+      }
+    },
+    {
+      message: "Quels problemes SAV sont en retard de resolution ?",
+      status: "completed",
+      agents: ["after_sales"],
+      tools: ["get_after_sales_overview"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.some((item) => item.overdue === true), true);
+      }
+    },
+    {
+      message: "Quels dossiers sont sous garantie ?",
+      status: "completed",
+      agents: ["after_sales"],
+      tools: ["get_after_sales_overview"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.some((item) => item.warrantyStatus === "under_warranty"), true);
+      }
+    },
+    {
+      message: "Quel est le niveau de satisfaction client ?",
+      status: "completed",
+      agents: ["after_sales"],
+      tools: ["get_after_sales_overview"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.every((item) => typeof item.satisfactionScore === "number"), true);
       }
     },
     {
@@ -328,6 +536,64 @@ test("Director API returns coherent functional MVP responses for leader requests
       tools: ["get_hr_overview"],
       verify: (body) => {
         assert.equal(body.results[0].result.items.every((item) => item.id.startsWith("hr-")), true);
+      }
+    },
+    {
+      message: "Quels salaries sont absents aujourd'hui ?",
+      status: "completed",
+      agents: ["hr"],
+      tools: ["get_hr_overview"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.some((item) => item.category === "attendance"), true);
+      }
+    },
+    {
+      message: "Quels conges sont prevus cette semaine ?",
+      status: "completed",
+      agents: ["hr"],
+      tools: ["get_hr_overview"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.some((item) => item.category === "leave" && item.plannedAt), true);
+      }
+    },
+    {
+      message: "Avons-nous besoin de recruter ?",
+      status: "completed",
+      agents: ["hr"],
+      tools: ["get_hr_overview"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.some((item) => item.category === "recruitment" && item.staffingNeed === true), true);
+      }
+    },
+    {
+      message: "Quels dossiers RH necessitent mon attention ?",
+      status: "completed",
+      agents: ["hr"],
+      tools: ["get_hr_overview"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.some((item) => item.requiresDecision === true), true);
+      }
+    },
+    {
+      message: "Prepare une decision de recrutement.",
+      status: "requires_approval",
+      agents: ["hr"],
+      tools: ["prepare_hr_sensitive_decision"],
+      verify: (body) => {
+        assert.equal(body.results[0].status, "not_executed");
+        assert.equal(body.audit.some((event) => event.type === "approval_requested"), true);
+        assert.equal(body.audit.some((event) => event.type === "tool_called"), false);
+      }
+    },
+    {
+      message: "Peux-tu licencier ce salarie ?",
+      status: "requires_approval",
+      agents: ["hr"],
+      tools: ["prepare_hr_sensitive_decision"],
+      verify: (body) => {
+        assert.equal(body.results[0].status, "not_executed");
+        assert.equal(body.decisionsRequired.some((decision) => decision.type === "approval"), true);
+        assert.equal(body.audit.some((event) => event.type === "tool_called"), false);
       }
     },
     {
@@ -341,12 +607,84 @@ test("Director API returns coherent functional MVP responses for leader requests
       }
     },
     {
+      message: "Quelles campagnes sont actives ?",
+      status: "completed",
+      agents: ["marketing"],
+      tools: ["get_marketing_overview"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.some((item) => item.status === "active"), true);
+        assert.equal(body.results[0].result.items.every((item) => item.objective && item.performanceScore), true);
+      }
+    },
+    {
+      message: "Quelle campagne necessite mon attention ?",
+      status: "completed",
+      agents: ["marketing"],
+      tools: ["get_marketing_overview"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.some((item) => item.performance === "watch" && item.requiresDecision === true), true);
+      }
+    },
+    {
+      message: "Quels contenus dois-je publier aujourd'hui ?",
+      status: "completed",
+      agents: ["marketing", "community_manager"],
+      tools: ["get_marketing_overview", "get_community_overview"],
+      verify: (body) => {
+        assert.equal(body.results[1].supervisorAgentId, "marketing");
+        assert.equal(body.results[1].result.items.some((item) => item.publicationStatus === "draft" && item.captionDraft), true);
+      }
+    },
+    {
       message: "Y a-t-il des sujets juridiques importants ?",
       status: "completed",
       agents: ["legal"],
       tools: ["get_legal_overview"],
       verify: (body) => {
         assert.equal(body.summary.legal.length > 0, true);
+      }
+    },
+    {
+      message: "Quels contrats arrivent bientot a echeance ?",
+      status: "completed",
+      agents: ["legal"],
+      tools: ["get_legal_overview"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.some((item) => item.contractId && item.deadline), true);
+      }
+    },
+    {
+      message: "Quels dossiers juridiques presentent un risque ?",
+      status: "completed",
+      agents: ["legal"],
+      tools: ["get_legal_overview"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.some((item) => item.riskLevel === "high" && item.legalCaseStatus === "open"), true);
+      }
+    },
+    {
+      message: "Prepare une reponse a ce probleme juridique.",
+      status: "completed",
+      agents: ["legal"],
+      tools: ["get_legal_overview"],
+      verify: (body) => {
+        assert.equal(body.results[0].result.items.some((item) => item.suggestedAction === "prepare_legal_review"), true);
+        assert.equal(body.audit.some((event) => event.type === "approval_requested"), false);
+      }
+    },
+    {
+      message: "Signe ce contrat pour le client Atlas.",
+      status: "requires_approval",
+      agents: ["legal"],
+      tools: ["prepare_legal_sensitive_decision"],
+      verify: (body) => {
+        assert.equal(body.results[0].status, "not_executed");
+        assert.equal(body.results[0].result, null);
+        assert.equal(body.decisionsRequired.length, 1);
+        assert.equal(body.decisionsRequired[0].type, "approval");
+        assert.equal(body.decisionsRequired[0].action, "prepare_legal_sensitive_decision");
+        assert.equal(body.audit.some((event) => event.type === "approval_requested"), true);
+        assert.equal(body.audit.some((event) => event.type === "tool_called"), false);
       }
     },
     {
@@ -408,6 +746,117 @@ test("Director routes commercial and purchasing requests together", async (t) =>
   assert.deepEqual(body.results.map((result) => result.tool), ["get_pending_quotes", "get_purchase_needs"]);
   assert.equal(body.summary.purchaseNeeds.length > 0, true);
   assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 2);
+});
+
+test("Director routes Commercial Marketing combined requests without losing provenance", async (t) => {
+  const repository = new InMemoryRepository();
+  const app = buildApi({ repository });
+  t.after(() => app.close());
+
+  const { body, response } = await postDirector(app, "Quels clients relancer et quelles actions marketing proposes-tu ?");
+
+  assert.equal(response.statusCode, 201);
+  assert.equal(body.status, "completed");
+  assert.deepEqual(body.results.map((result) => result.agent), ["commercial", "marketing"]);
+  assert.deepEqual(body.results.map((result) => result.tool), ["get_pending_quotes", "get_marketing_overview"]);
+  assert.deepEqual(body.summary.domainSources.map((entry) => [entry.agent, entry.domain, entry.dataSource]), [
+    ["commercial", "quotes", "demo_mock"],
+    ["marketing", "marketing_demo_overview", "demo_mock"]
+  ]);
+  assert.equal(body.results[1].result.items.some((item) => item.opportunity), true);
+});
+
+test("Director routes Legal Commercial combined requests for contract and customer context", async (t) => {
+  const repository = new InMemoryRepository();
+  const app = buildApi({ repository });
+  t.after(() => app.close());
+
+  const { body, response } = await postDirector(app, "Quels contrats client et devis doivent etre surveilles ?");
+
+  assert.equal(response.statusCode, 201);
+  assert.equal(body.status, "completed");
+  assert.deepEqual(body.results.map((result) => result.agent), ["commercial", "legal"]);
+  assert.deepEqual(body.results.map((result) => result.tool), ["get_pending_quotes", "get_legal_overview"]);
+  assert.equal(body.results.find((result) => result.agent === "legal").result.items.some((item) => item.clause), true);
+  assert.equal(body.results.find((result) => result.agent === "commercial").result.items.some((item) => item.customerId || item.prospectId), true);
+});
+
+test("Director routes Commercial Production After Sales combined customer issue requests", async (t) => {
+  const repository = new InMemoryRepository();
+  const app = buildApi({ repository });
+  t.after(() => app.close());
+
+  const { body, response } = await postDirector(app, "Quels clients ont des problemes SAV sur des commandes en retard ?");
+
+  assert.equal(response.statusCode, 201);
+  assert.equal(body.status, "completed");
+  assert.deepEqual(body.results.map((result) => result.agent), ["commercial", "production", "after_sales"]);
+  assert.deepEqual(body.results.map((result) => result.tool), ["get_pending_quotes", "get_delayed_production_orders", "get_after_sales_overview"]);
+  assert.deepEqual(body.summary.domainSources.map((entry) => [entry.agent, entry.domain]), [
+    ["commercial", "quotes"],
+    ["production", "production"],
+    ["after_sales", "after_sales_tickets"]
+  ]);
+  assert.equal(body.results.find((result) => result.agent === "after_sales").result.items.some((item) => item.orderId === "order-atlas-001"), true);
+});
+
+test("Director routes Production After Sales quality requests without mixing domains", async (t) => {
+  const repository = new InMemoryRepository();
+  const app = buildApi({ repository });
+  t.after(() => app.close());
+
+  const { body, response } = await postDirector(app, "Quels problemes qualite bloquent la production ?");
+
+  assert.equal(response.statusCode, 201);
+  assert.equal(body.status, "completed");
+  assert.deepEqual(body.results.map((result) => result.agent), ["production", "after_sales"]);
+  assert.deepEqual(body.summary.domainSources.map((entry) => entry.domain), ["production", "after_sales_tickets"]);
+  assert.equal(body.summary.afterSales.every((entry) => entry.domain === "after_sales_tickets"), true);
+  assert.equal(body.summary.delayed.some((entry) => entry.domain === "production"), true);
+});
+
+test("Director preserves provenance across Commercial Finance Production Purchasing chain", async (t) => {
+  const repository = new InMemoryRepository();
+  const app = buildApi({ repository });
+  t.after(() => app.close());
+
+  const { body, response } = await postDirector(
+    app,
+    "Quels clients, creances, commandes en retard et achats dois-je traiter ?"
+  );
+
+  assert.equal(response.statusCode, 201);
+  assert.equal(body.status, "completed");
+  assert.deepEqual(body.results.map((result) => result.agent), ["finance", "commercial", "production", "purchasing"]);
+  assert.deepEqual(body.summary.domainSources.map((entry) => [entry.agent, entry.domain, entry.dataSource]), [
+    ["finance", "payments", "demo_mock"],
+    ["commercial", "quotes", "demo_mock"],
+    ["production", "production", "demo_mock"],
+    ["purchasing", "purchase_needs", "demo_mock"]
+  ]);
+  assert.equal(body.summary.minimumSections["A ENCAISSER"].some((entry) => entry.agent === "finance"), true);
+  assert.equal(body.summary.minimumSections["RETARDS / PROBLEMES"].some((entry) => entry.agent === "production"), true);
+  assert.equal(body.summary.minimumSections["A COMMANDER"].some((entry) => entry.agent === "purchasing"), true);
+});
+
+test("Director preserves Production Purchasing Production loop context without merging domains", async (t) => {
+  const repository = new InMemoryRepository();
+  const app = buildApi({ repository });
+  t.after(() => app.close());
+
+  const { body, response } = await postDirector(
+    app,
+    "Quels besoins matieres bloquent la production et quelles priorites production en decoulent ?"
+  );
+
+  assert.equal(response.statusCode, 201);
+  assert.equal(body.status, "completed");
+  assert.deepEqual(body.results.map((result) => result.agent), ["production", "purchasing"]);
+  assert.deepEqual(body.summary.domainSources.map((entry) => entry.domain), ["production", "purchase_needs"]);
+  assert.equal(body.results[0].result.items.some((item) => item.missingMaterialId === "material-aluminum-a"), true);
+  assert.equal(body.results[1].result.items.some((item) => item.materialId === "material-aluminum-a"), true);
+  assert.equal(body.summary.minimumSections["RETARDS / PROBLEMES"].every((entry) => entry.domain !== "purchase_needs"), true);
+  assert.equal(body.summary.minimumSections["A COMMANDER"].every((entry) => entry.domain === "purchase_needs"), true);
 });
 
 test("Director keeps HR requests limited to HR", async (t) => {
@@ -739,6 +1188,26 @@ test("Business configuration keeps access boundaries explicit", () => {
   assert.equal(legal.supervisorAgentId, "director");
 });
 
+test("CDC priority agent security boundaries are centrally declared and enforced by config validation", () => {
+  const configByAgent = new Map(listAgentBusinessConfigs().map((entry) => [entry.agentId, entry.config]));
+
+  for (const [agentId, boundary] of Object.entries(AGENT_SECURITY_BOUNDARIES)) {
+    const config = configByAgent.get(agentId);
+    const validation = validateAgentBusinessConfig(agentId, config);
+    assert.deepEqual(validation, { ok: true, errors: [] }, agentId);
+
+    for (const forbiddenInfo of boundary.forbiddenInformation) {
+      assert.equal(config.accessibleInformation.some((entry) => entry.includes(forbiddenInfo)), false, `${agentId}:${forbiddenInfo}`);
+    }
+    for (const forbiddenTool of boundary.forbiddenTools) {
+      assert.equal(config.tools.includes(forbiddenTool), false, `${agentId}:${forbiddenTool}`);
+    }
+  }
+
+  assert.equal(AGENT_SECURITY_BOUNDARIES.community_manager.supervisorAgentId, "marketing");
+  assert.equal(AGENT_SECURITY_BOUNDARIES.hr.requiresHumanApprovalForSensitiveActions, true);
+});
+
 test("Community Manager is subordinate to Marketing and not a sibling agent", () => {
   const hierarchy = createMvpAgentHierarchy();
   const byId = new Map(hierarchy.map((entry) => [entry.agentId, entry]));
@@ -781,7 +1250,9 @@ test("MVP tools expose only their authorized specialized agents", () => {
   assert.deepEqual(authorizations.get("get_marketing_overview"), ["marketing"]);
   assert.deepEqual(authorizations.get("get_community_overview"), ["community_manager"]);
   assert.deepEqual(authorizations.get("get_hr_overview"), ["hr"]);
+  assert.deepEqual(authorizations.get("prepare_hr_sensitive_decision"), ["hr"]);
   assert.deepEqual(authorizations.get("get_legal_overview"), ["legal"]);
+  assert.deepEqual(authorizations.get("prepare_legal_sensitive_decision"), ["legal"]);
   assert.equal(authorizations.get("get_pending_payments").includes("marketing"), false);
   assert.equal(authorizations.get("get_pending_payments").includes("hr"), false);
   assert.equal(authorizations.get("get_marketing_overview").includes("hr"), false);
@@ -792,7 +1263,7 @@ test("MVP tools expose only their authorized specialized agents", () => {
   assert.equal(authorizations.get("get_after_sales_overview").includes("community_manager"), false);
 });
 
-test("HR can execute only its mock overview tool and receives demo-marked data", async () => {
+test("HR can execute its mock overview tool and receives demo-marked canonical data", async () => {
   const { service } = await createServiceHarness();
   const result = await service.execute(createServiceInput({
     agentId: "hr",
@@ -805,6 +1276,7 @@ test("HR can execute only its mock overview tool and receives demo-marked data",
   assert.match(result.output.result.notice, /Demonstration data only/);
   assert.equal(result.output.result.items.length > 0, true);
   assert.equal(result.output.result.items.every((item) => item.id.startsWith("hr-")), true);
+  assert.equal(result.output.result.items.some((item) => item.category === "incident"), true);
 });
 
 test("Marketing cannot execute a finance tool", async () => {
@@ -824,11 +1296,42 @@ test("Marketing cannot execute a finance tool", async () => {
 test("Non-HR agents cannot execute the HR overview tool", async () => {
   const { repository, service } = await createServiceHarness();
 
-  for (const agentId of ["finance", "commercial", "production", "purchasing", "marketing", "community_manager", "legal"]) {
+  for (const agentId of ["finance", "commercial", "production", "purchasing", "after_sales", "marketing", "community_manager", "legal"]) {
     await assert.rejects(
       () => service.execute(createServiceInput({
         agentId,
         toolId: "get_hr_overview"
+      })),
+      (error) => error instanceof ToolExecutionServiceError && error.code === "AGENT_NOT_ALLOWED"
+    );
+  }
+
+  await assertNoToolCall(repository);
+});
+
+test("After Sales can read only its mock overview and receives traceable status data", async () => {
+  const { service } = await createServiceHarness();
+  const result = await service.execute(createServiceInput({
+    agentId: "after_sales",
+    toolId: "get_after_sales_overview"
+  }));
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.output.result.demo, true);
+  assert.equal(result.output.result.dataSource, "demo_mock");
+  assert.equal(result.output.result.items.every((item) => item.id && item.status && item.priority), true);
+  assert.equal(result.output.result.items.some((item) => item.status === "OPEN"), true);
+  assert.equal(result.output.result.items.some((item) => item.priority === "CRITICAL"), true);
+});
+
+test("After Sales cannot execute finance, HR, or legal restricted tools", async () => {
+  const { repository, service } = await createServiceHarness();
+
+  for (const toolId of ["get_pending_payments", "get_hr_overview", "get_legal_overview"]) {
+    await assert.rejects(
+      () => service.execute(createServiceInput({
+        agentId: "after_sales",
+        toolId
       })),
       (error) => error instanceof ToolExecutionServiceError && error.code === "AGENT_NOT_ALLOWED"
     );
@@ -992,6 +1495,57 @@ test("sensitive MVP actions require approval and cannot bypass ToolExecutionServ
   const events = await repository.listAuditEvents({ requestId: "req-mvp-security" });
   assert.ok(events.some((event) => event.type === "approval_requested"));
   assert.equal(events.some((event) => event.type === "tool_called"), false);
+});
+
+test("all CDC sensitive action categories require approval and produce approval audit before execution", async () => {
+  const actionSamples = [
+    "execute_invoice_payment",
+    "execute_bank_transfer",
+    "sign_document",
+    "approve_legal_contract",
+    "engage_company_contractually",
+    "apply_large_discount",
+    "modify_hr_record",
+    "decide_recruitment",
+    "terminate_employee",
+    "apply_hr_sanction",
+    "change_hr_contract_sensitive",
+    "commit_hr_sensitive_decision",
+    "commit_hr_financial_obligation",
+    "prepare_hr_sensitive_decision",
+    "prepare_legal_sensitive_decision"
+  ];
+  const sensitiveActions = listSensitiveBusinessActionsRequiringApproval();
+
+  for (const action of actionSamples) {
+    assert.equal(sensitiveActions.includes(action), true, action);
+    const { repository, service } = await createServiceHarness({
+      registry: createRestrictedRegistry({
+        toolId: action,
+        allowedAgents: [agentForSensitiveAction(action)],
+        requiredPermission: "execute_action"
+      })
+    });
+
+    await assert.rejects(
+      () => service.execute(createServiceInput({
+        agentId: agentForSensitiveAction(action),
+        toolId: action,
+        agentPermissions: [
+          createPermission({ kind: "execute_action", resource: "request:*" })
+        ]
+      })),
+      (error) => error instanceof ToolExecutionServiceError && error.code === "APPROVAL_REQUIRED"
+    );
+
+    const events = await repository.listAuditEvents({ requestId: "req-mvp-security" });
+    const approvals = await repository.listPendingApprovals({ requestId: "req-mvp-security" });
+    assert.equal(approvals.length, 1, action);
+    assert.equal(approvals[0].requestedAction, action);
+    assert.equal(approvals[0].risk, "high");
+    assert.equal(events.some((event) => event.type === "approval_requested"), true, action);
+    assert.equal(events.some((event) => event.type === "tool_called"), false, action);
+  }
 });
 
 async function createServiceHarness({ registry = null } = {}) {
@@ -1174,6 +1728,26 @@ function createRestrictedRegistry({
     })
   }));
   return registry;
+}
+
+function agentForSensitiveAction(action) {
+  if (action.includes("legal") || action.includes("sign") || action.includes("engage_company")) {
+    return "legal";
+  }
+  if (
+    action.includes("hr") ||
+    action.includes("leave") ||
+    action.includes("recruitment") ||
+    action.includes("terminate_employee") ||
+    action.includes("sanction") ||
+    action === "change_contract"
+  ) {
+    return "hr";
+  }
+  if (action.includes("discount")) {
+    return "commercial";
+  }
+  return "finance";
 }
 
 async function assertNoToolCall(repository) {

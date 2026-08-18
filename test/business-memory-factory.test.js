@@ -17,6 +17,9 @@ test("business memory factory defaults to memory provider", () => {
   assert.equal(createBusinessMemoryConfig({}).provider, "memory");
   assert.equal(createBusinessMemoryConfig({}).dataSource.provider, "demo");
   assert.equal(createBusinessMemoryConfig({}).dataSource.sourceId, "demo");
+  assert.equal(createBusinessMemoryConfig({}).dataSource.providerAdapter, "demo");
+  assert.equal(createBusinessMemoryConfig({}).dataSource.adapterStatus, "offline_configured");
+  assert.equal(createBusinessMemoryConfig({}).dataSource.externalConnectionsEnabled, false);
   assert.equal(createBusinessMemoryConfig({}).database.hasUrl, false);
 });
 
@@ -38,13 +41,16 @@ test("business memory factory can prepare a future real data source without exte
     env: {
       BUSINESS_MEMORY_PROVIDER: "memory",
       BUSINESS_DATA_PROVIDER: "future_real_data",
-      BUSINESS_DATA_SOURCE_ID: "future-crm"
+      BUSINESS_DATA_SOURCE_ID: "future-crm",
+      BUSINESS_PROVIDER_ADAPTER: "future_real_data"
     }
   });
 
   assert.ok(repository instanceof InMemoryBusinessMemoryRepository);
   assert.equal(repository.getBusinessDataSource().provider, "future_real_data");
   assert.equal(repository.getBusinessDataSource().sourceId, "future-crm");
+  assert.equal(repository.getBusinessDataSource().adapter, "future_real_data");
+  assert.equal(repository.getBusinessDataSource().adapterStatus, "offline_configured");
   assert.equal(repository.getBusinessDataSource().recordSource, "future_real_data");
   assert.equal(repository.getBusinessDataSource().externalConnectionsEnabled, false);
   assert.deepEqual(repository.listBusinessRecords({ domain: "payments", agentId: "finance", source: "future_real_data" }), []);
@@ -88,6 +94,36 @@ test("business memory factory rejects unknown business data providers", () => {
       }
     }),
     /Unsupported BUSINESS_DATA_PROVIDER/
+  );
+});
+
+test("business memory factory rejects unknown provider adapters", () => {
+  assert.throws(
+    () => createBusinessMemoryRepository({
+      env: {
+        BUSINESS_PROVIDER_ADAPTER: "real_crm"
+      }
+    }),
+    /Unsupported BUSINESS_PROVIDER_ADAPTER/
+  );
+});
+
+test("business memory factory rejects incompatible data provider and provider adapter", () => {
+  assert.throws(
+    () => createBusinessMemoryRepository({
+      env: {
+        BUSINESS_DATA_PROVIDER: "demo",
+        BUSINESS_PROVIDER_ADAPTER: "future_real_data"
+      }
+    }),
+    /BUSINESS_DATA_PROVIDER and BUSINESS_PROVIDER_ADAPTER/
+  );
+  assert.throws(
+    () => createBusinessMemoryConfig({
+      BUSINESS_DATA_PROVIDER: "future_real_data",
+      BUSINESS_PROVIDER_ADAPTER: "demo"
+    }),
+    /BUSINESS_DATA_PROVIDER and BUSINESS_PROVIDER_ADAPTER/
   );
 });
 

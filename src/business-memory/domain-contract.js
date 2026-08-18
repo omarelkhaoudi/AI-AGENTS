@@ -9,6 +9,7 @@ export const BUSINESS_DOMAINS = Object.freeze([
   "production",
   "purchase_needs",
   "suppliers",
+  "hr_demo_overview",
   "after_sales_tickets"
 ]);
 
@@ -66,12 +67,56 @@ export const BUSINESS_DOMAIN_DEFINITIONS = Object.freeze({
     allowedAgents: ["director", "purchasing"],
     essentialFields: ["id", "name", "status", "createdAt", "updatedAt", "source", "metadata"]
   }),
+  hr_demo_overview: createBusinessDomainDefinition({
+    label: "Ressources humaines demo",
+    recordType: "hr_signal",
+    allowedAgents: ["director", "hr"],
+    essentialFields: ["id", "category", "status", "observedAt", "source", "metadata"]
+  }),
   after_sales_tickets: createBusinessDomainDefinition({
     label: "Tickets SAV",
     recordType: "after_sales_ticket",
     allowedAgents: ["director", "after_sales"],
     essentialFields: ["id", "customerId", "orderId", "status", "openedAt", "source", "metadata"]
   })
+});
+
+export const BUSINESS_RECORD_CANONICAL_FIELDS = Object.freeze([
+  "id",
+  "domain",
+  "recordType",
+  "status",
+  "source",
+  "data",
+  "relations",
+  "dates",
+  "metadata"
+]);
+
+const BUSINESS_DOMAIN_RELATION_FIELDS = Object.freeze({
+  customers: Object.freeze([]),
+  quotes: Object.freeze(["customerId", "prospectId", "linkedOrderId"]),
+  invoices: Object.freeze(["customerId", "quoteId", "orderId"]),
+  payments: Object.freeze(["customerId", "invoiceId", "quoteId", "orderId"]),
+  orders: Object.freeze(["customerId", "quoteId"]),
+  production: Object.freeze(["orderId", "missingMaterialId"]),
+  purchase_needs: Object.freeze(["supplierId", "linkedOrderId", "materialId"]),
+  suppliers: Object.freeze([]),
+  hr_demo_overview: Object.freeze(["employeeId", "departmentId", "recruitmentId"]),
+  after_sales_tickets: Object.freeze(["customerId", "orderId"])
+});
+
+const BUSINESS_DOMAIN_DATE_FIELDS = Object.freeze({
+  customers: Object.freeze(["createdAt", "updatedAt"]),
+  quotes: Object.freeze(["issuedAt", "validUntil"]),
+  invoices: Object.freeze(["issuedAt", "dueAt"]),
+  payments: Object.freeze(["dueAt"]),
+  orders: Object.freeze(["dueAt"]),
+  production: Object.freeze(["dueAt"]),
+  purchase_needs: Object.freeze(["neededAt"]),
+  suppliers: Object.freeze(["createdAt", "updatedAt"]),
+  hr_demo_overview: Object.freeze(["observedAt", "dueAt"]),
+  after_sales_tickets: Object.freeze(["openedAt", "resolvedAt"])
 });
 
 export class BusinessMemoryError extends Error {
@@ -92,12 +137,26 @@ export function createBusinessRecord({
   data,
   relations = {},
   dates = {},
-  metadata = {}
+  metadata = {},
+  ...extraFields
 } = {}) {
+  if (Object.keys(extraFields).length > 0) {
+    throw new BusinessMemoryError("Business record contains non-canonical top-level fields.", "INVALID_BUSINESS_RECORD", {
+      unexpectedFields: Object.keys(extraFields)
+    });
+  }
   const normalizedDomain = normalizeBusinessDomain(domain);
-  validateDomain(normalizedDomain);
+  const definition = validateDomain(normalizedDomain);
   requireText(id, "id");
   requireText(recordType, "recordType");
+  requireText(status, "status");
+  validateRecordType({
+    record: {
+      domain: normalizedDomain,
+      recordType
+    },
+    definition
+  });
 
   return Object.freeze({
     id,
@@ -106,8 +165,8 @@ export function createBusinessRecord({
     status,
     source: normalizeBusinessDataSource(source),
     data: freezeClone(data ?? {}),
-    relations: freezeClone(relations),
-    dates: freezeClone(dates),
+    relations: freezeClone(normalizeKnownFields(relations, BUSINESS_DOMAIN_RELATION_FIELDS[normalizedDomain])),
+    dates: freezeClone(normalizeKnownFields(dates, BUSINESS_DOMAIN_DATE_FIELDS[normalizedDomain])),
     metadata: freezeClone(metadata)
   });
 }
@@ -120,10 +179,26 @@ export function assertBusinessRecordContract(record) {
   }
 
   requireText(record.id, "id");
-  validateDomain(record.domain);
+  const definition = validateDomain(record.domain);
+  requireText(record.recordType, "recordType");
+  requireText(record.status, "status");
   normalizeBusinessDataSource(record.source);
   requireObject(record.data, "data");
+  requireObject(record.relations, "relations");
+  requireObject(record.dates, "dates");
   requireObject(record.metadata, "metadata");
+  validateCanonicalRecordFields(record);
+  validateRecordType({ record, definition });
+  validateKnownCanonicalFields({
+    value: record.relations,
+    fields: BUSINESS_DOMAIN_RELATION_FIELDS[normalizeBusinessDomain(record.domain)],
+    container: "relations"
+  });
+  validateKnownCanonicalFields({
+    value: record.dates,
+    fields: BUSINESS_DOMAIN_DATE_FIELDS[normalizeBusinessDomain(record.domain)],
+    container: "dates"
+  });
   return true;
 }
 
@@ -224,6 +299,45 @@ function matchesShallowObject(target, expected, field) {
     });
   }
   return Object.entries(expected).every(([key, value]) => target[key] === value);
+}
+
+function validateCanonicalRecordFields(record) {
+  const unexpectedFields = Object.keys(record).filter((field) => !BUSINESS_RECORD_CANONICAL_FIELDS.includes(field));
+  if (unexpectedFields.length > 0) {
+    throw new BusinessMemoryError("Business record contains non-canonical top-level fields.", "INVALID_BUSINESS_RECORD", {
+      unexpectedFields
+    });
+  }
+}
+
+function validateRecordType({ record, definition }) {
+  if (record.recordType !== definition.recordType) {
+    throw new BusinessMemoryError("Business record type does not match its domain.", "INVALID_BUSINESS_RECORD", {
+      domain: record.domain,
+      expectedRecordType: definition.recordType,
+      actualRecordType: record.recordType
+    });
+  }
+}
+
+function validateKnownCanonicalFields({ value, fields, container }) {
+  const missing = fields.filter((field) => !Object.hasOwn(value, field));
+  if (missing.length > 0) {
+    throw new BusinessMemoryError(`Business record ${container} are missing canonical fields.`, "INVALID_BUSINESS_RECORD", {
+      container,
+      missing
+    });
+  }
+}
+
+function normalizeKnownFields(value, fields = []) {
+  const normalized = { ...(value ?? {}) };
+  for (const field of fields) {
+    if (normalized[field] === undefined) {
+      normalized[field] = null;
+    }
+  }
+  return normalized;
 }
 
 function freezeClone(value) {

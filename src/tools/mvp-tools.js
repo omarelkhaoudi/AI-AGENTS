@@ -1,6 +1,8 @@
 import { createMockToolAdapter } from "./adapters/mock-adapter.js";
+import { ToolAdapterError } from "./adapters/contract.js";
 import { createToolDefinition, createToolInputSchema } from "./contract.js";
 import { ToolRegistry } from "./registry.js";
+import { BusinessMemoryError } from "../business-memory/domain-contract.js";
 import { createBusinessMemoryRepository } from "../business-memory/repository-factory.js";
 import {
   BUSINESS_DATA_PROVIDERS,
@@ -90,6 +92,8 @@ export function createMvpTools({ businessMemory = createBusinessMemoryRepository
       category: "hr",
       requiredPermission: "read_analyze",
       allowedAgents: ["hr"],
+      businessMemory,
+      domain: "hr_demo_overview",
       resolveItems: getHrOverview
     }),
     createMvpMockTool({
@@ -139,6 +143,8 @@ export function createMvpToolRegistry({ repository = null, businessMemory = crea
     registry.register(tool);
   }
   registry.register(createSensitiveInvoicePaymentTool());
+  registry.register(createSensitiveHrDecisionTool());
+  registry.register(createSensitiveLegalDecisionTool());
   return registry;
 }
 
@@ -171,6 +177,46 @@ function createSensitiveInvoicePaymentTool() {
         demo: true,
         requiresDecision: true,
         decision: "Human approval is required before any payment execution."
+      })
+    ]
+  });
+}
+
+function createSensitiveHrDecisionTool() {
+  return createMvpMockTool({
+    id: "prepare_hr_sensitive_decision",
+    name: "Prepare HR Sensitive Decision",
+    description: "Prepares a mocked HR sensitive decision for human approval. It never performs a real HR decision.",
+    category: "hr",
+    requiredPermission: "prepare_action",
+    allowedAgents: ["hr"],
+    resolveItems: () => [
+      Object.freeze({
+        id: "demo-hr-sensitive-decision",
+        status: "prepared_only",
+        demo: true,
+        requiresDecision: true,
+        decision: "Human approval is required before any recruitment, sanction, dismissal, contract change, or sensitive HR decision."
+      })
+    ]
+  });
+}
+
+function createSensitiveLegalDecisionTool() {
+  return createMvpMockTool({
+    id: "prepare_legal_sensitive_decision",
+    name: "Prepare Legal Sensitive Decision",
+    description: "Prepares a mocked legal sensitive decision for human approval. It never signs, validates, or engages the company.",
+    category: "legal",
+    requiredPermission: "prepare_action",
+    allowedAgents: ["legal"],
+    resolveItems: () => [
+      Object.freeze({
+        id: "demo-legal-sensitive-decision",
+        status: "prepared_only",
+        demo: true,
+        requiresDecision: true,
+        decision: "Human approval is required before any signature, legal validation, or contractual commitment."
       })
     ]
   });
@@ -221,12 +267,56 @@ async function resolveDemoItems({ businessMemory, domain, context, resolveItems,
     return resolveItems();
   }
 
-  const records = await businessMemory.listBusinessRecords({
+  const records = await readBusinessRecordsForTool({
+    businessMemory,
     domain,
     agentId: context.agentId,
     source: descriptor.recordSource
   });
   return resolveItems(createDemoDataSlice(domain, records.map((record) => record.data)));
+}
+
+export async function readBusinessRecordsForTool({
+  businessMemory,
+  domain,
+  agentId,
+  source,
+  filters = null
+} = {}) {
+  assertBusinessMemoryReadContract(businessMemory);
+
+  try {
+    return await businessMemory.listBusinessRecords({
+      domain,
+      agentId,
+      source,
+      filters
+    });
+  } catch (cause) {
+    if (cause instanceof BusinessMemoryError && cause.code === "BUSINESS_DOMAIN_ACCESS_DENIED") {
+      throw new ToolAdapterError("Business memory access denied for this tool.", "BUSINESS_MEMORY_ACCESS_DENIED", {
+        domain,
+        agentId,
+        causeCode: cause.code
+      });
+    }
+
+    throw new ToolAdapterError("Business memory read failed for this tool.", "BUSINESS_MEMORY_READ_FAILED", {
+      domain,
+      agentId,
+      causeCode: cause?.code ?? "UNKNOWN"
+    });
+  }
+}
+
+export function assertBusinessMemoryReadContract(businessMemory) {
+  const missing = ["listBusinessRecords"].filter((method) => typeof businessMemory?.[method] !== "function");
+  if (missing.length > 0) {
+    throw new ToolAdapterError("Business memory read contract is not available for this tool.", "BUSINESS_MEMORY_CONTRACT_INVALID", {
+      missing
+    });
+  }
+  return true;
 }
 
 function getBusinessDataSourceDescriptor(businessMemory) {
@@ -242,6 +332,7 @@ function createDemoDataSlice(domain, items) {
     quotes: domain === "quotes" ? items : [],
     production: domain === "production" ? items : [],
     purchaseNeeds: domain === "purchase_needs" ? items : [],
+    hr: domain === "hr_demo_overview" ? items : [],
     afterSales: domain === "after_sales_tickets" ? items : []
   };
 }

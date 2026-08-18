@@ -140,6 +140,24 @@ export function createDemoBusinessRecords(data = createDemoCompanyData()) {
       },
       metadata: { companyId: data.company.id, draft: true }
     })),
+    ...data.hr.map((entry) => createBusinessRecord({
+      id: entry.id,
+      domain: "hr_demo_overview",
+      recordType: "hr_signal",
+      status: entry.status,
+      source: BUSINESS_DATA_SOURCES.DEMO_MOCK,
+      data: entry,
+      relations: {
+        employeeId: entry.employeeId ?? null,
+        departmentId: entry.departmentId ?? entry.linkedDepartment ?? null,
+        recruitmentId: entry.recruitmentId ?? null
+      },
+      dates: {
+        observedAt: entry.observedAt ?? data.company.operatingDate,
+        dueAt: entry.dueAt ?? entry.plannedAt ?? null
+      },
+      metadata: { companyId: data.company.id, draft: true, sensitive: true }
+    })),
     ...data.afterSales.map((ticket) => createBusinessRecord({
       id: ticket.id,
       domain: "after_sales_tickets",
@@ -152,7 +170,8 @@ export function createDemoBusinessRecords(data = createDemoCompanyData()) {
         orderId: ticket.orderId ?? null
       },
       dates: {
-        openedAt: ticket.openedAt ?? data.company.operatingDate
+        openedAt: ticket.openedAt ?? data.company.operatingDate,
+        resolvedAt: ticket.resolvedAt ?? null
       },
       metadata: { companyId: data.company.id, draft: true }
     }))

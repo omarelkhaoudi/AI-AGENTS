@@ -40,6 +40,12 @@ const CDC_PRIORITY_COVERAGE = Object.freeze({
     domains: ["after_sales_tickets", "customers", "orders"],
     preparableAction: "prepare_action",
     approvalAction: "execute_action"
+  }),
+  hr: Object.freeze({
+    sopId: "hr-administrative-follow-up-draft",
+    domains: ["hr_demo_overview"],
+    preparableAction: "prepare_action",
+    approvalAction: "human_approval_required"
   })
 });
 
@@ -81,6 +87,7 @@ test("CDC priority business memory records expose useful relations and dates", (
   const production = memory.getBusinessRecord({ domain: "production", id: "order-atlas-001", agentId: "production" });
   const purchaseNeed = memory.getBusinessRecord({ domain: "purchase_needs", id: "purchase-aluminum-a", agentId: "purchasing" });
   const supplier = memory.getBusinessRecord({ domain: "suppliers", id: "supplier-metal-one", agentId: "purchasing" });
+  const hrSignal = memory.getBusinessRecord({ domain: "hr_demo_overview", id: "hr-leave-demo-001", agentId: "hr" });
   const ticket = memory.getBusinessRecord({ domain: "after_sales_tickets", id: "case-sav-001", agentId: "after_sales" });
 
   assert.equal(quote.relations.customerId, "customer-atlas");
@@ -96,6 +103,8 @@ test("CDC priority business memory records expose useful relations and dates", (
   assert.equal(purchaseNeed.relations.supplierId, "supplier-metal-one");
   assert.equal(purchaseNeed.relations.linkedOrderId, "order-atlas-001");
   assert.equal(supplier.status, "active");
+  assert.equal(hrSignal.relations.employeeId, "employee-demo-002");
+  assert.equal(hrSignal.dates.observedAt, "2026-08-18");
   assert.equal(ticket.relations.customerId, "customer-atlas");
   assert.equal(ticket.relations.orderId, "order-atlas-001");
 });

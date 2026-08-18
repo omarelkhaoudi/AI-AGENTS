@@ -30,7 +30,7 @@ test("business domain aliases expose stable business names without changing stor
   const afterSalesRecords = memory.listBusinessRecords({ domain: "after_sales", agentId: "after_sales" });
 
   assert.equal(purchasingRecords.length, 2);
-  assert.equal(afterSalesRecords.length, 2);
+  assert.equal(afterSalesRecords.length, 3);
   assert.equal(purchasingRecords.every((record) => record.domain === "purchase_needs"), true);
   assert.equal(afterSalesRecords.every((record) => record.domain === "after_sales_tickets"), true);
 });

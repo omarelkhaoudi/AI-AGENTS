@@ -6,6 +6,7 @@ import {
   SopAccessError,
   SopContractError,
   createSopDefinition,
+  listSensitiveBusinessActionsRequiringApproval,
   listDefaultSops,
   validateSopDefinition
 } from "../src/index.js";
@@ -87,6 +88,56 @@ test("sensitive SOPs explicitly require human approval", () => {
     assert.equal(sop.requiredApprovals.every((approval) => approval.required === true), true, sop.id);
     assert.match(JSON.stringify(sop.requiredApprovals), /human validation/i);
   }
+});
+
+test("SOP catalog covers CDC sensitive approval categories without becoming executable", () => {
+  const sops = listDefaultSops();
+  const approvals = new Set(sops.flatMap((sop) => sop.requiredApprovals.map((approval) => approval.action)));
+  const sensitiveActions = listSensitiveBusinessActionsRequiringApproval();
+
+  for (const action of [
+    "execute_payment",
+    "execute_invoice_payment",
+    "execute_bank_transfer",
+    "apply_large_discount",
+    "sign_document",
+    "sign_or_send_legal_document",
+    "approve_legal_contract",
+    "engage_company_contractually",
+    "modify_hr_record",
+    "approve_leave",
+    "change_contract",
+    "decide_recruitment",
+    "terminate_employee",
+    "apply_hr_sanction",
+    "change_hr_contract_sensitive",
+    "commit_hr_sensitive_decision",
+    "commit_hr_financial_obligation",
+    "prepare_hr_sensitive_decision"
+  ]) {
+    assert.equal(sensitiveActions.includes(action), true, action);
+    assert.equal(approvals.has(action), true, action);
+  }
+
+  assert.equal(sops.every((sop) => sop.metadata.operationalUse === "planning_reference_only"), true);
+  assert.equal(sops.every((sop) => sop.metadata.executesTools === false), true);
+  assert.equal(sops.every((sop) =>
+    sop.steps.every((step) => !Object.hasOwn(step, "toolId") && !Object.hasOwn(step, "execute"))
+  ), true);
+});
+
+test("agent SOP domains stay aligned with CDC access boundaries", () => {
+  const byAgent = new Map(listDefaultSops().map((sop) => [sop.agentId, sop]));
+
+  assert.deepEqual(byAgent.get("finance").relatedDomains, ["payments", "invoices", "customers"]);
+  assert.deepEqual(byAgent.get("commercial").relatedDomains, ["quotes", "customers"]);
+  assert.deepEqual(byAgent.get("production").relatedDomains, ["orders", "production"]);
+  assert.deepEqual(byAgent.get("purchasing").relatedDomains, ["purchase_needs", "suppliers", "orders"]);
+  assert.deepEqual(byAgent.get("hr").relatedDomains, ["hr_demo_overview"]);
+  assert.deepEqual(byAgent.get("after_sales").relatedDomains, ["after_sales_tickets", "customers", "orders"]);
+  assert.equal(byAgent.get("marketing").relatedDomains.includes("payments"), false);
+  assert.equal(byAgent.get("production").inputs.some((input) => input.name.startsWith("hr_")), false);
+  assert.equal(byAgent.get("legal").requiredApprovals.some((approval) => approval.action.includes("payment")), false);
 });
 
 test("Community Manager SOP stays under Marketing supervision", () => {

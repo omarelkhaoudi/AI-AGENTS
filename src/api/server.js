@@ -295,19 +295,38 @@ function createDemoAgentList(agentResults) {
   ];
 }
 
+const BUSINESS_DOMAIN_BY_TOOL = Object.freeze({
+  get_pending_payments: "payments",
+  get_pending_quotes: "quotes",
+  get_delayed_production_orders: "production",
+  get_purchase_needs: "purchase_needs",
+  get_after_sales_overview: "after_sales_tickets",
+  get_hr_overview: "hr_demo_overview",
+  prepare_hr_sensitive_decision: "hr_demo_overview",
+  get_marketing_overview: "marketing_demo_overview",
+  get_community_overview: "community_demo_overview",
+  get_legal_overview: "legal_demo_overview",
+  prepare_legal_sensitive_decision: "legal_demo_overview"
+});
+
 function createAgentResults(request) {
   const executionsByStep = new Map((request.executions ?? []).map((execution) => [execution.planStepId, execution]));
   return (request.plans?.[0]?.steps ?? []).map((step) => {
     const execution = executionsByStep.get(step.id);
+    const result = execution?.output?.result ?? null;
     return Object.freeze({
       agent: step.agentId,
       tool: step.toolName,
+      domain: BUSINESS_DOMAIN_BY_TOOL[step.toolName] ?? null,
+      dataSource: result?.dataSource ?? null,
+      sourceProvider: result?.sourceProvider ?? null,
+      sourceId: result?.sourceId ?? null,
       supervisorAgentId: step.agent?.metadata?.supervisorAgentId ?? null,
       supervisedAgentIds: step.agent?.metadata?.supervisedAgentIds ?? [],
       delegatedByAgentId: step.input?.delegatedByAgentId ?? null,
       reportsToAgentId: step.input?.reportsToAgentId ?? step.agent?.metadata?.supervisorAgentId ?? null,
       status: execution?.status ?? "not_executed",
-      result: execution?.output?.result ?? null,
+      result,
       error: execution?.error
         ? {
             name: execution.error.name,
@@ -355,6 +374,7 @@ function createDemoSummary({ status, completedCount, expectedCount, agentResults
     purchaseNeeds: collectItems(agentResults, ({ agent }) => agent === "purchasing"),
     marketingSynthesis: createMarketingSynthesis(agentResults),
     legal: collectItems(agentResults, ({ agent }) => agent === "legal"),
+    hr: collectItems(agentResults, ({ agent }) => agent === "hr"),
     afterSales: collectItems(agentResults, ({ agent }) => agent === "after_sales"),
     blockers: collectItems(agentResults, ({ item }) =>
       ["high", "watch", "blocked", "attention_required"].includes(item.urgency) ||
@@ -364,6 +384,7 @@ function createDemoSummary({ status, completedCount, expectedCount, agentResults
     ),
     decisionsRequired
   });
+  const minimumSections = createMinimumDirectorSections(sections);
 
   return Object.freeze({
     headline: createSummaryHeadline({ status, completedCount, expectedCount, agentResults, decisionsRequired }),
@@ -375,11 +396,38 @@ function createDemoSummary({ status, completedCount, expectedCount, agentResults
     purchaseNeeds: sections.purchaseNeeds,
     marketingSynthesis: sections.marketingSynthesis,
     legal: sections.legal,
+    hr: sections.hr,
     afterSales: sections.afterSales,
     blockers: sections.blockers,
     decisionsRequired: sections.decisionsRequired,
+    minimumSections,
+    domainSources: createDomainSourceSummary(agentResults),
     sections
   });
+}
+
+function createMinimumDirectorSections(sections) {
+  return Object.freeze({
+    "CE QUI VA BIEN": sections.whatIsGoingWell,
+    "RETARDS / PROBLEMES": sections.delayed,
+    "A ENCAISSER": sections.receivables,
+    "A COMMANDER": sections.purchaseNeeds,
+    "RISQUES / BLOCAGES": sections.blockers,
+    "DECISIONS NECESSAIRES": sections.decisionsRequired
+  });
+}
+
+function createDomainSourceSummary(agentResults) {
+  return Object.freeze(agentResults.map((result) => Object.freeze({
+    agent: result.agent,
+    tool: result.tool,
+    domain: result.domain,
+    dataSource: result.dataSource,
+    sourceProvider: result.sourceProvider,
+    sourceId: result.sourceId,
+    status: result.status,
+    itemCount: Array.isArray(result.result?.items) ? result.result.items.length : 0
+  })));
 }
 
 function createMarketingSynthesis(agentResults) {
@@ -432,6 +480,10 @@ function createDemoFindings(agentResults) {
     type: result.tool,
     tool: result.tool,
     source: result.tool,
+    domain: result.domain,
+    dataSource: result.dataSource,
+    sourceProvider: result.sourceProvider,
+    sourceId: result.sourceId,
     status: result.status,
     itemCount: Array.isArray(result.result?.items) ? result.result.items.length : 0,
     demo: result.result?.demo === true,
@@ -488,6 +540,10 @@ function collectItems(agentResults, predicate) {
         collected.push(Object.freeze({
           agent: result.agent,
           tool: result.tool,
+          domain: result.domain,
+          dataSource: result.dataSource,
+          sourceProvider: result.sourceProvider,
+          sourceId: result.sourceId,
           item
         }));
       }

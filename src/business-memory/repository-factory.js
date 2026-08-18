@@ -5,6 +5,10 @@ import {
   collectBusinessSourceRecords,
   createBusinessSource
 } from "./business-source.js";
+import {
+  assertBusinessProviderAdapterCompatibility,
+  normalizeBusinessProviderAdapter
+} from "./business-provider-adapter.js";
 import { InMemoryBusinessMemoryRepository } from "./in-memory-business-memory.js";
 import { PrismaBusinessMemoryRepository } from "./prisma-business-memory-repository.js";
 import { normalizeBusinessDataProvider } from "./source.js";
@@ -23,11 +27,16 @@ export class BusinessMemoryConfigurationError extends Error {
 export function createBusinessMemoryConfig(env = process.env) {
   const provider = normalizeBusinessMemoryProvider(env.BUSINESS_MEMORY_PROVIDER);
   const dataProvider = normalizeBusinessDataProvider(env.BUSINESS_DATA_PROVIDER);
+  const providerAdapter = normalizeBusinessProviderAdapter(env.BUSINESS_PROVIDER_ADAPTER ?? dataProvider);
+  assertBusinessProviderAdapterCompatibility({ provider: dataProvider, adapter: providerAdapter });
   return Object.freeze({
     provider,
     dataSource: Object.freeze({
       provider: dataProvider,
-      sourceId: normalizeBusinessSourceId(env.BUSINESS_DATA_SOURCE_ID, dataProvider)
+      sourceId: normalizeBusinessSourceId(env.BUSINESS_DATA_SOURCE_ID, dataProvider),
+      providerAdapter,
+      adapterStatus: "offline_configured",
+      externalConnectionsEnabled: false
     }),
     database: Object.freeze({
       hasUrl: hasValidDatabaseUrl(env.DATABASE_URL)
@@ -39,13 +48,16 @@ export function createBusinessMemoryRepository({
   env = process.env,
   prisma = null,
   data = undefined,
-  businessSource = null
+  businessSource = null,
+  businessProviderAdapter = null
 } = {}) {
   const config = createBusinessMemoryConfig(env);
   const source = businessSource ?? createBusinessSource({
     provider: config.dataSource.provider,
     sourceId: config.dataSource.sourceId,
-    data
+    data,
+    adapterId: config.dataSource.providerAdapter,
+    adapter: businessProviderAdapter
   });
 
   if (config.provider === "memory") {

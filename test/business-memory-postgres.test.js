@@ -34,6 +34,7 @@ test("PostgreSQL business memory persists MVP domains with explicit sources and 
     assert.equal(domains.production.length, 1);
     assert.equal(domains.purchase_needs.length, 1);
     assert.equal(domains.suppliers.length, 1);
+    assert.equal(domains.hr_demo_overview.length, 1);
     assert.equal(domains.after_sales_tickets.length, 1);
 
     const payment = await memory.getBusinessRecord({
@@ -141,6 +142,16 @@ async function saveTestGraph(memory, source) {
   });
   await memory.saveBusinessRecord({
     ...base,
+    id: "test-bm-hr-001",
+    domain: "hr_demo_overview",
+    recordType: "hr_signal",
+    status: "watch",
+    data: { id: "test-bm-hr-001", category: "leave", employeeId: "employee-test-001", departmentId: "production", priority: "medium" },
+    relations: { employeeId: "employee-test-001", departmentId: "production" },
+    dates: { observedAt: "2026-08-18", dueAt: "2026-08-21" }
+  });
+  await memory.saveBusinessRecord({
+    ...base,
     id: "test-bm-ticket-001",
     domain: "after_sales_tickets",
     recordType: "after_sales_ticket",
@@ -154,6 +165,7 @@ async function saveTestGraph(memory, source) {
 async function cleanupTestGraph(prisma, source) {
   const where = { source, businessId: { startsWith: "test-bm-" } };
   await prisma.afterSalesTicket.deleteMany({ where });
+  await prisma.hrSignal.deleteMany({ where });
   await prisma.purchaseNeed.deleteMany({ where });
   await prisma.supplier.deleteMany({ where });
   await prisma.productionRecord.deleteMany({ where });

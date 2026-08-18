@@ -25,7 +25,7 @@ export function createMvpAgentSeedRecords() {
         resource: "request:*",
         scope: "mvp_orchestration"
       }),
-      ...(agent.id === "finance"
+      ...(["finance", "hr", "legal"].includes(agent.id)
         ? [
             createPermission({
               kind: "prepare_action",

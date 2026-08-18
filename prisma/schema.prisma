@@ -375,6 +375,33 @@ model PurchaseNeed {
   @@map("purchase_needs")
 }
 
+model HrSignal {
+  id                 String         @id @default(uuid())
+  businessId         String
+  source             String
+  employeeBusinessId String?
+  departmentId       String?
+  recruitmentId      String?
+  status             String         @default("draft")
+  category           String?
+  priority           String?
+  observedAt         DateTime?
+  dueAt              DateTime?
+  data               Json
+  metadata           Json?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@unique([source, businessId])
+  @@index([source])
+  @@index([employeeBusinessId])
+  @@index([departmentId])
+  @@index([recruitmentId])
+  @@index([status])
+  @@index([priority])
+  @@map("hr_demo_overview")
+}
+
 model AfterSalesTicket {
   id                 String         @id @default(uuid())
   businessId         String

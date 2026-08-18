@@ -24,7 +24,7 @@ export function loadFoundationConfig(env = process.env) {
     }),
     planner: createPlannerConfig(env),
     workflow: createWorkflowConfig({
-      provider: env.WORKFLOW_PROVIDER ?? "n8n",
+      provider: env.WORKFLOW_PROVIDER ?? "mock",
       baseUrl: env.WORKFLOW_BASE_URL,
       enabled: workflowsEnabled
     })

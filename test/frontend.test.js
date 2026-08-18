@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { InMemoryRepository, buildApi } from "../src/index.js";
+import {
+  InMemoryRepository,
+  ToolRegistry,
+  buildApi,
+  createMockToolAdapter,
+  createMvpTools,
+  createToolDefinition,
+  createToolInputSchema
+} from "../src/index.js";
 
 test("Director frontend is served by the existing API server", async (t) => {
   const app = buildApi({ repository: new InMemoryRepository() });
@@ -14,8 +22,14 @@ test("Director frontend is served by the existing API server", async (t) => {
   assert.match(response.body, /Demande dirigeant/);
   assert.match(response.body, /Plan genere/);
   assert.match(response.body, /Actions necessitant votre validation/);
-  assert.match(response.body, /Fais-moi le point complet de l'entreprise aujourd'hui/);
+  assert.match(response.body, /Fais-moi le point sur mon entreprise aujourd'hui/);
+  assert.match(response.body, /Qu'est-ce qui est urgent/);
+  assert.match(response.body, /Combien dois-je encaisser cette semaine/);
+  assert.match(response.body, /Quelles commandes risquent d'etre en retard/);
+  assert.match(response.body, /Qu'est-ce que je dois commander/);
+  assert.match(response.body, /Quels clients dois-je relancer/);
   assert.match(response.body, /Effectue le paiement de cette facture/);
+  assert.match(response.body, /Voix indisponible en Phase 0/);
 });
 
 test("Director frontend assets connect only to existing Director and approval endpoints", async (t) => {
@@ -29,9 +43,159 @@ test("Director frontend assets connect only to existing Director and approval en
   assert.match(scriptResponse.headers["content-type"], /text\/javascript/);
   assert.match(scriptResponse.body, /\/api\/director\/requests/);
   assert.match(scriptResponse.body, /\/api\/approvals/);
+  assert.match(scriptResponse.body, /CE QUI VA BIEN/);
+  assert.match(scriptResponse.body, /RETARDS \/ PROBL/);
+  assert.match(scriptResponse.body, /sourceProvider/);
+  assert.match(scriptResponse.body, /sourceId/);
+  assert.match(scriptResponse.body, /Community Manager/);
+  assert.match(scriptResponse.body, /prepared_offline/);
   assert.doesNotMatch(scriptResponse.body, /openai|webhook|n8n/i);
 
   assert.equal(styleResponse.statusCode, 200);
   assert.match(styleResponse.headers["content-type"], /text\/css/);
   assert.match(styleResponse.body, /grid-template-columns/);
+  assert.match(styleResponse.body, /director-sections/);
+  assert.match(styleResponse.body, /agent-roster/);
 });
+
+test("Director cockpit API scenarios cover global, finance, production, purchasing, and multi-agent requests", async (t) => {
+  const app = buildApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const scenarios = [
+    {
+      message: "Fais-moi le point sur mon entreprise aujourd'hui.",
+      agents: ["finance", "commercial", "production", "purchasing", "hr", "after_sales", "marketing", "community_manager", "legal"]
+    },
+    {
+      message: "Combien dois-je encaisser cette semaine ?",
+      agents: ["finance"]
+    },
+    {
+      message: "Quelles commandes risquent d'etre en retard ?",
+      agents: ["production"]
+    },
+    {
+      message: "Qu'est-ce que je dois commander ?",
+      agents: ["purchasing"]
+    },
+    {
+      message: "Quels clients dois-je relancer et quelles actions marketing proposes-tu ?",
+      agents: ["commercial", "marketing"]
+    }
+  ];
+
+  for (const scenario of scenarios) {
+    const body = await postDirector(app, scenario.message);
+    assert.equal(body.status, "completed", scenario.message);
+    assert.deepEqual(body.results.map((result) => result.agent), scenario.agents, scenario.message);
+    assert.deepEqual(Object.keys(body.summary.minimumSections), [
+      "CE QUI VA BIEN",
+      "RETARDS / PROBLEMES",
+      "A ENCAISSER",
+      "A COMMANDER",
+      "RISQUES / BLOCAGES",
+      "DECISIONS NECESSAIRES"
+    ]);
+    assert.equal(body.summary.domainSources.every((entry) =>
+      entry.domain &&
+      entry.dataSource &&
+      entry.sourceProvider &&
+      entry.sourceId
+    ), true, scenario.message);
+  }
+});
+
+test("Director cockpit API reports partial responses without hiding successful agent results", async (t) => {
+  const app = buildApi({
+    repository: new InMemoryRepository(),
+    toolRegistry: createProductionFailureRegistry()
+  });
+  t.after(() => app.close());
+
+  const body = await postDirector(app, "Fais-moi le point complet de l'entreprise aujourd'hui.");
+
+  assert.equal(body.status, "partial");
+  assert.equal(body.results.some((result) => result.agent === "finance" && result.status === "completed"), true);
+  assert.equal(body.results.some((result) => result.agent === "production" && result.status === "failed"), true);
+  assert.match(body.summary.headline, /Missing: production/);
+});
+
+test("Director cockpit approval flow exposes pending approval, supports rejection, and prevents pre-approval execution", async (t) => {
+  const repository = new InMemoryRepository();
+  const app = buildApi({ repository });
+  t.after(() => app.close());
+
+  const body = await postDirector(app, "Effectue le paiement de cette facture.", {
+    approvalGranted: true
+  });
+
+  assert.equal(body.status, "requires_approval");
+  assert.equal(body.results[0].status, "not_executed");
+  assert.equal(body.audit.some((event) => event.type === "approval_requested"), true);
+  assert.equal(body.audit.some((event) => event.type === "tool_called"), false);
+
+  const approvalsResponse = await app.inject({ method: "GET", url: "/api/approvals" });
+  const approvalsBody = JSON.parse(approvalsResponse.body);
+  assert.equal(approvalsResponse.statusCode, 200);
+  assert.equal(approvalsBody.approvals.length, 1);
+  assert.equal(approvalsBody.approvals[0].requestedAction, "execute_invoice_payment");
+
+  const rejectResponse = await app.inject({
+    method: "POST",
+    url: `/api/approvals/${approvalsBody.approvals[0].id}/reject`,
+    payload: {
+      approverId: "director-ui-test",
+      decisionReason: "Rejected from cockpit test."
+    }
+  });
+  const rejectBody = JSON.parse(rejectResponse.body);
+  assert.equal(rejectResponse.statusCode, 200);
+  assert.equal(rejectBody.approval.status, "rejected");
+
+  const events = await repository.listAuditEvents({ requestId: body.requestId });
+  assert.equal(events.some((event) => event.type === "tool_called"), false);
+});
+
+async function postDirector(app, message, extraPayload = {}) {
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/director/requests",
+    payload: { message, ...extraPayload }
+  });
+  assert.equal(response.statusCode, 201, response.body);
+  return JSON.parse(response.body);
+}
+
+function createProductionFailureRegistry() {
+  const registry = new ToolRegistry();
+  for (const tool of createMvpTools()) {
+    if (tool.id !== "get_delayed_production_orders") {
+      registry.register(tool);
+    }
+  }
+
+  const inputSchema = createToolInputSchema({
+    required: ["requestId"],
+    properties: {
+      requestId: { type: "string" }
+    }
+  });
+  registry.register(createToolDefinition({
+    id: "get_delayed_production_orders",
+    name: "Get Delayed Production Orders",
+    description: "Failing local test tool for partial cockpit response.",
+    category: "production",
+    requiredPermission: "read_analyze",
+    allowedAgents: ["production"],
+    inputSchema,
+    adapter: createMockToolAdapter({
+      toolId: "get_delayed_production_orders",
+      inputSchema,
+      resolve: async () => {
+        throw new Error("Production demo source unavailable.");
+      }
+    })
+  }));
+  return registry;
+}

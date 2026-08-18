@@ -4,9 +4,14 @@ import {
   BUSINESS_DATA_SOURCES,
   BUSINESS_DOMAINS,
   BUSINESS_DOMAIN_DEFINITIONS,
+  BusinessSourceContractError,
+  FutureRealDataBusinessSource,
   BusinessMemoryError,
   InMemoryRepository,
   ToolExecutionService,
+  assertBusinessSourceContract,
+  createBusinessSource,
+  createBusinessMemoryRepository,
   createDemoBusinessMemoryRepository,
   createMvpToolRegistry,
   createPermission
@@ -14,6 +19,12 @@ import {
 
 test("business memory exposes the MVP structured domains from demo_mock data", () => {
   const memory = createDemoBusinessMemoryRepository();
+  const descriptor = memory.getBusinessDataSource();
+
+  assert.equal(descriptor.provider, "demo");
+  assert.equal(descriptor.sourceId, "demo");
+  assert.equal(descriptor.recordSource, BUSINESS_DATA_SOURCES.DEMO_MOCK);
+  assert.equal(descriptor.demo, true);
 
   assert.deepEqual(memory.listBusinessDomains(), [
     "customers",
@@ -34,6 +45,36 @@ test("business memory exposes the MVP structured domains from demo_mock data", (
     assert.equal(records.every((record) => record.metadata.draft === true), true, domain);
     assert.equal(records.every((record) => record.domain === domain), true, domain);
   }
+});
+
+test("business source contract exposes demo data by domain before repository access rules", () => {
+  const source = createBusinessSource();
+
+  assert.equal(assertBusinessSourceContract(source), true);
+  assert.deepEqual(source.listBusinessDomains(), BUSINESS_DOMAINS);
+  assert.equal(source.getSourceDescriptor().provider, "demo");
+  assert.equal(source.getSourceDescriptor().recordSource, BUSINESS_DATA_SOURCES.DEMO_MOCK);
+  assert.equal(source.listBusinessRecords({ domain: "payments" }).length, 2);
+  assert.equal(source.listBusinessRecordsByDomain().invoices.length, 2);
+  assert.throws(
+    () => assertBusinessSourceContract({ listBusinessDomains: () => [] }),
+    (error) => error instanceof BusinessSourceContractError && error.code === "INVALID_BUSINESS_SOURCE"
+  );
+});
+
+test("future real data source is explicit, offline, and does not mix with demo records", () => {
+  const source = createBusinessSource({
+    provider: "future_real_data",
+    sourceId: "crm-placeholder"
+  });
+
+  assert.ok(source instanceof FutureRealDataBusinessSource);
+  assert.equal(source.getSourceDescriptor().provider, "future_real_data");
+  assert.equal(source.getSourceDescriptor().sourceId, "crm-placeholder");
+  assert.equal(source.getSourceDescriptor().recordSource, BUSINESS_DATA_SOURCES.FUTURE_REAL_DATA);
+  assert.equal(source.getSourceDescriptor().externalConnectionsEnabled, false);
+  assert.deepEqual(source.listBusinessRecords({ domain: "customers" }), []);
+  assert.deepEqual(source.listBusinessRecordsByDomain().payments, []);
 });
 
 test("business memory records keep essential relations and dates explicit", () => {
@@ -115,6 +156,38 @@ test("MVP tools read current demo data through business memory without changing 
   assert.equal(result.output.result.dataSource, BUSINESS_DATA_SOURCES.DEMO_MOCK);
   assert.deepEqual(result.output.result.items.map((item) => item.id), ["payment-atlas-deposit", "payment-nova-balance"]);
   assert.equal(result.output.result.items[0].invoiceId, "invoice-atlas-deposit");
+});
+
+test("MVP tools can read an explicit future source through business memory without executing external actions", async () => {
+  const businessMemory = createBusinessMemoryRepository({
+    env: {
+      BUSINESS_DATA_PROVIDER: "future_real_data",
+      BUSINESS_DATA_SOURCE_ID: "future-finance"
+    }
+  });
+  const repository = new InMemoryRepository();
+  const service = new ToolExecutionService({
+    repository,
+    toolRegistry: createMvpToolRegistry({ repository, businessMemory })
+  });
+
+  const result = await service.execute({
+    agentId: "finance",
+    agentPermissions: [createPermission({ kind: "read_analyze", resource: "request:*" })],
+    toolId: "get_pending_payments",
+    input: { requestId: "req-business-memory-future" },
+    requestId: "req-business-memory-future"
+  });
+  const events = await repository.listAuditEvents({ requestId: "req-business-memory-future" });
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.output.result.demo, false);
+  assert.equal(result.output.result.dataSource, BUSINESS_DATA_SOURCES.FUTURE_REAL_DATA);
+  assert.equal(result.output.result.sourceProvider, "future_real_data");
+  assert.equal(result.output.result.sourceId, "future-finance");
+  assert.deepEqual(result.output.result.items, []);
+  assert.equal(events.some((event) => event.type === "tool_called"), true);
+  assert.equal(events.some((event) => event.type === "approval_requested"), false);
 });
 
 test("business memory domain definitions keep MVP agent compatibility explicit", () => {

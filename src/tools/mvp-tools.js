@@ -3,6 +3,11 @@ import { createToolDefinition, createToolInputSchema } from "./contract.js";
 import { ToolRegistry } from "./registry.js";
 import { createBusinessMemoryRepository } from "../business-memory/repository-factory.js";
 import {
+  BUSINESS_DATA_PROVIDERS,
+  BUSINESS_DATA_SOURCES,
+  createBusinessDataSourceDescriptor
+} from "../business-memory/source.js";
+import {
   DEMO_NOTICE,
   createCompanyOverview,
   getAfterSalesOverview,
@@ -137,10 +142,14 @@ export function createMvpToolRegistry({ repository = null, businessMemory = crea
   return registry;
 }
 
-function createDemoResult(context, items) {
+function createDemoResult(context, items, descriptor = createBusinessDataSourceDescriptor({
+  provider: BUSINESS_DATA_PROVIDERS.DEMO
+})) {
   return Object.freeze({
-    demo: true,
-    dataSource: "demo_mock",
+    demo: descriptor.demo === true,
+    dataSource: descriptor.recordSource,
+    sourceProvider: descriptor.provider,
+    sourceId: descriptor.sourceId,
     notice: DEMO_NOTICE,
     context,
     items
@@ -191,19 +200,23 @@ function createMvpMockTool({
       inputSchema: baseInputSchema,
       metadata: {
         category,
-        dataSource: "demo_mock"
+        dataSource: getBusinessDataSourceDescriptor(businessMemory).recordSource
       },
-      resolve: async (context) => createDemoResult(context, await resolveDemoItems({
-        businessMemory,
-        domain,
-        context,
-        resolveItems
-      }))
+      resolve: async (context) => {
+        const descriptor = getBusinessDataSourceDescriptor(businessMemory);
+        return createDemoResult(context, await resolveDemoItems({
+          businessMemory,
+          domain,
+          context,
+          resolveItems,
+          descriptor
+        }), descriptor);
+      }
     })
   });
 }
 
-async function resolveDemoItems({ businessMemory, domain, context, resolveItems }) {
+async function resolveDemoItems({ businessMemory, domain, context, resolveItems, descriptor }) {
   if (!businessMemory || !domain) {
     return resolveItems();
   }
@@ -211,9 +224,16 @@ async function resolveDemoItems({ businessMemory, domain, context, resolveItems 
   const records = await businessMemory.listBusinessRecords({
     domain,
     agentId: context.agentId,
-    source: "demo_mock"
+    source: descriptor.recordSource
   });
   return resolveItems(createDemoDataSlice(domain, records.map((record) => record.data)));
+}
+
+function getBusinessDataSourceDescriptor(businessMemory) {
+  return businessMemory?.getBusinessDataSource?.() ?? createBusinessDataSourceDescriptor({
+    provider: BUSINESS_DATA_PROVIDERS.DEMO,
+    sourceId: BUSINESS_DATA_SOURCES.DEMO_MOCK
+  });
 }
 
 function createDemoDataSlice(domain, items) {

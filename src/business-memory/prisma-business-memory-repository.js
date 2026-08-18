@@ -56,11 +56,16 @@ const DOMAIN_MODEL_MAP = Object.freeze({
 });
 
 export class PrismaBusinessMemoryRepository {
-  constructor({ prisma }) {
+  constructor({ prisma, dataSourceDescriptor = null }) {
     if (!prisma) {
       throw new BusinessMemoryError("PrismaBusinessMemoryRepository requires a PrismaClient.", "PRISMA_REQUIRED");
     }
     this.prisma = prisma;
+    this.dataSourceDescriptor = dataSourceDescriptor;
+  }
+
+  getBusinessDataSource() {
+    return this.dataSourceDescriptor;
   }
 
   listBusinessDomains() {

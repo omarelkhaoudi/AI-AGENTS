@@ -5,15 +5,30 @@ import {
   validateBusinessDomainAccess,
   validateDomain
 } from "./domain-contract.js";
-import { BUSINESS_DATA_SOURCES, normalizeBusinessDataSource } from "./source.js";
+import {
+  BUSINESS_DATA_PROVIDERS,
+  BUSINESS_DATA_SOURCES,
+  createBusinessDataSourceDescriptor,
+  normalizeBusinessDataSource
+} from "./source.js";
 
 export class InMemoryBusinessMemoryRepository {
   #records = new Map();
+  #dataSourceDescriptor = createBusinessDataSourceDescriptor({
+    provider: BUSINESS_DATA_PROVIDERS.DEMO
+  });
 
-  constructor({ records = [] } = {}) {
+  constructor({ records = [], dataSourceDescriptor = null } = {}) {
+    if (dataSourceDescriptor) {
+      this.#dataSourceDescriptor = Object.freeze({ ...dataSourceDescriptor });
+    }
     for (const record of records) {
       this.saveBusinessRecord(record);
     }
+  }
+
+  getBusinessDataSource() {
+    return this.#dataSourceDescriptor;
   }
 
   listBusinessDomains() {

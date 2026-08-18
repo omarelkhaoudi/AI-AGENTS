@@ -5,6 +5,7 @@ export * from "./agents/registry.js";
 export * from "./agents/seed.js";
 export * from "./api/server.js";
 export * from "./business-memory/demo-business-memory.js";
+export * from "./business-memory/business-source.js";
 export * from "./business-memory/domain-contract.js";
 export * from "./business-memory/in-memory-business-memory.js";
 export * from "./business-memory/prisma-business-memory-repository.js";

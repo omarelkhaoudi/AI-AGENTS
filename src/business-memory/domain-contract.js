@@ -10,7 +10,12 @@ export const BUSINESS_DOMAINS = Object.freeze([
   "purchase_needs",
   "suppliers",
   "hr_demo_overview",
-  "after_sales_tickets"
+  "after_sales_tickets",
+  "products",
+  "prices",
+  "stock",
+  "bills_of_material",
+  "payment_terms"
 ]);
 
 export const BUSINESS_DOMAIN_ALIASES = Object.freeze({
@@ -78,6 +83,36 @@ export const BUSINESS_DOMAIN_DEFINITIONS = Object.freeze({
     recordType: "after_sales_ticket",
     allowedAgents: ["director", "after_sales"],
     essentialFields: ["id", "customerId", "orderId", "status", "openedAt", "source", "metadata"]
+  }),
+  products: createBusinessDomainDefinition({
+    label: "Produits",
+    recordType: "product",
+    allowedAgents: ["director", "commercial", "production", "purchasing"],
+    essentialFields: ["id", "name", "status", "createdAt", "updatedAt", "source", "metadata"]
+  }),
+  prices: createBusinessDomainDefinition({
+    label: "Prix",
+    recordType: "price_entry",
+    allowedAgents: ["director", "commercial", "finance"],
+    essentialFields: ["id", "productId", "status", "validFrom", "validUntil", "source", "metadata"]
+  }),
+  stock: createBusinessDomainDefinition({
+    label: "Stock",
+    recordType: "stock_item",
+    allowedAgents: ["director", "purchasing", "production"],
+    essentialFields: ["id", "productId", "supplierId", "status", "countedAt", "source", "metadata"]
+  }),
+  bills_of_material: createBusinessDomainDefinition({
+    label: "Nomenclatures",
+    recordType: "bill_of_material",
+    allowedAgents: ["director", "production", "purchasing"],
+    essentialFields: ["id", "productId", "orderId", "status", "validFrom", "source", "metadata"]
+  }),
+  payment_terms: createBusinessDomainDefinition({
+    label: "Conditions de paiement",
+    recordType: "payment_term",
+    allowedAgents: ["director", "finance", "commercial"],
+    essentialFields: ["id", "customerId", "status", "source", "metadata"]
   })
 });
 
@@ -93,7 +128,7 @@ export const BUSINESS_RECORD_CANONICAL_FIELDS = Object.freeze([
   "metadata"
 ]);
 
-const BUSINESS_DOMAIN_RELATION_FIELDS = Object.freeze({
+export const BUSINESS_DOMAIN_RELATION_FIELDS = Object.freeze({
   customers: Object.freeze([]),
   quotes: Object.freeze(["customerId", "prospectId", "linkedOrderId"]),
   invoices: Object.freeze(["customerId", "quoteId", "orderId"]),
@@ -103,10 +138,15 @@ const BUSINESS_DOMAIN_RELATION_FIELDS = Object.freeze({
   purchase_needs: Object.freeze(["supplierId", "linkedOrderId", "materialId"]),
   suppliers: Object.freeze([]),
   hr_demo_overview: Object.freeze(["employeeId", "departmentId", "recruitmentId"]),
-  after_sales_tickets: Object.freeze(["customerId", "orderId"])
+  after_sales_tickets: Object.freeze(["customerId", "orderId"]),
+  products: Object.freeze([]),
+  prices: Object.freeze(["productId"]),
+  stock: Object.freeze(["productId", "supplierId"]),
+  bills_of_material: Object.freeze(["productId", "orderId"]),
+  payment_terms: Object.freeze(["customerId"])
 });
 
-const BUSINESS_DOMAIN_DATE_FIELDS = Object.freeze({
+export const BUSINESS_DOMAIN_DATE_FIELDS = Object.freeze({
   customers: Object.freeze(["createdAt", "updatedAt"]),
   quotes: Object.freeze(["issuedAt", "validUntil"]),
   invoices: Object.freeze(["issuedAt", "dueAt"]),
@@ -116,7 +156,12 @@ const BUSINESS_DOMAIN_DATE_FIELDS = Object.freeze({
   purchase_needs: Object.freeze(["neededAt"]),
   suppliers: Object.freeze(["createdAt", "updatedAt"]),
   hr_demo_overview: Object.freeze(["observedAt", "dueAt"]),
-  after_sales_tickets: Object.freeze(["openedAt", "resolvedAt"])
+  after_sales_tickets: Object.freeze(["openedAt", "resolvedAt"]),
+  products: Object.freeze(["createdAt", "updatedAt"]),
+  prices: Object.freeze(["validFrom", "validUntil"]),
+  stock: Object.freeze(["countedAt"]),
+  bills_of_material: Object.freeze(["validFrom"]),
+  payment_terms: Object.freeze([])
 });
 
 export class BusinessMemoryError extends Error {

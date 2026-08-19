@@ -9,7 +9,9 @@ import {
 } from "./domain-contract.js";
 import { BUSINESS_DATA_SOURCES, normalizeBusinessDataSource } from "./source.js";
 
-const DOMAIN_MODEL_MAP = Object.freeze({
+// Exported so the structural registry test can verify that every business
+// domain stays wired to a Prisma delegate.
+export const DOMAIN_MODEL_MAP = Object.freeze({
   customers: Object.freeze({
     delegate: "customer",
     recordType: "customer",
@@ -59,6 +61,31 @@ const DOMAIN_MODEL_MAP = Object.freeze({
     delegate: "afterSalesTicket",
     recordType: "after_sales_ticket",
     toPrisma: afterSalesTicketData
+  }),
+  products: Object.freeze({
+    delegate: "product",
+    recordType: "product",
+    toPrisma: productData
+  }),
+  prices: Object.freeze({
+    delegate: "priceListEntry",
+    recordType: "price_entry",
+    toPrisma: priceEntryData
+  }),
+  stock: Object.freeze({
+    delegate: "stockItem",
+    recordType: "stock_item",
+    toPrisma: stockItemData
+  }),
+  bills_of_material: Object.freeze({
+    delegate: "billOfMaterial",
+    recordType: "bill_of_material",
+    toPrisma: billOfMaterialData
+  }),
+  payment_terms: Object.freeze({
+    delegate: "paymentTerm",
+    recordType: "payment_term",
+    toPrisma: paymentTermData
   })
 });
 
@@ -150,7 +177,7 @@ export class PrismaBusinessMemoryRepository {
   }
 }
 
-function getDomainModelConfig(domain) {
+export function getDomainModelConfig(domain) {
   const normalizedDomain = normalizeBusinessDomain(domain);
   validateDomain(normalizedDomain);
   return DOMAIN_MODEL_MAP[normalizedDomain];
@@ -282,6 +309,51 @@ function hrSignalData(record) {
   });
 }
 
+function productData(record) {
+  return baseData(record, {
+    name: record.data.name ?? record.id,
+    reference: record.data.reference ?? null,
+    category: record.data.category ?? null,
+    ...optionalDateField("createdAt", record.dates.createdAt),
+    ...optionalDateField("updatedAt", record.dates.updatedAt)
+  });
+}
+
+function priceEntryData(record) {
+  return baseData(record, {
+    productBusinessId: record.relations.productId ?? record.data.productId ?? null,
+    amount: record.data.amount ?? null,
+    currency: record.data.currency ?? null,
+    validFrom: parseDate(record.dates.validFrom),
+    validUntil: parseDate(record.dates.validUntil)
+  });
+}
+
+function stockItemData(record) {
+  return baseData(record, {
+    productBusinessId: record.relations.productId ?? record.data.productId ?? null,
+    supplierBusinessId: record.relations.supplierId ?? record.data.supplierId ?? null,
+    quantity: record.data.quantity ?? null,
+    unit: record.data.unit ?? null,
+    countedAt: parseDate(record.dates.countedAt)
+  });
+}
+
+function billOfMaterialData(record) {
+  return baseData(record, {
+    productBusinessId: record.relations.productId ?? record.data.productId ?? null,
+    orderBusinessId: record.relations.orderId ?? record.data.orderId ?? null,
+    validFrom: parseDate(record.dates.validFrom)
+  });
+}
+
+function paymentTermData(record) {
+  return baseData(record, {
+    customerBusinessId: record.relations.customerId ?? record.data.customerId ?? null,
+    netDays: Number.isInteger(record.data.netDays) ? record.data.netDays : null
+  });
+}
+
 function createRelations(domain, saved) {
   if (domain === "customers" || domain === "suppliers") {
     return {};
@@ -334,6 +406,31 @@ function createRelations(domain, saved) {
       materialId: saved.data?.materialId ?? null
     };
   }
+  if (domain === "products") {
+    return {};
+  }
+  if (domain === "prices") {
+    return {
+      productId: saved.productBusinessId ?? null
+    };
+  }
+  if (domain === "stock") {
+    return {
+      productId: saved.productBusinessId ?? null,
+      supplierId: saved.supplierBusinessId ?? null
+    };
+  }
+  if (domain === "bills_of_material") {
+    return {
+      productId: saved.productBusinessId ?? null,
+      orderId: saved.orderBusinessId ?? null
+    };
+  }
+  if (domain === "payment_terms") {
+    return {
+      customerId: saved.customerBusinessId ?? null
+    };
+  }
   return {
     customerId: saved.customerBusinessId ?? null,
     orderId: saved.orderBusinessId ?? null
@@ -370,6 +467,20 @@ function createDates(domain, saved) {
   if (domain === "after_sales_tickets") {
     common.openedAt = formatDate(saved.openedAt);
     common.resolvedAt = formatDate(saved.resolvedAt);
+  }
+  if (domain === "products") {
+    common.createdAt = formatDate(saved.createdAt);
+    common.updatedAt = formatDate(saved.updatedAt);
+  }
+  if (domain === "prices") {
+    common.validFrom = formatDate(saved.validFrom);
+    common.validUntil = formatDate(saved.validUntil);
+  }
+  if (domain === "stock") {
+    common.countedAt = formatDate(saved.countedAt);
+  }
+  if (domain === "bills_of_material") {
+    common.validFrom = formatDate(saved.validFrom);
   }
   return common;
 }

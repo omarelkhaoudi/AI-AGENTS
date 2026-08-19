@@ -445,3 +445,133 @@ model AfterSalesTicket {
   @@index([priority])
   @@map("after_sales_tickets")
 }
+
+// Lot 2A.1 business reference models. Additive only: no existing model is
+// modified. They are persistence foundations and are not yet reachable by any
+// agent tool.
+
+model Product {
+  id         String   @id @default(uuid())
+  businessId String
+  source     String
+  name       String
+  reference  String?
+  category   String?
+  status     String   @default("draft")
+  data       Json
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([source, businessId])
+  @@index([source])
+  @@index([reference])
+  @@index([status])
+  @@map("products")
+}
+
+model PriceListEntry {
+  id                String    @id @default(uuid())
+  businessId        String
+  source            String
+  productBusinessId String?
+  status            String    @default("draft")
+  amount            Decimal?
+  currency          String?
+  validFrom         DateTime?
+  validUntil        DateTime?
+  data              Json
+  metadata          Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([source, businessId])
+  @@index([source])
+  @@index([productBusinessId])
+  @@index([status])
+  @@index([validUntil])
+  @@map("price_list_entries")
+}
+
+model StockItem {
+  id                 String    @id @default(uuid())
+  businessId         String
+  source             String
+  productBusinessId  String?
+  supplierBusinessId String?
+  status             String    @default("draft")
+  quantity           Decimal?
+  unit               String?
+  countedAt          DateTime?
+  data               Json
+  metadata           Json?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([source, businessId])
+  @@index([source])
+  @@index([productBusinessId])
+  @@index([supplierBusinessId])
+  @@index([status])
+  @@map("stock_items")
+}
+
+model BillOfMaterial {
+  id                String               @id @default(uuid())
+  businessId        String
+  source            String
+  productBusinessId String?
+  orderBusinessId   String?
+  status            String               @default("draft")
+  validFrom         DateTime?
+  data              Json
+  metadata          Json?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  lines             BillOfMaterialLine[]
+
+  @@unique([source, businessId])
+  @@index([source])
+  @@index([productBusinessId])
+  @@index([orderBusinessId])
+  @@index([status])
+  @@map("bills_of_material")
+}
+
+model BillOfMaterialLine {
+  id                String         @id @default(uuid())
+  billOfMaterialId  String
+  billOfMaterial    BillOfMaterial @relation(fields: [billOfMaterialId], references: [id], onDelete: Cascade)
+  lineBusinessId    String
+  productBusinessId String?
+  quantity          Decimal?
+  unit              String?
+  data              Json
+  metadata          Json?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  @@unique([billOfMaterialId, lineBusinessId])
+  @@index([billOfMaterialId])
+  @@index([productBusinessId])
+  @@map("bill_of_material_lines")
+}
+
+model PaymentTerm {
+  id                 String   @id @default(uuid())
+  businessId         String
+  source             String
+  customerBusinessId String?
+  status             String   @default("draft")
+  netDays            Int?
+  data               Json
+  metadata           Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([source, businessId])
+  @@index([source])
+  @@index([customerBusinessId])
+  @@index([status])
+  @@map("payment_terms")
+}

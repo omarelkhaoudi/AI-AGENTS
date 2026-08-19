@@ -21,7 +21,11 @@ import {
   getMarketingOverview,
   getPendingPayments,
   getPendingQuotes,
-  getPurchaseNeeds
+  getPurchaseNeeds,
+  getCustomerOverview,
+  getCustomerOrders,
+  getOverdueInvoices,
+  getSupplierCatalog
 } from "../demo/company-data.js";
 
 const baseInputSchema = createToolInputSchema({
@@ -134,6 +138,50 @@ export function createMvpTools({ businessMemory = createBusinessMemoryRepository
       requiredPermission: "read_analyze",
       allowedAgents: ["legal"],
       resolveItems: getLegalOverview
+    }),
+    createMvpMockTool({
+      id: "get_customer_overview",
+      name: "Get Customer Overview",
+      description: "Returns the demo customer base with pipeline stage and outstanding balance for commercial and finance follow-up.",
+      category: "customers",
+      requiredPermission: "read_analyze",
+      allowedAgents: ["commercial", "finance"],
+      businessMemory,
+      domain: "customers",
+      resolveItems: getCustomerOverview
+    }),
+    createMvpMockTool({
+      id: "get_customer_orders",
+      name: "Get Customer Orders",
+      description: "Returns demo customer orders with status and risk for commercial follow-up and production planning.",
+      category: "orders",
+      requiredPermission: "read_analyze",
+      allowedAgents: ["commercial", "production"],
+      businessMemory,
+      domain: "orders",
+      resolveItems: getCustomerOrders
+    }),
+    createMvpMockTool({
+      id: "get_overdue_invoices",
+      name: "Get Overdue Invoices",
+      description: "Returns demo invoices that are still owed, each flagged against its own due date. No amount is aggregated here.",
+      category: "finance",
+      requiredPermission: "read_analyze",
+      allowedAgents: ["finance"],
+      businessMemory,
+      domain: "invoices",
+      resolveItems: getOverdueInvoices
+    }),
+    createMvpMockTool({
+      id: "get_supplier_catalog",
+      name: "Get Supplier Catalog",
+      description: "Returns the demo supplier list with lead times for purchasing follow-up.",
+      category: "purchasing",
+      requiredPermission: "read_analyze",
+      allowedAgents: ["purchasing"],
+      businessMemory,
+      domain: "suppliers",
+      resolveItems: getSupplierCatalog
     })
   ]);
 }
@@ -335,6 +383,10 @@ function createDemoDataSlice(domain, items) {
     production: domain === "production" ? items : [],
     purchaseNeeds: domain === "purchase_needs" ? items : [],
     hr: domain === "hr_demo_overview" ? items : [],
-    afterSales: domain === "after_sales_tickets" ? items : []
+    afterSales: domain === "after_sales_tickets" ? items : [],
+    customers: domain === "customers" ? items : [],
+    orders: domain === "orders" ? items : [],
+    invoices: domain === "invoices" ? items : [],
+    suppliers: domain === "suppliers" ? items : []
   };
 }

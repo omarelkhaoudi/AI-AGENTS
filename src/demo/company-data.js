@@ -468,6 +468,97 @@ export function createDemoCompanyData() {
         status: "watch",
         suggestedAction: "review_document_status"
       })
+    ]),
+    // Lot 2B.2 synthetic reference data. Quantities are chosen so the material
+    // shortage derived from a bill of material minus stock reproduces exactly
+    // the pre-existing purchaseNeeds figures: 24 - 4 = 20 and 120 - 30 = 90.
+    products: Object.freeze([
+      Object.freeze({
+        id: "product-atlas-panel",
+        name: "Demo Atlas Panel",
+        reference: "PRD-ATLAS-PANEL",
+        category: "finished_good",
+        unit: "unit",
+        status: "active"
+      }),
+      Object.freeze({
+        id: "product-nova-frame",
+        name: "Demo Nova Frame",
+        reference: "PRD-NOVA-FRAME",
+        category: "finished_good",
+        unit: "unit",
+        status: "active"
+      }),
+      Object.freeze({
+        id: "material-aluminum-a",
+        name: "Demo Aluminum Sheet A",
+        reference: "MAT-ALU-A",
+        category: "raw_material",
+        unit: "sheets",
+        status: "active"
+      }),
+      Object.freeze({
+        id: "material-packaging-b",
+        name: "Demo Packaging B",
+        reference: "MAT-PACK-B",
+        category: "packaging",
+        unit: "units",
+        status: "active"
+      })
+    ]),
+    stock: Object.freeze([
+      Object.freeze({
+        id: "stock-aluminum-a",
+        productId: "material-aluminum-a",
+        supplierId: "supplier-metal-one",
+        quantity: 4,
+        unit: "sheets",
+        status: "available",
+        countedAt: "2026-08-13"
+      }),
+      Object.freeze({
+        id: "stock-packaging-b",
+        productId: "material-packaging-b",
+        supplierId: "supplier-pack-two",
+        quantity: 30,
+        unit: "units",
+        status: "available",
+        countedAt: "2026-08-13"
+      })
+    ]),
+    // Lines stay inside the record data, matching how the repository already
+    // persists them. The BillOfMaterialLine table remains unused.
+    billsOfMaterial: Object.freeze([
+      Object.freeze({
+        id: "bom-atlas-001",
+        productId: "product-atlas-panel",
+        orderId: "order-atlas-001",
+        status: "active",
+        validFrom: "2026-08-01",
+        lines: Object.freeze([
+          Object.freeze({
+            lineId: "bom-atlas-001-line-1",
+            productId: "material-aluminum-a",
+            quantity: 24,
+            unit: "sheets"
+          })
+        ])
+      }),
+      Object.freeze({
+        id: "bom-nova-002",
+        productId: "product-nova-frame",
+        orderId: "order-nova-002",
+        status: "active",
+        validFrom: "2026-08-01",
+        lines: Object.freeze([
+          Object.freeze({
+            lineId: "bom-nova-002-line-1",
+            productId: "material-packaging-b",
+            quantity: 120,
+            unit: "units"
+          })
+        ])
+      })
     ])
   });
 }

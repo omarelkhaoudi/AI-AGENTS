@@ -25,7 +25,9 @@ import {
   getCustomerOverview,
   getCustomerOrders,
   getOverdueInvoices,
-  getSupplierCatalog
+  getSupplierCatalog,
+  createReceivablesSummary,
+  createQuoteFollowUps
 } from "../demo/company-data.js";
 
 const baseInputSchema = createToolInputSchema({
@@ -182,6 +184,28 @@ export function createMvpTools({ businessMemory = createBusinessMemoryRepository
       businessMemory,
       domain: "suppliers",
       resolveItems: getSupplierCatalog
+    }),
+    createMvpMockTool({
+      id: "get_receivables_summary",
+      name: "Get Receivables Summary",
+      description: "Returns outstanding demo receivables with totals per currency. A payment that settles an invoice replaces it, so no amount is counted twice, and totals are never merged across currencies.",
+      category: "finance",
+      requiredPermission: "read_analyze",
+      allowedAgents: ["finance"],
+      businessMemory,
+      domains: ["payments", "invoices"],
+      resolveItems: createReceivablesSummary
+    }),
+    createMvpMockTool({
+      id: "get_quote_follow_ups",
+      name: "Get Quote Follow Ups",
+      description: "Returns demo quotes left without a reply for at least five days and not closed, so commercial follow-up can be prepared.",
+      category: "commercial",
+      requiredPermission: "read_analyze",
+      allowedAgents: ["commercial"],
+      businessMemory,
+      domains: ["quotes"],
+      resolveItems: createQuoteFollowUps
     })
   ]);
 }
@@ -199,7 +223,7 @@ export function createMvpToolRegistry({ repository = null, businessMemory = crea
 
 function createDemoResult(context, items, descriptor = createBusinessDataSourceDescriptor({
   provider: BUSINESS_DATA_PROVIDERS.DEMO
-})) {
+}), summary = null) {
   return Object.freeze({
     demo: descriptor.demo === true,
     dataSource: descriptor.recordSource,
@@ -207,7 +231,10 @@ function createDemoResult(context, items, descriptor = createBusinessDataSourceD
     sourceId: descriptor.sourceId,
     notice: DEMO_NOTICE,
     context,
-    items
+    items,
+    // Only a computing tool carries a summary; a read tool output keeps its
+    // exact previous shape.
+    ...(summary ? { summary } : {})
   });
 }
 
@@ -280,8 +307,11 @@ function createMvpMockTool({
   allowedAgents,
   businessMemory = null,
   domain = null,
+  domains = null,
   resolveItems
 }) {
+  // A tool reads either one domain or several. Both forms normalise to a list.
+  const businessDomains = domains ?? (domain ? [domain] : []);
   return createToolDefinition({
     id,
     name,
@@ -300,30 +330,42 @@ function createMvpMockTool({
       },
       resolve: async (context) => {
         const descriptor = getBusinessDataSourceDescriptor(businessMemory);
-        return createDemoResult(context, await resolveDemoItems({
+        const resolved = await resolveDemoItems({
           businessMemory,
-          domain,
+          domains: businessDomains,
           context,
           resolveItems,
           descriptor
-        }), descriptor);
+        });
+        // A computing tool returns its aggregates alongside the items; a plain
+        // read tool keeps returning a bare array and its output is unchanged.
+        return Array.isArray(resolved)
+          ? createDemoResult(context, resolved, descriptor)
+          : createDemoResult(context, resolved.items, descriptor, resolved.summary);
       }
     })
   });
 }
 
-async function resolveDemoItems({ businessMemory, domain, context, resolveItems, descriptor }) {
-  if (!businessMemory || !domain) {
+async function resolveDemoItems({ businessMemory, domains, context, resolveItems, descriptor }) {
+  if (!businessMemory || domains.length === 0) {
     return resolveItems();
   }
 
-  const records = await readBusinessRecordsForTool({
-    businessMemory,
-    domain,
-    agentId: context.agentId,
-    source: descriptor.recordSource
-  });
-  return resolveItems(createDemoDataSlice(domain, records.map((record) => record.data)));
+  const slice = createEmptyDemoDataSlice();
+  for (const domain of domains) {
+    const records = await readBusinessRecordsForTool({
+      businessMemory,
+      domain,
+      agentId: context.agentId,
+      source: descriptor.recordSource
+    });
+    const key = DEMO_SLICE_KEY_BY_DOMAIN[domain];
+    if (key) {
+      slice[key] = records.map((record) => record.data);
+    }
+  }
+  return resolveItems(slice);
 }
 
 export async function readBusinessRecordsForTool({
@@ -376,17 +418,33 @@ function getBusinessDataSourceDescriptor(businessMemory) {
   });
 }
 
+// Business domain to demo data key. A tool reading several domains fills one
+// entry per domain, so the mapping lives in a single place.
+const DEMO_SLICE_KEY_BY_DOMAIN = Object.freeze({
+  payments: "payments",
+  quotes: "quotes",
+  production: "production",
+  purchase_needs: "purchaseNeeds",
+  hr_demo_overview: "hr",
+  after_sales_tickets: "afterSales",
+  customers: "customers",
+  orders: "orders",
+  invoices: "invoices",
+  suppliers: "suppliers",
+  products: "products",
+  stock: "stock",
+  bills_of_material: "billsOfMaterial"
+});
+
+function createEmptyDemoDataSlice() {
+  return Object.fromEntries(Object.values(DEMO_SLICE_KEY_BY_DOMAIN).map((key) => [key, []]));
+}
+
 function createDemoDataSlice(domain, items) {
-  return {
-    payments: domain === "payments" ? items : [],
-    quotes: domain === "quotes" ? items : [],
-    production: domain === "production" ? items : [],
-    purchaseNeeds: domain === "purchase_needs" ? items : [],
-    hr: domain === "hr_demo_overview" ? items : [],
-    afterSales: domain === "after_sales_tickets" ? items : [],
-    customers: domain === "customers" ? items : [],
-    orders: domain === "orders" ? items : [],
-    invoices: domain === "invoices" ? items : [],
-    suppliers: domain === "suppliers" ? items : []
-  };
+  const slice = createEmptyDemoDataSlice();
+  const key = DEMO_SLICE_KEY_BY_DOMAIN[domain];
+  if (key) {
+    slice[key] = items;
+  }
+  return slice;
 }

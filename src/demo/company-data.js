@@ -653,3 +653,154 @@ export function getOverdueInvoices(data = createDemoCompanyData(), referenceDate
 export function getSupplierCatalog(data = createDemoCompanyData()) {
   return data.suppliers;
 }
+
+// --- Lot 2B.2 computations -------------------------------------------------
+
+const SETTLED_PAYMENT_STATUSES = Object.freeze(["received", "paid", "settled", "cancelled"]);
+
+export function isPaymentSettled(payment) {
+  return SETTLED_PAYMENT_STATUSES.includes(payment?.status);
+}
+
+// Payments carry an expected date, invoices a due date. Receivables are read
+// through one accessor so both are treated the same way.
+function receivableDueDate(record) {
+  return record?.dueAt ?? record?.expectedPaymentDate ?? null;
+}
+
+export function isReceivableOverdue(record, referenceDate = new Date()) {
+  const dueDate = receivableDueDate(record);
+  if (typeof dueDate !== "string") {
+    return false;
+  }
+
+  const due = Date.parse(dueDate);
+  return Number.isNaN(due) ? false : due < referenceDate.getTime();
+}
+
+function currencyKey(record) {
+  return typeof record?.currency === "string" && record.currency.trim().length > 0
+    ? record.currency
+    : "unknown";
+}
+
+function normalizeReceivable(record, receivableKind, referenceDate) {
+  return Object.freeze({
+    ...record,
+    receivableKind,
+    dueDate: receivableDueDate(record),
+    overdue: isReceivableOverdue(record, referenceDate)
+  });
+}
+
+// CDC section 5: the list AND the expected amount. Amounts are never summed
+// across currencies, and nothing that cannot be summed is silently dropped.
+export function createReceivablesSummary(
+  { payments = [], invoices = [] } = {},
+  referenceDate = new Date()
+) {
+  const outstandingPayments = payments.filter((payment) => !isPaymentSettled(payment));
+  const outstandingInvoices = invoices.filter((invoice) => !isInvoiceSettled(invoice));
+
+  // A payment that settles an invoice already carries that amount. Counting the
+  // invoice as well would double the expected cash.
+  const coveredInvoiceIds = new Set(
+    outstandingPayments.map((payment) => payment?.invoiceId).filter((id) => typeof id === "string")
+  );
+  const deduplicatedInvoiceIds = outstandingInvoices
+    .filter((invoice) => coveredInvoiceIds.has(invoice.id))
+    .map((invoice) => invoice.id);
+  const keptInvoices = outstandingInvoices.filter((invoice) => !coveredInvoiceIds.has(invoice.id));
+
+  const items = [
+    ...outstandingPayments.map((payment) => normalizeReceivable(payment, "payment", referenceDate)),
+    ...keptInvoices.map((invoice) => normalizeReceivable(invoice, "invoice", referenceDate))
+  ];
+
+  const totalsByCurrency = {};
+  const overdueTotalsByCurrency = {};
+  let itemsWithoutAmount = 0;
+  let negativeAmountCount = 0;
+
+  for (const item of items) {
+    if (!Number.isFinite(item.amount)) {
+      itemsWithoutAmount += 1;
+      continue;
+    }
+    if (item.amount < 0) {
+      negativeAmountCount += 1;
+    }
+
+    const key = currencyKey(item);
+    totalsByCurrency[key] = (totalsByCurrency[key] ?? 0) + item.amount;
+    if (item.overdue) {
+      overdueTotalsByCurrency[key] = (overdueTotalsByCurrency[key] ?? 0) + item.amount;
+    }
+  }
+
+  return {
+    items,
+    summary: Object.freeze({
+      totalsByCurrency: Object.freeze({ ...totalsByCurrency }),
+      overdueTotalsByCurrency: Object.freeze({ ...overdueTotalsByCurrency }),
+      counts: Object.freeze({
+        receivables: items.length,
+        overdue: items.filter((item) => item.overdue).length,
+        itemsWithoutAmount,
+        negativeAmountCount,
+        deduplicatedInvoices: deduplicatedInvoiceIds.length
+      }),
+      deduplicatedInvoiceIds: Object.freeze([...deduplicatedInvoiceIds])
+    })
+  };
+}
+
+export const DEFAULT_QUOTE_FOLLOW_UP_DAYS = 5;
+
+const CLOSED_QUOTE_STATUSES = Object.freeze([
+  "accepted",
+  "rejected",
+  "cancelled",
+  "closed",
+  "won",
+  "lost",
+  "expired"
+]);
+
+export function isQuoteClosed(quote) {
+  return CLOSED_QUOTE_STATUSES.includes(quote?.status);
+}
+
+function daysSince(isoDate, referenceDate) {
+  const from = Date.parse(isoDate);
+  return Number.isNaN(from) ? null : Math.floor((referenceDate.getTime() - from) / 86400000);
+}
+
+// CDC section 4: quotes left without a reply for at least the threshold. The
+// threshold is inclusive, so a quote sitting exactly N days is already due.
+export function isQuoteFollowUpDue(quote, {
+  thresholdDays = DEFAULT_QUOTE_FOLLOW_UP_DAYS,
+  referenceDate = new Date()
+} = {}) {
+  if (!quote || isQuoteClosed(quote)) {
+    return false;
+  }
+  if (!Number.isFinite(quote.noResponseDays) || quote.noResponseDays < thresholdDays) {
+    return false;
+  }
+
+  // lastFollowUpAt is not part of the persisted business model. It is honoured
+  // when a caller supplies it, so a quote chased recently is not chased twice.
+  if (typeof quote.lastFollowUpAt === "string") {
+    const since = daysSince(quote.lastFollowUpAt, referenceDate);
+    if (since !== null && since < thresholdDays) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+export function createQuoteFollowUps({ quotes = [] } = {}, options = {}) {
+  return quotes.filter((quote) => isQuoteFollowUpDue(quote, options));
+}

@@ -21,6 +21,10 @@ import {
 //          need: commercial +customers +orders, finance +customers +invoices,
 //          production +orders, purchasing +suppliers. Every other agent is
 //          untouched, and no agent gains a domain outside its own mission.
+// Lot 2B.2 commit 3 adds two computing tools and changes NO agent scope:
+//          get_receivables_summary reads payments and invoices, both already
+//          held by finance, and get_quote_follow_ups reads quotes, already
+//          held by commercial. Only the tool table below grows.
 const EXPECTED_AGENT_SECURITY_DOMAINS = Object.freeze({
   director: ["company_overview"],
   commercial: ["quotes", "customers", "orders"],
@@ -49,6 +53,8 @@ const EXPECTED_TOOL_SECURITY_DOMAINS = Object.freeze({
   get_customer_orders: ["orders"],
   get_overdue_invoices: ["invoices"],
   get_supplier_catalog: ["suppliers"],
+  get_receivables_summary: ["payments", "invoices"],
+  get_quote_follow_ups: ["quotes"],
   execute_invoice_payment: ["payments"],
   prepare_hr_sensitive_decision: ["hr"],
   prepare_legal_sensitive_decision: ["legal"]

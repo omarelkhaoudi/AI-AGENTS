@@ -1,6 +1,7 @@
 import { createAuditEvent } from "../observability/audit.js";
 import { ApprovalStateError, createApprovalRequest } from "../security/approval.js";
-import { evaluateActionPolicy } from "../security/permissions.js";
+import { evaluateActionPolicy, matchesResource } from "../security/permissions.js";
+import { domainResource } from "../security/tool-domains.js";
 import { ToolContractError, validateToolInput } from "./contract.js";
 import { createMvpToolRegistry } from "./mvp-tools.js";
 import { ToolRegistryError } from "./registry.js";
@@ -46,6 +47,9 @@ export class ToolExecutionService {
       planStepId,
       executionId
     });
+    // Domain scoping narrows an already granted permission; it must not mask the
+    // more general PERMISSION_DENIED outcome.
+    await this.#assertDomainAllowed(tool, { agentId, agentPermissions, requestId, planId, planStepId, executionId });
     this.#validateInput(tool, input);
     const approval = await this.#resolveApproval({
       tool,
@@ -247,6 +251,28 @@ export class ToolExecutionService {
       await this.#auditPermissionDenied({ error, tool, agentId, requestId, planId, planStepId, executionId });
       throw error;
     }
+  }
+
+  // Least privilege: on top of allowedAgents, the agent must hold a permission
+  // scoped to the business domain the tool reads or acts upon.
+  async #assertDomainAllowed(tool, { agentId, agentPermissions, requestId, planId, planStepId, executionId }) {
+    if (!tool.securityDomain) {
+      return;
+    }
+
+    const resource = domainResource(tool.securityDomain);
+    const allowed = (agentPermissions ?? []).some((permission) => matchesResource(permission.resource, resource));
+    if (allowed) {
+      return;
+    }
+
+    const error = new ToolExecutionServiceError(
+      `Agent is not scoped to the tool business domain: ${tool.securityDomain}`,
+      "DOMAIN_NOT_ALLOWED",
+      { toolId: tool.id, agentId, securityDomain: tool.securityDomain }
+    );
+    await this.#auditPermissionDenied({ error, tool, agentId, requestId, planId, planStepId, executionId });
+    throw error;
   }
 
   async #assertPermissionAllowed(tool, { agentId, agentPermissions, requestId, planId, planStepId, executionId }) {
@@ -533,19 +559,6 @@ function hasMatchingApprovalPermission(permissions, resource) {
     ["prepare_action", "execute_action", "human_approval_required"].includes(permission.kind) &&
     matchesResource(permission.resource, resource)
   );
-}
-
-function matchesResource(permissionResource = "*", requestedResource = "*") {
-  if (permissionResource === "*" || requestedResource === "*") {
-    return true;
-  }
-  if (permissionResource === requestedResource) {
-    return true;
-  }
-  if (permissionResource.endsWith(":*")) {
-    return requestedResource.startsWith(permissionResource.slice(0, -1));
-  }
-  return false;
 }
 
 function summarizeInput(input) {

@@ -14,6 +14,7 @@ import {
   orchestrateRequest,
   seedMvpAgents
 } from "../src/index.js";
+import { buildAuthenticatedApi } from "../test-support/api-auth.js";
 
 const postgresIntegrationEnabled = process.env.RUN_POSTGRES_INTEGRATION === "true";
 const postgresUrlAvailable = hasValidDatabaseUrl(process.env.DATABASE_URL);
@@ -162,7 +163,7 @@ test("PLANNER_PROVIDER=deterministic does not require OpenAI configuration", asy
 
 test("API uses the configured planner selection", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({
+  const { app, inject } = await buildAuthenticatedApi({
     repository,
     config: {
       planner: { provider: "llm_mock" }
@@ -170,7 +171,7 @@ test("API uses the configured planner selection", async (t) => {
   });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/requests",
     payload: { message: "use configured planner" }
@@ -203,10 +204,10 @@ test("API exposes planning failures without stack traces or sensitive data", asy
   const planner = async () => {
     throw new Error("internal failure with should-not-leak");
   };
-  const app = buildApi({ repository, planner });
+  const { app, inject } = await buildAuthenticatedApi({ repository, planner });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/requests",
     payload: {

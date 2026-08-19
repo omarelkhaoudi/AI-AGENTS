@@ -9,6 +9,7 @@ import {
   evaluateActionPolicy,
   seedMvpAgents
 } from "../src/index.js";
+import { buildAuthenticatedApi } from "../test-support/api-auth.js";
 
 test("creates and reads a request through the in-memory repository", async () => {
   const repository = new InMemoryRepository();
@@ -100,10 +101,10 @@ test("creates redacted audit events in the in-memory repository", async () => {
 });
 
 test("GET /health reports service status", async (t) => {
-  const app = buildApi();
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
   t.after(() => app.close());
 
-  const response = await app.inject({ method: "GET", url: "/health" });
+  const response = await inject({ method: "GET", url: "/health" });
   const body = JSON.parse(response.body);
 
   assert.equal(response.statusCode, 200);
@@ -113,10 +114,10 @@ test("GET /health reports service status", async (t) => {
 
 test("POST /api/requests creates a leader request", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/requests",
     payload: {
@@ -144,10 +145,10 @@ test("GET /api/requests/:id returns a persisted request", async (t) => {
     title: "Retrieve me",
     payload: { ok: true }
   });
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const response = await app.inject({ method: "GET", url: `/api/requests/${created.id}` });
+  const response = await inject({ method: "GET", url: `/api/requests/${created.id}` });
   const body = JSON.parse(response.body);
 
   assert.equal(response.statusCode, 200);
@@ -156,10 +157,10 @@ test("GET /api/requests/:id returns a persisted request", async (t) => {
 });
 
 test("POST /api/requests rejects an empty request body", async (t) => {
-  const app = buildApi();
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/requests",
     payload: {}
@@ -171,10 +172,10 @@ test("POST /api/requests rejects an empty request body", async (t) => {
 });
 
 test("GET /api/requests/:id returns 404 for unknown requests", async (t) => {
-  const app = buildApi();
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
   t.after(() => app.close());
 
-  const response = await app.inject({ method: "GET", url: "/api/requests/missing-request" });
+  const response = await inject({ method: "GET", url: "/api/requests/missing-request" });
   const body = JSON.parse(response.body);
 
   assert.equal(response.statusCode, 404);
@@ -190,10 +191,10 @@ test("POST /api/requests returns a clean response when the repository fails", as
     }
   }
 
-  const app = buildApi({ repository: new FailingRepository(), seedAgents: false });
+  const { app, inject } = await buildAuthenticatedApi({ repository: new FailingRepository(), seedAgents: false });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/requests",
     payload: {
@@ -216,10 +217,10 @@ test("GET /api/requests/:id returns a clean response when the repository fails",
     }
   }
 
-  const app = buildApi({ repository: new FailingRepository(), seedAgents: false });
+  const { app, inject } = await buildAuthenticatedApi({ repository: new FailingRepository(), seedAgents: false });
   t.after(() => app.close());
 
-  const response = await app.inject({ method: "GET", url: "/api/requests/any-request" });
+  const response = await inject({ method: "GET", url: "/api/requests/any-request" });
   const body = JSON.parse(response.body);
 
   assert.equal(response.statusCode, 500);
@@ -229,7 +230,7 @@ test("GET /api/requests/:id returns a clean response when the repository fails",
 
 test("POST /api/requests rejects an invalid plan when the planner selects an unknown agent", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({
+  const { app, inject } = await buildAuthenticatedApi({
     repository,
     planner: async ({ request }) => ({
       version: "1",
@@ -257,7 +258,7 @@ test("POST /api/requests rejects an invalid plan when the planner selects an unk
   });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/requests",
     payload: {
@@ -279,10 +280,10 @@ test("POST /api/requests returns a blocked request when an agent is inactive", a
     ...(await repository.getAgent("finance")),
     status: "disabled"
   });
-  const app = buildApi({ repository, seedAgents: false });
+  const { app, inject } = await buildAuthenticatedApi({ repository, seedAgents: false });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/requests",
     payload: {
@@ -304,7 +305,7 @@ test("closing the API closes the repository", async () => {
   repository.disconnect = async () => {
     disconnected = true;
   };
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
 
   await app.close();
 

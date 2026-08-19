@@ -9,6 +9,7 @@ import {
   createDemoBusinessMemoryRepository,
   getAgentBusinessConfig
 } from "../src/index.js";
+import { buildAuthenticatedApi } from "../test-support/api-auth.js";
 
 const CDC_PRIORITY_COVERAGE = Object.freeze({
   commercial: Object.freeze({
@@ -111,10 +112,10 @@ test("CDC priority business memory records expose useful relations and dates", (
 
 test("Director central CDC scenario has the five priority agents and demo-marked outputs", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/director/requests",
     payload: {

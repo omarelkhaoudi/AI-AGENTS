@@ -2,6 +2,7 @@ import { createAiProviderConfig } from "./integrations/ai-provider.js";
 import { createWorkflowConfig } from "./integrations/workflow-boundary.js";
 import { createBusinessMemoryConfig } from "./business-memory/repository-factory.js";
 import { createPlannerConfig } from "./director/planner-factory.js";
+import { createSecurityConfig } from "./security/security-config.js";
 
 export function loadFoundationConfig(env = process.env) {
   const workflowsEnabled = env.WORKFLOW_ENABLED === "true";
@@ -15,6 +16,7 @@ export function loadFoundationConfig(env = process.env) {
       enabled: Boolean(databaseUrl),
       hasUrl: Boolean(databaseUrl)
     }),
+    security: createSecurityConfig(env),
     businessMemory: createBusinessMemoryConfig(env),
     aiProvider: createAiProviderConfig({
       provider: env.AI_PROVIDER ?? "openai",

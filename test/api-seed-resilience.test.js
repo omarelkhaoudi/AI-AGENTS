@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { InMemoryRepository, buildApi, createMvpAgentSeedRecords } from "../src/index.js";
+import { buildAuthenticatedApi } from "../test-support/api-auth.js";
 
 // One seed writes exactly one upsert per seeded agent. Deriving the count from
 // the seed definition keeps the assertions exact without hardcoding a number
@@ -31,21 +32,21 @@ class FlakySeedRepository extends InMemoryRepository {
   }
 }
 
-function postRequest(app, payload = POINT_REQUEST) {
-  return app.inject({ method: "POST", url: "/api/requests", payload });
+function postRequest(inject, payload = POINT_REQUEST) {
+  return inject({ method: "POST", url: "/api/requests", payload });
 }
 
 test("a failed seed does not poison the API: the next request retries it", async (t) => {
   const repository = new FlakySeedRepository({ failures: 1 });
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const firstResponse = await postRequest(app);
+  const firstResponse = await postRequest(inject);
 
   assert.equal(firstResponse.statusCode, 500);
   assert.equal(repository.failedSeedAttempts, 1);
 
-  const secondResponse = await postRequest(app);
+  const secondResponse = await postRequest(inject);
 
   assert.equal(secondResponse.statusCode, 201);
   assert.equal(JSON.parse(secondResponse.body).request.status, "orchestrated");
@@ -56,13 +57,13 @@ test("a failed seed does not poison the API: the next request retries it", async
 
 test("a successful seed stays memoized and is not replayed", async (t) => {
   const repository = new FlakySeedRepository({ failures: 0 });
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const first = await postRequest(app);
+  const first = await postRequest(inject);
   const agentCountAfterFirst = (await repository.listAgents()).length;
 
-  const second = await postRequest(app);
+  const second = await postRequest(inject);
 
   assert.equal(first.statusCode, 201);
   assert.equal(second.statusCode, 201);
@@ -73,15 +74,15 @@ test("a successful seed stays memoized and is not replayed", async (t) => {
 
 test("concurrent first requests seed exactly once, and later requests never re-seed", async (t) => {
   const repository = new FlakySeedRepository({ failures: 0 });
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
   const concurrentResponses = await Promise.all([
-    postRequest(app),
-    postRequest(app),
-    postRequest(app),
-    postRequest(app),
-    postRequest(app)
+    postRequest(inject),
+    postRequest(inject),
+    postRequest(inject),
+    postRequest(inject),
+    postRequest(inject)
   ]);
 
   for (const response of concurrentResponses) {
@@ -94,8 +95,8 @@ test("concurrent first requests seed exactly once, and later requests never re-s
   assert.equal(repository.upsertAgentCalls, AGENTS_PER_SEED);
   assert.equal((await repository.listAgents()).length, AGENTS_PER_SEED);
 
-  const laterResponse = await postRequest(app);
-  const evenLaterResponse = await postRequest(app);
+  const laterResponse = await postRequest(inject);
+  const evenLaterResponse = await postRequest(inject);
 
   assert.equal(laterResponse.statusCode, 201);
   assert.equal(evenLaterResponse.statusCode, 201);

@@ -193,9 +193,11 @@ test("approval flow is still enforced before sensitive adapters can execute", as
 
   assert.equal(calls.length, 0);
 
+  await repository.upsertUser({ id: "leader-adapter", name: "Leader Adapter", role: "leader" });
   const approved = await approveApprovalRequest({
     repository,
-    approvalId: pending.id
+    approvalId: pending.id,
+    approverId: "leader-adapter"
   });
   await service.execute(createAdapterServiceInput({
     toolId: "sensitive_adapter_tool",

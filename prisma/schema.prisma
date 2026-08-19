@@ -11,13 +11,33 @@ model User {
   email       String?      @unique
   name        String
   role        String       @default("leader")
+  status      String       @default("active")
   metadata    Json?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
+  apiTokens   ApiToken[]   @relation("UserApiTokens")
   requests    Request[]    @relation("RequestCreator")
   approvals   Approval[]   @relation("ApprovalApprover")
   auditEvents AuditEvent[] @relation("AuditActor")
   documents   Document[]   @relation("DocumentUploader")
+}
+
+// API credentials. Only the SHA-256 hash of a token is stored, so the table
+// never contains a usable secret.
+model ApiToken {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation("UserApiTokens", fields: [userId], references: [id], onDelete: Cascade)
+  name       String    @default("api-token")
+  tokenHash  String    @unique
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([revokedAt])
 }
 
 model Agent {

@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import rateLimit from "@fastify/rate-limit";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +19,10 @@ import {
   rejectApprovalRequest
 } from "../security/approval-flow.js";
 import { ToolExecutionServiceError } from "../tools/execution-service.js";
+import { authenticatePrincipal, extractBearerToken } from "../security/authentication.js";
+import { assertCapability } from "../security/authorization.js";
+import { createSecurityConfig } from "../security/security-config.js";
+import { createApiTokenMaterial, hashApiTokenSecret } from "../security/api-token.js";
 
 const FRONTEND_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "frontend");
 const FRONTEND_ASSETS = Object.freeze({
@@ -33,159 +38,430 @@ export function buildApi({
   seedAgents = true,
   planner = null,
   config = null,
-  toolRegistry = null
+  toolRegistry = null,
+  security = null
 } = {}) {
   assertRepositoryContract(repository);
-  const selectedPlanner = planner ?? createPlannerFromConfig((config ?? loadFoundationConfig()).planner);
+  const foundationConfig = config ?? loadFoundationConfig();
+  const selectedPlanner = planner ?? createPlannerFromConfig(foundationConfig.planner);
+  const securityConfig = security ?? foundationConfig.security ?? createSecurityConfig();
 
-  const app = Fastify({ logger });
+  const app = Fastify({ logger, bodyLimit: securityConfig.bodyLimitBytes });
   let seedPromise = null;
+  let demoSessionPromise = null;
+
+  // C1 - Edge. The limiter is global and runs BEFORE authentication, so an
+  // anonymous flood is capped instead of reaching the credential lookup. It
+  // keys on the presented credential rather than on the resolved principal,
+  // because the principal does not exist yet at this point.
+  const auditedRateLimitKeys = new Map();
+  app.register(rateLimit, {
+    global: false,
+    max: (request) => rateLimitForRoute(securityConfig, request).max,
+    timeWindow: securityConfig.rateLimits.read.timeWindow,
+    keyGenerator: rateLimitKey,
+    onExceeded: async (request, key) => {
+      // One audit row per key and per window: auditing every rejected request
+      // would turn the limiter itself into an amplification vector.
+      if (!shouldAuditRateLimit(auditedRateLimitKeys, key, securityConfig.rateLimits.read.timeWindow)) {
+        return;
+      }
+      await auditSecurityEvent(repository, {
+        type: "rate_limit_exceeded",
+        actorUserId: request.principal?.userId ?? null,
+        resourceType: "endpoint",
+        resourceId: routeIdentifier(request),
+        metadata: { method: request.method }
+      });
+    }
+  });
 
   app.addHook("onClose", async () => {
     await repository.disconnect();
   });
 
-  app.get("/health", async () => ({
-    status: "ok",
-    service: "ai-agents",
-    timestamp: new Date().toISOString()
-  }));
+  // Authentication and authorization hooks are added after the limiter has
+  // loaded, so the limiter runs first and caps anonymous traffic before any
+  // credential lookup happens.
+  app.after(() => {
+    // The plugin only attaches its limiters through onRoute, and route-level
+    // hooks run after global ones. Its own hook factory is used here so the
+    // limiter is a global hook placed BEFORE authentication: an anonymous
+    // flood is capped without ever reaching a credential lookup.
+    app.addHook("onRequest", app.rateLimit());
 
-  app.get("/", async (_request, reply) => serveFrontendAsset(reply, "/"));
-  app.get("/app/", async (_request, reply) => serveFrontendAsset(reply, "/app/"));
-  app.get("/app/app.js", async (_request, reply) => serveFrontendAsset(reply, "/app/app.js"));
-  app.get("/app/styles.css", async (_request, reply) => serveFrontendAsset(reply, "/app/styles.css"));
+    // C2 - Authentication. Deny by default: every /api route requires a valid
+    // bearer token unless it is explicitly listed as public.
+    app.addHook("onRequest", async (request, reply) => {
+      if (!isApiRoute(request) || isPublicApiRoute(request)) {
+        return;
+      }
 
-  app.get("/api/approvals", async (request, reply) => {
-    try {
-      const approvals = await repository.listPendingApprovals({
-        requestId: typeof request.query?.requestId === "string" ? request.query.requestId : undefined,
-        planStepId: typeof request.query?.planStepId === "string" ? request.query.planStepId : undefined
-      });
-      return { approvals };
-    } catch (error) {
-      return sendDomainError(reply, "Approval listing failed.", error);
-    }
-  });
-
-  app.get("/api/approvals/:id", async (request, reply) => {
-    try {
-      const approval = await repository.getApproval(request.params.id);
-      if (!approval) {
-        return reply.code(404).send({
-          error: "Approval not found.",
-          details: { code: "APPROVAL_NOT_FOUND" }
+      try {
+        request.principal = await authenticatePrincipal({
+          repository,
+          authorizationHeader: request.headers.authorization
+        });
+      } catch (error) {
+        await auditSecurityEvent(repository, {
+          type: "authentication_failed",
+          resourceType: "endpoint",
+          resourceId: routeIdentifier(request),
+          metadata: { method: request.method, code: error.code ?? "AUTHENTICATION_REQUIRED" }
+        });
+        return reply.code(401).send({
+          error: "Authentication required.",
+          details: { code: error.code ?? "AUTHENTICATION_REQUIRED" }
         });
       }
-      return { approval };
-    } catch (error) {
-      return sendDomainError(reply, "Approval retrieval failed.", error);
-    }
-  });
+    });
 
-  app.post("/api/approvals/:id/approve", async (request, reply) => {
-    try {
-      const decision = normalizeApprovalDecisionBody(request.body);
-      const approval = await approveApprovalRequest({
-        repository,
-        approvalId: request.params.id,
-        approverId: decision.approverId,
-        decisionReason: decision.decisionReason
-      });
-      const execution = await executeApprovedApproval({
-        repository,
-        approval,
-        toolRegistry
-      });
-      const savedApproval = await repository.getApproval(approval.id);
-      return { approval: savedApproval, execution };
-    } catch (error) {
-      return sendDomainError(reply, "Approval approval failed.", error);
-    }
-  });
-
-  app.post("/api/approvals/:id/reject", async (request, reply) => {
-    try {
-      const decision = normalizeApprovalDecisionBody(request.body);
-      const approval = await rejectApprovalRequest({
-        repository,
-        approvalId: request.params.id,
-        approverId: decision.approverId,
-        decisionReason: decision.decisionReason
-      });
-      return { approval };
-    } catch (error) {
-      return sendDomainError(reply, "Approval rejection failed.", error);
-    }
-  });
-
-  app.post("/api/requests", async (request, reply) => {
-    const validation = normalizeRequestBody(request.body);
-    if (!validation.ok) {
-      return reply.code(400).send({ error: validation.error });
-    }
-
-    try {
-      const orchestratedRequest = await createAndOrchestrateRequest({
-        request: validation.value,
-        repository,
-        planner: selectedPlanner,
-        toolRegistry,
-        seedAgents,
-        getSeedPromise: () => seedPromise,
-        setSeedPromise: (promise) => {
-          seedPromise = promise;
-        }
-      });
-
-      return reply.code(201).send({ request: orchestratedRequest });
-    } catch (error) {
-      return sendDomainError(reply, "Request orchestration failed.", error);
-    }
-  });
-
-  app.post("/api/director/requests", async (request, reply) => {
-    const validation = normalizeRequestBody(request.body);
-    if (!validation.ok) {
-      return reply.code(400).send({ error: validation.error });
-    }
-
-    try {
-      const orchestratedRequest = await createAndOrchestrateRequest({
-        request: {
-          ...validation.value,
-          source: "director_demo"
-        },
-        repository,
-        planner: selectedPlanner,
-        toolRegistry,
-        seedAgents,
-        getSeedPromise: () => seedPromise,
-        setSeedPromise: (promise) => {
-          seedPromise = promise;
-        }
-      });
-
-      return reply.code(201).send(createDirectorDemoResponse(orchestratedRequest));
-    } catch (error) {
-      return sendDomainError(reply, "Director request failed.", error);
-    }
-  });
-
-  app.get("/api/requests/:id", async (request, reply) => {
-    try {
-      const savedRequest = await repository.getRequest(request.params.id);
-      if (!savedRequest) {
-        return reply.code(404).send({ error: "Request not found." });
+    // C3 - User authorization. A route that declares no capability is refused
+    // rather than silently exposed.
+    app.addHook("preHandler", async (request, reply) => {
+      if (!isApiRoute(request) || isPublicApiRoute(request)) {
+        return;
       }
 
-      return { request: savedRequest };
-    } catch (error) {
-      return reply.code(500).send(createErrorResponse("Request retrieval failed.", error));
+      const capability = request.routeOptions?.config?.capability ?? null;
+      if (!capability) {
+        await auditSecurityEvent(repository, {
+          type: "authorization_denied",
+          actorUserId: request.principal?.userId ?? null,
+          resourceType: "endpoint",
+          resourceId: routeIdentifier(request),
+          metadata: { code: "AUTHORIZATION_MISCONFIGURED" }
+        });
+        return reply.code(500).send({
+          error: "Endpoint is not authorized.",
+          details: { code: "AUTHORIZATION_MISCONFIGURED" }
+        });
+      }
+
+      try {
+        assertCapability(request.principal, capability);
+      } catch (error) {
+        await auditSecurityEvent(repository, {
+          type: "authorization_denied",
+          actorUserId: request.principal?.userId ?? null,
+          resourceType: "endpoint",
+          resourceId: routeIdentifier(request),
+          metadata: { code: error.code ?? "AUTHORIZATION_DENIED", capability }
+        });
+        return reply.code(403).send({
+          error: "Authorization denied.",
+          details: { code: error.code ?? "AUTHORIZATION_DENIED", capability }
+        });
+      }
+    });
+
+    if (securityConfig.demoModeEnabled) {
+      // Demo mode automates token DISTRIBUTION only. Verification is never
+      // bypassed: the cockpit still authenticates with a real stored token.
+      app.get("/api/auth/demo-session", async (_request, reply) => {
+        try {
+          const session = await runDemoSessionOnce({
+            repository,
+            getDemoSessionPromise: () => demoSessionPromise,
+            setDemoSessionPromise: (promise) => {
+              demoSessionPromise = promise;
+            }
+          });
+          return { token: session.token, user: session.user };
+        } catch (error) {
+          return reply.code(500).send(createErrorResponse("Demo session provisioning failed.", error));
+        }
+      });
     }
+
+    // Routes are declared after the rate limiter has loaded, so its per-route
+    // onRoute hook can attach a limiter to each of them.
+  });
+
+  app.after(() => {
+    app.get("/health", async () => ({
+      status: "ok",
+      service: "ai-agents",
+      timestamp: new Date().toISOString()
+    }));
+
+    app.get("/", async (_request, reply) => serveFrontendAsset(reply, "/"));
+    app.get("/app/", async (_request, reply) => serveFrontendAsset(reply, "/app/"));
+    app.get("/app/app.js", async (_request, reply) => serveFrontendAsset(reply, "/app/app.js"));
+    app.get("/app/styles.css", async (_request, reply) => serveFrontendAsset(reply, "/app/styles.css"));
+
+    app.get("/api/approvals", readRouteOptions(), async (request, reply) => {
+      try {
+        const approvals = await repository.listPendingApprovals({
+          requestId: typeof request.query?.requestId === "string" ? request.query.requestId : undefined,
+          planStepId: typeof request.query?.planStepId === "string" ? request.query.planStepId : undefined
+        });
+        return { approvals };
+      } catch (error) {
+        return sendDomainError(reply, "Approval listing failed.", error);
+      }
+    });
+
+    app.get("/api/approvals/:id", readRouteOptions(), async (request, reply) => {
+      try {
+        const approval = await repository.getApproval(request.params.id);
+        if (!approval) {
+          return reply.code(404).send({
+            error: "Approval not found.",
+            details: { code: "APPROVAL_NOT_FOUND" }
+          });
+        }
+        return { approval };
+      } catch (error) {
+        return sendDomainError(reply, "Approval retrieval failed.", error);
+      }
+    });
+
+    app.post("/api/approvals/:id/approve", decisionRouteOptions(), async (request, reply) => {
+      try {
+        const decision = normalizeApprovalDecisionBody(request.body);
+        if (!decision.ok) {
+          return reply.code(400).send({ error: decision.error, details: { code: "IDENTITY_NOT_ACCEPTED_FROM_BODY" } });
+        }
+        const approval = await approveApprovalRequest({
+          repository,
+          approvalId: request.params.id,
+          approverId: request.principal.userId,
+          decisionReason: decision.value.decisionReason
+        });
+        const execution = await executeApprovedApproval({
+          repository,
+          approval,
+          toolRegistry
+        });
+        const savedApproval = await repository.getApproval(approval.id);
+        return { approval: savedApproval, execution };
+      } catch (error) {
+        return sendDomainError(reply, "Approval approval failed.", error);
+      }
+    });
+
+    app.post("/api/approvals/:id/reject", decisionRouteOptions(), async (request, reply) => {
+      try {
+        const decision = normalizeApprovalDecisionBody(request.body);
+        if (!decision.ok) {
+          return reply.code(400).send({ error: decision.error, details: { code: "IDENTITY_NOT_ACCEPTED_FROM_BODY" } });
+        }
+        const approval = await rejectApprovalRequest({
+          repository,
+          approvalId: request.params.id,
+          approverId: request.principal.userId,
+          decisionReason: decision.value.decisionReason
+        });
+        return { approval };
+      } catch (error) {
+        return sendDomainError(reply, "Approval rejection failed.", error);
+      }
+    });
+
+    app.post("/api/requests", writeRouteOptions(), async (request, reply) => {
+      const validation = normalizeRequestBody(request.body);
+      if (!validation.ok) {
+        return reply.code(400).send({ error: validation.error });
+      }
+
+      try {
+        const orchestratedRequest = await createAndOrchestrateRequest({
+          request: { ...validation.value, createdById: request.principal.userId },
+          repository,
+          planner: selectedPlanner,
+          toolRegistry,
+          seedAgents,
+          getSeedPromise: () => seedPromise,
+          setSeedPromise: (promise) => {
+            seedPromise = promise;
+          }
+        });
+
+        return reply.code(201).send({ request: orchestratedRequest });
+      } catch (error) {
+        return sendDomainError(reply, "Request orchestration failed.", error);
+      }
+    });
+
+    app.post("/api/director/requests", writeRouteOptions(), async (request, reply) => {
+      const validation = normalizeRequestBody(request.body);
+      if (!validation.ok) {
+        return reply.code(400).send({ error: validation.error });
+      }
+
+      try {
+        const orchestratedRequest = await createAndOrchestrateRequest({
+          request: {
+            ...validation.value,
+            createdById: request.principal.userId,
+            source: "director_demo"
+          },
+          repository,
+          planner: selectedPlanner,
+          toolRegistry,
+          seedAgents,
+          getSeedPromise: () => seedPromise,
+          setSeedPromise: (promise) => {
+            seedPromise = promise;
+          }
+        });
+
+        return reply.code(201).send(createDirectorDemoResponse(orchestratedRequest));
+      } catch (error) {
+        return sendDomainError(reply, "Director request failed.", error);
+      }
+    });
+
+    app.get("/api/requests/:id", readRouteOptions(), async (request, reply) => {
+      try {
+        const savedRequest = await repository.getRequest(request.params.id);
+        if (!savedRequest) {
+          return reply.code(404).send({ error: "Request not found." });
+        }
+
+        return { request: savedRequest };
+      } catch (error) {
+        return reply.code(500).send(createErrorResponse("Request retrieval failed.", error));
+      }
+    });
+
   });
 
   return app;
+}
+
+const PUBLIC_API_ROUTES = Object.freeze(["/api/auth/demo-session"]);
+export const DEMO_USER_ID = "demo-leader";
+
+// Rate limiting runs before authentication, so it keys on the credential that
+// was presented rather than on a resolved principal. The token HASH is used,
+// never the secret itself, so the limiter store holds nothing sensitive.
+function rateLimitKey(request) {
+  const authorization = request.headers?.authorization;
+  if (typeof authorization === "string" && authorization.trim().length > 0) {
+    try {
+      return `credential:${hashApiTokenSecret(extractBearerToken(authorization))}:${rateLimitBucket(request)}`;
+    } catch {
+      // A malformed credential is not an identity: fall back to the peer.
+    }
+  }
+  return `peer:${request.ip}:${rateLimitBucket(request)}`;
+}
+
+// Buckets are per route, so a read burst cannot consume the approval budget.
+// Unrouted paths share a single bucket: a flood of random URLs must not be
+// able to allocate unbounded limiter state.
+function rateLimitBucket(request) {
+  return request.routeOptions?.url ?? "unrouted";
+}
+
+function rateLimitForRoute(securityConfig, request) {
+  const capability = request.routeOptions?.config?.capability ?? null;
+  if (capability === "decide_approvals") {
+    return securityConfig.rateLimits.decision;
+  }
+  if (capability === "create_requests") {
+    return securityConfig.rateLimits.write;
+  }
+  return securityConfig.rateLimits.read;
+}
+
+function shouldAuditRateLimit(auditedKeys, key, timeWindow) {
+  const now = Date.now();
+  const lastAudited = auditedKeys.get(key);
+  if (lastAudited !== undefined && now - lastAudited < timeWindow) {
+    return false;
+  }
+
+  for (const [auditedKey, auditedAt] of auditedKeys) {
+    if (now - auditedAt >= timeWindow) {
+      auditedKeys.delete(auditedKey);
+    }
+  }
+  auditedKeys.set(key, now);
+  return true;
+}
+
+function routeIdentifier(request) {
+  return request.routeOptions?.url ?? request.url;
+}
+
+function isApiRoute(request) {
+  return routeIdentifier(request).startsWith("/api/");
+}
+
+function isPublicApiRoute(request) {
+  return PUBLIC_API_ROUTES.includes(routeIdentifier(request));
+}
+
+function readRouteOptions() {
+  return {
+    config: {
+      capability: "read_requests"
+    }
+  };
+}
+
+function writeRouteOptions() {
+  return {
+    config: {
+      capability: "create_requests"
+    }
+  };
+}
+
+function decisionRouteOptions() {
+  return {
+    config: {
+      capability: "decide_approvals"
+    }
+  };
+}
+
+// Security auditing must never break the response it describes.
+async function auditSecurityEvent(repository, event) {
+  try {
+    return await repository.createAuditEvent(createAuditEvent(event));
+  } catch {
+    return null;
+  }
+}
+
+// Mirrors the seed memoization: shared while pending, discarded on failure so a
+// transient error does not permanently disable the demo cockpit.
+async function runDemoSessionOnce({ repository, getDemoSessionPromise, setDemoSessionPromise }) {
+  const existing = getDemoSessionPromise();
+  if (existing) {
+    return existing;
+  }
+
+  const promise = provisionDemoSession(repository).catch((error) => {
+    if (getDemoSessionPromise() === promise) {
+      setDemoSessionPromise(null);
+    }
+    throw error;
+  });
+
+  setDemoSessionPromise(promise);
+  return promise;
+}
+
+async function provisionDemoSession(repository) {
+  const user = await repository.upsertUser({
+    id: DEMO_USER_ID,
+    name: "Demo Leader",
+    role: "leader",
+    status: "active",
+    metadata: { demo: true }
+  });
+  const material = createApiTokenMaterial({ userId: user.id, name: "demo-cockpit" });
+  await repository.createApiToken(material.record);
+
+  return Object.freeze({
+    token: material.secret,
+    user: Object.freeze({ id: user.id, name: user.name, role: user.role })
+  });
 }
 
 async function serveFrontendAsset(reply, route) {
@@ -617,6 +893,11 @@ function normalizeRequestBody(body) {
     return { ok: false, error: "payload must be an object when provided." };
   }
 
+  // Identity is never taken from the request body.
+  if (body.createdById !== undefined) {
+    return { ok: false, error: "createdById is not accepted: the authenticated principal is the author." };
+  }
+
   const message = normalizeText(body.message);
   const title = normalizeText(body.title) ?? message;
   const payload = { ...(body.payload ?? {}) };
@@ -636,7 +917,8 @@ function normalizeRequestBody(body) {
       status: "received",
       payload,
       metadata: isJsonObject(body.metadata) ? body.metadata : {},
-      createdById: typeof body.createdById === "string" ? body.createdById : null
+      // createdById is assigned from the authenticated principal by the route.
+      createdById: null
     }
   };
 }
@@ -656,12 +938,18 @@ function normalizeText(value) {
 
 function normalizeApprovalDecisionBody(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
-    return { approverId: null, decisionReason: null };
+    return { ok: true, value: { decisionReason: null } };
+  }
+
+  // The approver is the authenticated principal. Accepting it from the body is
+  // exactly how an approval could be forged, so it is refused outright.
+  if (body.approverId !== undefined) {
+    return { ok: false, error: "approverId is not accepted: the authenticated principal is the approver." };
   }
 
   return {
-    approverId: normalizeText(body.approverId),
-    decisionReason: normalizeText(body.decisionReason)
+    ok: true,
+    value: { decisionReason: normalizeText(body.decisionReason) }
   };
 }
 

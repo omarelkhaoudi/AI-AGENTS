@@ -26,12 +26,14 @@ export class PrismaRepository extends AgentPlatformRepository {
         email: input.email ?? null,
         name: input.name ?? "Leader",
         role: input.role ?? "leader",
+        status: input.status ?? "active",
         metadata: input.metadata ?? {}
       },
       update: {
         email: input.email ?? null,
         name: input.name ?? "Leader",
         role: input.role ?? "leader",
+        status: input.status ?? "active",
         metadata: input.metadata ?? {}
       }
     });
@@ -39,6 +41,39 @@ export class PrismaRepository extends AgentPlatformRepository {
 
   async getUser(userId) {
     return this.prisma.user.findUnique({ where: { id: userId } });
+  }
+
+  async createApiToken({ id, userId, name = "api-token", tokenHash, expiresAt = null } = {}) {
+    return this.prisma.apiToken.create({
+      data: {
+        ...(id ? { id } : {}),
+        userId,
+        name,
+        tokenHash,
+        expiresAt: expiresAt ? new Date(expiresAt) : null
+      }
+    });
+  }
+
+  async findApiTokenByHash(tokenHash) {
+    if (typeof tokenHash !== "string" || tokenHash.length === 0) {
+      return null;
+    }
+    return this.prisma.apiToken.findUnique({ where: { tokenHash } });
+  }
+
+  async listApiTokens({ userId } = {}) {
+    return this.prisma.apiToken.findMany({
+      where: userId ? { userId } : {},
+      orderBy: { createdAt: "desc" }
+    });
+  }
+
+  async revokeApiToken(tokenId, { revokedAt = new Date() } = {}) {
+    return this.prisma.apiToken.update({
+      where: { id: tokenId },
+      data: { revokedAt: new Date(revokedAt) }
+    });
   }
 
   async upsertAgent(agent) {

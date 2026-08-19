@@ -18,6 +18,7 @@ import {
   rejectApprovalRequest,
   seedMvpAgents
 } from "../src/index.js";
+import { buildAuthenticatedApi } from "../test-support/api-auth.js";
 
 const postgresIntegrationEnabled = process.env.RUN_POSTGRES_INTEGRATION === "true";
 const postgresUrlAvailable = hasValidDatabaseUrl(process.env.DATABASE_URL);
@@ -27,7 +28,7 @@ const postgresSkipReason =
     : "Set RUN_POSTGRES_INTEGRATION=true and DATABASE_URL to run PostgreSQL approval flow tests.";
 
 test("read/analyze actions execute directly without approval", async () => {
-  const { repository, service } = createServiceHarness();
+  const { repository, service } = await createServiceHarness();
 
   const result = await service.execute(createReadInput());
   const approvals = await repository.listPendingApprovals({ requestId: "req-approval" });
@@ -38,7 +39,7 @@ test("read/analyze actions execute directly without approval", async () => {
 });
 
 test("sensitive actions create pending approval and do not execute the tool", async () => {
-  const { repository, service } = createServiceHarness();
+  const { repository, service } = await createServiceHarness();
   const approval = await requirePendingApproval(service);
   const executions = await repository.listExecutions();
   const events = await repository.listAuditEvents({ requestId: "req-approval" });
@@ -51,12 +52,12 @@ test("sensitive actions create pending approval and do not execute the tool", as
 });
 
 test("approved approval executes the sensitive tool once", async () => {
-  const { repository, service } = createServiceHarness();
+  const { repository, service } = await createServiceHarness();
   const pending = await requirePendingApproval(service);
   const approved = await approveApprovalRequest({
     repository,
     approvalId: pending.id,
-    approverId: "leader-1"
+    approverId: APPROVER_ID
   });
 
   const result = await service.execute(createSensitiveInput({ approvalId: approved.id }));
@@ -73,12 +74,12 @@ test("approved approval executes the sensitive tool once", async () => {
 });
 
 test("rejected approval prevents sensitive tool execution", async () => {
-  const { repository, service } = createServiceHarness();
+  const { repository, service } = await createServiceHarness();
   const pending = await requirePendingApproval(service);
   const rejected = await rejectApprovalRequest({
     repository,
     approvalId: pending.id,
-    approverId: "leader-1"
+    approverId: APPROVER_ID
   });
 
   await assert.rejects(
@@ -92,21 +93,21 @@ test("rejected approval prevents sensitive tool execution", async () => {
 });
 
 test("double approval is rejected cleanly", async () => {
-  const { repository, service } = createServiceHarness();
+  const { repository, service } = await createServiceHarness();
   const pending = await requirePendingApproval(service);
 
-  await approveApprovalRequest({ repository, approvalId: pending.id });
+  await approveApprovalRequest({ repository, approvalId: pending.id, approverId: APPROVER_ID });
 
   await assert.rejects(
-    () => approveApprovalRequest({ repository, approvalId: pending.id }),
+    () => approveApprovalRequest({ repository, approvalId: pending.id, approverId: APPROVER_ID }),
     (error) => error instanceof ApprovalStateError && error.code === "APPROVAL_ALREADY_APPROVED"
   );
 });
 
 test("double execution with the same approval is impossible", async () => {
-  const { repository, service } = createServiceHarness();
+  const { repository, service } = await createServiceHarness();
   const pending = await requirePendingApproval(service);
-  const approved = await approveApprovalRequest({ repository, approvalId: pending.id });
+  const approved = await approveApprovalRequest({ repository, approvalId: pending.id, approverId: APPROVER_ID });
 
   await service.execute(createSensitiveInput({ approvalId: approved.id }));
 
@@ -123,11 +124,11 @@ test("approval repository supports pending, approve, and reject transitions in m
   assert.equal(created.status, "pending");
   assert.equal((await repository.listPendingApprovals()).length, 1);
 
-  const approved = await repository.approveApproval(created.id, { approverId: "leader-1" });
+  const approved = await repository.approveApproval(created.id, { approverId: APPROVER_ID });
   assert.equal(approved.status, "approved");
 
   const rejectedSource = await repository.createApproval(createApprovalRecord({ id: "approval-reject" }));
-  const rejected = await repository.rejectApproval(rejectedSource.id, { approverId: "leader-1" });
+  const rejected = await repository.rejectApproval(rejectedSource.id, { approverId: APPROVER_ID });
   assert.equal(rejected.status, "rejected");
 });
 
@@ -136,7 +137,7 @@ test("approval API lists, reads, approves, and executes pending approvals", asyn
   await seedMvpAgents(repository);
   await grantFinanceExecution(repository);
   const registry = createSensitiveRegistry();
-  const app = buildApi({
+  const { app, inject } = await buildAuthenticatedApi({
     repository,
     seedAgents: false,
     planner: createSensitivePlanner(),
@@ -144,7 +145,7 @@ test("approval API lists, reads, approves, and executes pending approvals", asyn
   });
   t.after(() => app.close());
 
-  const requestResponse = await app.inject({
+  const requestResponse = await inject({
     method: "POST",
     url: "/api/requests",
     payload: { message: "execute sensitive approval flow" }
@@ -156,17 +157,17 @@ test("approval API lists, reads, approves, and executes pending approvals", asyn
   assert.equal(createdRequest.executions.length, 0);
   assert.equal(approval.status, "pending");
 
-  const listResponse = await app.inject({ method: "GET", url: "/api/approvals" });
+  const listResponse = await inject({ method: "GET", url: "/api/approvals" });
   const listBody = JSON.parse(listResponse.body);
   assert.equal(listBody.approvals.some((entry) => entry.id === approval.id), true);
 
-  const getResponse = await app.inject({ method: "GET", url: `/api/approvals/${approval.id}` });
+  const getResponse = await inject({ method: "GET", url: `/api/approvals/${approval.id}` });
   assert.equal(getResponse.statusCode, 200);
 
-  const approveResponse = await app.inject({
+  const approveResponse = await inject({
     method: "POST",
     url: `/api/approvals/${approval.id}/approve`,
-    payload: { approverId: "leader-1" }
+    payload: {}
   });
   const approveBody = JSON.parse(approveResponse.body);
 
@@ -175,10 +176,10 @@ test("approval API lists, reads, approves, and executes pending approvals", asyn
   assert.equal(approveBody.execution.status, "completed");
   assert.equal(approveBody.execution.output.result.demo, true);
 
-  const secondApprove = await app.inject({
+  const secondApprove = await inject({
     method: "POST",
     url: `/api/approvals/${approval.id}/approve`,
-    payload: { approverId: "leader-1" }
+    payload: {}
   });
   assert.equal(secondApprove.statusCode, 409);
 });
@@ -187,7 +188,7 @@ test("approval API rejects approvals without executing tools", async (t) => {
   const repository = new InMemoryRepository();
   await seedMvpAgents(repository);
   await grantFinanceExecution(repository);
-  const app = buildApi({
+  const { app, inject } = await buildAuthenticatedApi({
     repository,
     seedAgents: false,
     planner: createSensitivePlanner(),
@@ -195,17 +196,17 @@ test("approval API rejects approvals without executing tools", async (t) => {
   });
   t.after(() => app.close());
 
-  const requestResponse = await app.inject({
+  const requestResponse = await inject({
     method: "POST",
     url: "/api/requests",
     payload: { message: "execute sensitive approval flow" }
   });
   const approval = JSON.parse(requestResponse.body).request.approvals[0];
 
-  const rejectResponse = await app.inject({
+  const rejectResponse = await inject({
     method: "POST",
     url: `/api/approvals/${approval.id}/reject`,
-    payload: { approverId: "leader-1" }
+    payload: {}
   });
   const rejectBody = JSON.parse(rejectResponse.body);
   const events = await repository.listAuditEvents({ requestId: approval.requestId });
@@ -219,11 +220,11 @@ test("approval API rejects approvals without executing tools", async (t) => {
 
 test("approval API returns clean errors for missing approvals", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository, seedAgents: false });
+  const { app, inject } = await buildAuthenticatedApi({ repository, seedAgents: false });
   t.after(() => app.close());
 
-  const getResponse = await app.inject({ method: "GET", url: "/api/approvals/missing" });
-  const approveResponse = await app.inject({ method: "POST", url: "/api/approvals/missing/approve" });
+  const getResponse = await inject({ method: "GET", url: "/api/approvals/missing" });
+  const approveResponse = await inject({ method: "POST", url: "/api/approvals/missing/approve" });
 
   assert.equal(getResponse.statusCode, 404);
   assert.equal(JSON.parse(getResponse.body).details.code, "APPROVAL_NOT_FOUND");
@@ -236,7 +237,7 @@ test("PostgreSQL approval flow persists pending approval, approval execution, an
 }, async () => {
   const prisma = await createPrismaClient();
   const repository = new PrismaRepository({ prisma });
-  const app = buildApi({
+  const { app, inject } = await buildAuthenticatedApi({
     repository,
     seedAgents: false,
     planner: createSensitivePlanner(),
@@ -248,7 +249,7 @@ test("PostgreSQL approval flow persists pending approval, approval execution, an
     await seedMvpAgents(repository);
     await grantFinanceExecution(repository);
 
-    const requestResponse = await app.inject({
+    const requestResponse = await inject({
       method: "POST",
       url: "/api/requests",
       payload: { message: "execute sensitive approval flow" }
@@ -264,7 +265,7 @@ test("PostgreSQL approval flow persists pending approval, approval execution, an
       0
     );
 
-    const approveResponse = await app.inject({
+    const approveResponse = await inject({
       method: "POST",
       url: `/api/approvals/${approval.id}/approve`,
       payload: {}
@@ -286,8 +287,13 @@ test("PostgreSQL approval flow persists pending approval, approval execution, an
   }
 });
 
-function createServiceHarness() {
+const APPROVER_ID = "leader-1";
+
+// An approval decision is only valid for a real user carrying the approval
+// capability, so the harness provisions one exactly as production would.
+async function createServiceHarness() {
   const repository = new InMemoryRepository();
+  await repository.upsertUser({ id: APPROVER_ID, name: "Leader One", role: "leader" });
   const service = new ToolExecutionService({
     repository,
     toolRegistry: createSensitiveRegistry()

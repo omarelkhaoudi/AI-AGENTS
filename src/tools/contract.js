@@ -13,6 +13,7 @@ export function createToolDefinition({
   name,
   description,
   category,
+  securityDomain = null,
   requiredPermission,
   allowedAgents = [],
   inputSchema = createToolInputSchema(),
@@ -25,6 +26,7 @@ export function createToolDefinition({
     name,
     description,
     category,
+    securityDomain,
     requiredPermission,
     allowedAgents: [...allowedAgents],
     inputSchema,
@@ -73,6 +75,10 @@ export function validateToolDefinition(tool) {
 
   if (tool.allowedAgents?.some((agentId) => typeof agentId !== "string" || agentId.trim() === "")) {
     errors.push("allowedAgents must contain non-empty strings");
+  }
+
+  if (tool.securityDomain !== null && (typeof tool.securityDomain !== "string" || tool.securityDomain.trim().length === 0)) {
+    errors.push("securityDomain must be a non-empty string when provided");
   }
 
   validateInputSchema(tool.inputSchema, errors);

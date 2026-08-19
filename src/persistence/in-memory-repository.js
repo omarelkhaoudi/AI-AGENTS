@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { createAuditEvent as createAuditEventRecord } from "../observability/audit.js";
 import { ApprovalStateError } from "../security/approval.js";
-import { AgentPlatformRepository } from "./repository-contract.js";
+import { AgentPlatformRepository, RepositoryContractError } from "./repository-contract.js";
 
 export class InMemoryRepository extends AgentPlatformRepository {
   #users = new Map();
+  #apiTokens = new Map();
   #agents = new Map();
   #requests = new Map();
   #plans = new Map();
@@ -19,6 +20,7 @@ export class InMemoryRepository extends AgentPlatformRepository {
     email = null,
     name = "Leader",
     role = "leader",
+    status = "active",
     metadata = {},
     createdAt = new Date().toISOString(),
     updatedAt = createdAt
@@ -29,6 +31,7 @@ export class InMemoryRepository extends AgentPlatformRepository {
       email,
       name,
       role,
+      status,
       metadata: cloneValue(metadata),
       createdAt: existing?.createdAt ?? createdAt,
       updatedAt
@@ -39,6 +42,54 @@ export class InMemoryRepository extends AgentPlatformRepository {
 
   getUser(userId) {
     return this.#users.get(userId) ?? null;
+  }
+
+  createApiToken({
+    id = randomUUID(),
+    userId,
+    name = "api-token",
+    tokenHash,
+    expiresAt = null,
+    createdAt = new Date().toISOString()
+  } = {}) {
+    if (!this.#users.has(userId)) {
+      throw new RepositoryContractError(`An API token requires an existing user: ${userId}`);
+    }
+
+    const record = freezeRecord({
+      id,
+      userId,
+      name,
+      tokenHash,
+      expiresAt,
+      revokedAt: null,
+      lastUsedAt: null,
+      createdAt,
+      updatedAt: createdAt
+    });
+    this.#apiTokens.set(record.id, record);
+    return record;
+  }
+
+  findApiTokenByHash(tokenHash) {
+    if (typeof tokenHash !== "string" || tokenHash.length === 0) {
+      return null;
+    }
+    return [...this.#apiTokens.values()].find((token) => token.tokenHash === tokenHash) ?? null;
+  }
+
+  listApiTokens({ userId } = {}) {
+    return [...this.#apiTokens.values()].filter((token) => !userId || token.userId === userId);
+  }
+
+  revokeApiToken(tokenId, { revokedAt = new Date().toISOString() } = {}) {
+    const existing = this.#apiTokens.get(tokenId);
+    if (!existing) {
+      return null;
+    }
+    const record = freezeRecord({ ...existing, revokedAt, updatedAt: revokedAt });
+    this.#apiTokens.set(record.id, record);
+    return record;
   }
 
   upsertAgent(agent) {

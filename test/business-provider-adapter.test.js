@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createMvpAgentPermissions,
   BUSINESS_DATA_SOURCES,
   BUSINESS_DOMAINS,
   BusinessMemoryError,
@@ -22,6 +23,7 @@ import {
   normalizeBusinessProviderAdapter,
   createPermission
 } from "../src/index.js";
+import { buildAuthenticatedApi } from "../test-support/api-auth.js";
 
 test("BusinessProviderAdapter contract accepts valid adapters and rejects invalid ones", () => {
   const adapter = new DemoBusinessProviderAdapter();
@@ -158,7 +160,7 @@ test("BusinessMemoryRepository uses provider adapters without exposing them to M
 
   const result = await service.execute({
     agentId: "finance",
-    agentPermissions: [createPermission({ kind: "read_analyze", resource: "request:*" })],
+    agentPermissions: createMvpAgentPermissions("finance"),
     toolId: "get_pending_payments",
     input: { requestId: "req-provider-adapter-tool" },
     requestId: "req-provider-adapter-tool"
@@ -213,10 +215,10 @@ test("MVP demo tools keep existing behavior through DemoBusinessProviderAdapter"
 
 test("Director still completes the company overview request with adapter-backed demo data", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/director/requests",
     payload: {
@@ -233,10 +235,10 @@ test("Director still completes the company overview request with adapter-backed 
 
 test("Director payment request still creates approval and never calls payment tool", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/director/requests",
     payload: {
@@ -311,7 +313,7 @@ function createSingleRecordAdapter({ supportedDomains = BUSINESS_DOMAINS } = {})
 async function executeReadTool(registry, toolId, agentId) {
   return registry.execute(toolId, {
     agentId,
-    agentPermissions: [createPermission({ kind: "read_analyze", resource: "request:*" })],
+    agentPermissions: createMvpAgentPermissions(agentId),
     requestId: `req-${toolId}`,
     audit: false
   }, {

@@ -12,15 +12,21 @@ import {
   matchesResource
 } from "../src/index.js";
 
-// Lot 2A.1 adds persistence foundations and must not widen anyone's reach.
-// These snapshots are the Lot 1 least privilege model, frozen on purpose: a
-// change here has to be a deliberate edit of this file, never a side effect.
+// These snapshots are the least privilege model, frozen on purpose: a change
+// here has to be a deliberate edit of this file, never a side effect.
+//
+// Lot 1  established the model.
+// Lot 2A.1 added persistence only and changed nothing here.
+// Lot 2B.1 adds four read tools and, with them, the four domains those tools
+//          need: commercial +customers +orders, finance +customers +invoices,
+//          production +orders, purchasing +suppliers. Every other agent is
+//          untouched, and no agent gains a domain outside its own mission.
 const EXPECTED_AGENT_SECURITY_DOMAINS = Object.freeze({
   director: ["company_overview"],
-  commercial: ["quotes"],
-  finance: ["company_overview", "payments"],
-  production: ["production"],
-  purchasing: ["purchase_needs"],
+  commercial: ["quotes", "customers", "orders"],
+  finance: ["company_overview", "payments", "customers", "invoices"],
+  production: ["production", "orders"],
+  purchasing: ["purchase_needs", "suppliers"],
   hr: ["hr"],
   after_sales: ["after_sales"],
   marketing: ["marketing"],
@@ -39,6 +45,10 @@ const EXPECTED_TOOL_SECURITY_DOMAINS = Object.freeze({
   get_marketing_overview: "marketing",
   get_community_overview: "community",
   get_legal_overview: "legal",
+  get_customer_overview: "customers",
+  get_customer_orders: "orders",
+  get_overdue_invoices: "invoices",
+  get_supplier_catalog: "suppliers",
   execute_invoice_payment: "payments",
   prepare_hr_sensitive_decision: "hr",
   prepare_legal_sensitive_decision: "legal"
@@ -49,7 +59,7 @@ test("the ten CDC agents are all still present", () => {
   assert.deepEqual([...MVP_AGENT_IDS].sort(), Object.keys(EXPECTED_AGENT_SECURITY_DOMAINS).sort());
 });
 
-test("agent security domains are unchanged by the persistence layer", () => {
+test("agent security domains match the reviewed snapshot exactly", () => {
   assert.deepEqual(
     Object.fromEntries(Object.keys(AGENT_SECURITY_DOMAINS).sort().map((agentId) => [
       agentId,
@@ -62,7 +72,7 @@ test("agent security domains are unchanged by the persistence layer", () => {
   );
 });
 
-test("tool security domains are unchanged by the persistence layer", () => {
+test("tool security domains match the reviewed snapshot exactly", () => {
   assert.deepEqual(
     { ...TOOL_SECURITY_DOMAINS },
     { ...EXPECTED_TOOL_SECURITY_DOMAINS }

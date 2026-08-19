@@ -14,6 +14,10 @@ export const TOOL_SECURITY_DOMAINS = Object.freeze({
   get_marketing_overview: "marketing",
   get_community_overview: "community",
   get_legal_overview: "legal",
+  get_customer_overview: "customers",
+  get_customer_orders: "orders",
+  get_overdue_invoices: "invoices",
+  get_supplier_catalog: "suppliers",
   execute_invoice_payment: "payments",
   prepare_hr_sensitive_decision: "hr",
   prepare_legal_sensitive_decision: "legal"
@@ -24,10 +28,10 @@ export const TOOL_SECURITY_DOMAINS = Object.freeze({
 // present; none is granted a domain it has no tool for.
 export const AGENT_SECURITY_DOMAINS = Object.freeze({
   director: Object.freeze(["company_overview"]),
-  commercial: Object.freeze(["quotes"]),
-  finance: Object.freeze(["company_overview", "payments"]),
-  production: Object.freeze(["production"]),
-  purchasing: Object.freeze(["purchase_needs"]),
+  commercial: Object.freeze(["quotes", "customers", "orders"]),
+  finance: Object.freeze(["company_overview", "payments", "customers", "invoices"]),
+  production: Object.freeze(["production", "orders"]),
+  purchasing: Object.freeze(["purchase_needs", "suppliers"]),
   hr: Object.freeze(["hr"]),
   after_sales: Object.freeze(["after_sales"]),
   marketing: Object.freeze(["marketing"]),

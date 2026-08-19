@@ -522,3 +522,43 @@ export function getCommunityOverview(data = createDemoCompanyData()) {
 export function getLegalOverview(data = createDemoCompanyData()) {
   return data.legal;
 }
+
+// Lot 2B.1 read accessors. They expose demo records that were already modelled
+// but had no tool, and add no new data.
+
+export function getCustomerOverview(data = createDemoCompanyData()) {
+  return data.customers;
+}
+
+export function getCustomerOrders(data = createDemoCompanyData()) {
+  return data.orders;
+}
+
+// An invoice is settled when it is paid or cancelled; anything else is still
+// owed. Overdue is a due-date comparison, kept per record: no aggregate is
+// computed here.
+export function isInvoiceSettled(invoice) {
+  return ["paid", "settled", "cancelled"].includes(invoice?.status);
+}
+
+export function isInvoiceOverdue(invoice, referenceDate = new Date()) {
+  if (isInvoiceSettled(invoice) || typeof invoice?.dueAt !== "string") {
+    return false;
+  }
+
+  const dueAt = Date.parse(invoice.dueAt);
+  return Number.isNaN(dueAt) ? false : dueAt < referenceDate.getTime();
+}
+
+export function getOverdueInvoices(data = createDemoCompanyData(), referenceDate = new Date()) {
+  return data.invoices
+    .filter((invoice) => !isInvoiceSettled(invoice))
+    .map((invoice) => Object.freeze({
+      ...invoice,
+      overdue: isInvoiceOverdue(invoice, referenceDate)
+    }));
+}
+
+export function getSupplierCatalog(data = createDemoCompanyData()) {
+  return data.suppliers;
+}

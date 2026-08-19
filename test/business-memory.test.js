@@ -19,13 +19,14 @@ import {
   createPermission
 } from "../src/index.js";
 
-// Lot 2A.1 reference domains: modelled and persistable, deliberately unpopulated
-// until business data is provided. Every other domain must carry demo records.
+// Reference domains that are modelled and persistable but deliberately carry no
+// demo record. Every other domain must carry demo records.
+//
+// Lot 2A.1 introduced five such domains.
+// Lot 2B.2 populates products, stock and bills_of_material with synthetic data,
+//          so only prices and payment_terms remain intentionally empty.
 const REFERENCE_DOMAINS_WITHOUT_DEMO_DATA = Object.freeze([
-  "products",
   "prices",
-  "stock",
-  "bills_of_material",
   "payment_terms"
 ]);
 

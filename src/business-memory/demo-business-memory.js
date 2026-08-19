@@ -174,6 +174,51 @@ export function createDemoBusinessRecords(data = createDemoCompanyData()) {
         resolvedAt: ticket.resolvedAt ?? null
       },
       metadata: { companyId: data.company.id, draft: true }
+    })),
+    ...data.products.map((product) => createBusinessRecord({
+      id: product.id,
+      domain: "products",
+      recordType: "product",
+      status: product.status ?? "active",
+      source: BUSINESS_DATA_SOURCES.DEMO_MOCK,
+      data: product,
+      dates: {
+        createdAt: product.createdAt ?? data.company.operatingDate,
+        updatedAt: product.updatedAt ?? data.company.operatingDate
+      },
+      metadata: { companyId: data.company.id, draft: true }
+    })),
+    ...data.stock.map((item) => createBusinessRecord({
+      id: item.id,
+      domain: "stock",
+      recordType: "stock_item",
+      status: item.status ?? "available",
+      source: BUSINESS_DATA_SOURCES.DEMO_MOCK,
+      data: item,
+      relations: {
+        productId: item.productId ?? null,
+        supplierId: item.supplierId ?? null
+      },
+      dates: {
+        countedAt: item.countedAt ?? data.company.operatingDate
+      },
+      metadata: { companyId: data.company.id, draft: true }
+    })),
+    ...data.billsOfMaterial.map((bill) => createBusinessRecord({
+      id: bill.id,
+      domain: "bills_of_material",
+      recordType: "bill_of_material",
+      status: bill.status ?? "active",
+      source: BUSINESS_DATA_SOURCES.DEMO_MOCK,
+      data: bill,
+      relations: {
+        productId: bill.productId ?? null,
+        orderId: bill.orderId ?? null
+      },
+      dates: {
+        validFrom: bill.validFrom ?? data.company.operatingDate
+      },
+      metadata: { companyId: data.company.id, draft: true }
     }))
   ]);
 }

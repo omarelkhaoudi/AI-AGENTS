@@ -10,6 +10,7 @@ export * from "./business-memory/business-provider-adapter.js";
 export * from "./business-memory/business-source.js";
 export * from "./business-memory/domain-contract.js";
 export * from "./business-memory/in-memory-business-memory.js";
+export * from "./business-memory/ingestion.js";
 export * from "./business-memory/prisma-business-memory-repository.js";
 export * from "./business-memory/repository-factory.js";
 export * from "./business-memory/source.js";

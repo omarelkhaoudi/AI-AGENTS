@@ -5,7 +5,8 @@ import {
   BUSINESS_DOMAINS,
   BusinessMemoryError,
   InMemoryBusinessMemoryRepository,
-  PrismaBusinessMemoryRepository
+  PrismaBusinessMemoryRepository,
+  DOMAIN_MODEL_MAP
 } from "../src/index.js";
 
 test("InMemory and Prisma business memory expose the same domains and aliases", async () => {
@@ -310,6 +311,54 @@ function createParityRecords() {
       relations: { invoiceId: "future-invoice-001" },
       dates: { dueAt: "2026-08-25" },
       metadata: { test: "business-memory-parity", draft: false }
+    },
+    {
+      ...base,
+      id: "parity-product-001",
+      domain: "products",
+      recordType: "product",
+      status: "active",
+      data: { id: "parity-product-001", name: "Parity Product", reference: "REF-001", category: "panels" },
+      dates: { createdAt: "2026-08-01", updatedAt: "2026-08-02" }
+    },
+    {
+      ...base,
+      id: "parity-price-001",
+      domain: "prices",
+      recordType: "price_entry",
+      status: "active",
+      data: { id: "parity-price-001", amount: 125.5, currency: "EUR" },
+      relations: { productId: "parity-product-001" },
+      dates: { validFrom: "2026-08-01", validUntil: "2026-12-31" }
+    },
+    {
+      ...base,
+      id: "parity-stock-001",
+      domain: "stock",
+      recordType: "stock_item",
+      status: "available",
+      data: { id: "parity-stock-001", quantity: 42, unit: "unit" },
+      relations: { productId: "parity-product-001", supplierId: "parity-supplier-001" },
+      dates: { countedAt: "2026-08-03" }
+    },
+    {
+      ...base,
+      id: "parity-bom-001",
+      domain: "bills_of_material",
+      recordType: "bill_of_material",
+      status: "active",
+      data: { id: "parity-bom-001", lines: [{ lineId: "line-1", productId: "parity-product-001", quantity: 2 }] },
+      relations: { productId: "parity-product-001", orderId: "parity-order-001" },
+      dates: { validFrom: "2026-08-01" }
+    },
+    {
+      ...base,
+      id: "parity-payment-term-001",
+      domain: "payment_terms",
+      recordType: "payment_term",
+      status: "active",
+      data: { id: "parity-payment-term-001", netDays: 30, label: "30 jours net" },
+      relations: { customerId: "parity-customer-001" }
     }
   ];
 }
@@ -328,19 +377,11 @@ function normalizeRecord(record) {
   };
 }
 
+// Delegates are derived from the real domain mapping so a newly declared
+// business domain cannot silently escape the parity check.
 function createFakeBusinessMemoryPrisma() {
-  const state = new Map(Object.entries({
-    customer: [],
-    quote: [],
-    invoice: [],
-    payment: [],
-    businessOrder: [],
-    productionRecord: [],
-    supplier: [],
-    purchaseNeed: [],
-    hrSignal: [],
-    afterSalesTicket: []
-  }));
+  const delegates = [...new Set(Object.values(DOMAIN_MODEL_MAP).map((config) => config.delegate))];
+  const state = new Map(delegates.map((delegate) => [delegate, []]));
 
   return Object.fromEntries([...state.keys()].map((delegate) => [
     delegate,

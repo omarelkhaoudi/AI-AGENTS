@@ -19,6 +19,16 @@ import {
   createPermission
 } from "../src/index.js";
 
+// Lot 2A.1 reference domains: modelled and persistable, deliberately unpopulated
+// until business data is provided. Every other domain must carry demo records.
+const REFERENCE_DOMAINS_WITHOUT_DEMO_DATA = Object.freeze([
+  "products",
+  "prices",
+  "stock",
+  "bills_of_material",
+  "payment_terms"
+]);
+
 test("business memory exposes the MVP structured domains from demo_mock data", () => {
   const memory = createDemoBusinessMemoryRepository();
   const descriptor = memory.getBusinessDataSource();
@@ -38,11 +48,25 @@ test("business memory exposes the MVP structured domains from demo_mock data", (
     "purchase_needs",
     "suppliers",
     "hr_demo_overview",
-    "after_sales_tickets"
+    "after_sales_tickets",
+    "products",
+    "prices",
+    "stock",
+    "bills_of_material",
+    "payment_terms"
   ]);
 
   for (const domain of BUSINESS_DOMAINS) {
     const records = memory.listBusinessRecords({ domain, agentId: "director" });
+
+    if (REFERENCE_DOMAINS_WITHOUT_DEMO_DATA.includes(domain)) {
+      // Reference domains are persistence foundations: they carry no demo data
+      // and no tool reads them yet. Listing them explicitly keeps the gap
+      // visible instead of letting a future domain silently ship empty.
+      assert.equal(records.length, 0, domain);
+      continue;
+    }
+
     assert.equal(records.length > 0, true, domain);
     assert.equal(records.every((record) => record.source === BUSINESS_DATA_SOURCES.DEMO_MOCK), true, domain);
     assert.equal(records.every((record) => record.metadata.draft === true), true, domain);

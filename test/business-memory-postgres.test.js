@@ -36,6 +36,49 @@ test("PostgreSQL business memory persists MVP domains with explicit sources and 
     assert.equal(domains.suppliers.length, 1);
     assert.equal(domains.hr_demo_overview.length, 1);
     assert.equal(domains.after_sales_tickets.length, 1);
+    assert.equal(domains.products.length, 1);
+    assert.equal(domains.prices.length, 1);
+    assert.equal(domains.stock.length, 1);
+    assert.equal(domains.bills_of_material.length, 1);
+    assert.equal(domains.payment_terms.length, 1);
+
+    // Lot 2A.1 reference domains round trip their relations and dates.
+    const stockItem = await memory.getBusinessRecord({
+      domain: "stock",
+      id: "test-bm-stock-001",
+      agentId: "purchasing",
+      source
+    });
+    assert.equal(stockItem.relations.productId, "test-bm-product-001");
+    assert.equal(stockItem.relations.supplierId, "test-bm-supplier-001");
+    assert.equal(stockItem.dates.countedAt, "2026-08-18");
+
+    const bom = await memory.getBusinessRecord({
+      domain: "bills_of_material",
+      id: "test-bm-bom-001",
+      agentId: "production",
+      source
+    });
+    assert.equal(bom.relations.productId, "test-bm-product-001");
+    assert.equal(bom.relations.orderId, "test-bm-order-001");
+    assert.equal(bom.dates.validFrom, "2026-08-01");
+
+    const price = await memory.getBusinessRecord({
+      domain: "prices",
+      id: "test-bm-price-001",
+      agentId: "finance",
+      source
+    });
+    assert.equal(price.relations.productId, "test-bm-product-001");
+    assert.equal(price.dates.validUntil, "2026-12-31");
+
+    const term = await memory.getBusinessRecord({
+      domain: "payment_terms",
+      id: "test-bm-term-001",
+      agentId: "finance",
+      source
+    });
+    assert.equal(term.relations.customerId, "test-bm-customer-001");
 
     const payment = await memory.getBusinessRecord({
       domain: "payments",
@@ -160,10 +203,63 @@ async function saveTestGraph(memory, source) {
     relations: { customerId: "test-bm-customer-001", orderId: "test-bm-order-001" },
     dates: { openedAt: "2026-08-15" }
   });
+  await memory.saveBusinessRecord({
+    ...base,
+    id: "test-bm-product-001",
+    domain: "products",
+    recordType: "product",
+    status: "active",
+    data: { id: "test-bm-product-001", name: "Test Panel", reference: "TEST-PAN-001", category: "panels" },
+    dates: { createdAt: "2026-08-01", updatedAt: "2026-08-02" }
+  });
+  await memory.saveBusinessRecord({
+    ...base,
+    id: "test-bm-price-001",
+    domain: "prices",
+    recordType: "price_entry",
+    status: "active",
+    data: { id: "test-bm-price-001", amount: 199.9, currency: "EUR" },
+    relations: { productId: "test-bm-product-001" },
+    dates: { validFrom: "2026-08-01", validUntil: "2026-12-31" }
+  });
+  await memory.saveBusinessRecord({
+    ...base,
+    id: "test-bm-stock-001",
+    domain: "stock",
+    recordType: "stock_item",
+    status: "available",
+    data: { id: "test-bm-stock-001", quantity: 12, unit: "unit" },
+    relations: { productId: "test-bm-product-001", supplierId: "test-bm-supplier-001" },
+    dates: { countedAt: "2026-08-18" }
+  });
+  await memory.saveBusinessRecord({
+    ...base,
+    id: "test-bm-bom-001",
+    domain: "bills_of_material",
+    recordType: "bill_of_material",
+    status: "active",
+    data: { id: "test-bm-bom-001", lines: [{ lineId: "line-1", productId: "test-bm-product-001", quantity: 2 }] },
+    relations: { productId: "test-bm-product-001", orderId: "test-bm-order-001" },
+    dates: { validFrom: "2026-08-01" }
+  });
+  await memory.saveBusinessRecord({
+    ...base,
+    id: "test-bm-term-001",
+    domain: "payment_terms",
+    recordType: "payment_term",
+    status: "active",
+    data: { id: "test-bm-term-001", netDays: 30, label: "30 jours net" },
+    relations: { customerId: "test-bm-customer-001" }
+  });
 }
 
 async function cleanupTestGraph(prisma, source) {
   const where = { source, businessId: { startsWith: "test-bm-" } };
+  await prisma.paymentTerm.deleteMany({ where });
+  await prisma.billOfMaterial.deleteMany({ where });
+  await prisma.stockItem.deleteMany({ where });
+  await prisma.priceListEntry.deleteMany({ where });
+  await prisma.product.deleteMany({ where });
   await prisma.afterSalesTicket.deleteMany({ where });
   await prisma.hrSignal.deleteMany({ where });
   await prisma.purchaseNeed.deleteMany({ where });

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createMvpAgentPermissions,
   BUSINESS_DATA_SOURCES,
   BUSINESS_DOMAINS,
   BusinessMemoryError,
@@ -126,7 +127,7 @@ test("BusinessProviderBackedAdapter maps a fake provider into BusinessMemory wit
 
   const result = await service.execute({
     agentId: "finance",
-    agentPermissions: [createPermission({ kind: "read_analyze", resource: "request:*" })],
+    agentPermissions: createMvpAgentPermissions("finance"),
     toolId: "get_pending_payments",
     input: { requestId: "req-provider-contract" },
     requestId: "req-provider-contract"

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createMvpAgentPermissions,
   BUSINESS_DATA_SOURCES,
   InMemoryRepository,
   ToolAdapterError,
@@ -77,7 +78,7 @@ test("ToolExecutionService reports sanitized business memory denials without lea
   await assert.rejects(
     () => service.execute({
       agentId: "marketing",
-      agentPermissions: [createPermission({ kind: "read_analyze", resource: "request:*" })],
+      agentPermissions: createMvpAgentPermissions("marketing"),
       toolId: "misconfigured_payment_reader",
       input: { requestId: "req-bm-tool-security" },
       requestId: "req-bm-tool-security",

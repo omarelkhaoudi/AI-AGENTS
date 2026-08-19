@@ -10,6 +10,7 @@ import {
   orchestrateRequest,
   seedMvpAgents
 } from "../src/index.js";
+import { buildAuthenticatedApi } from "../test-support/api-auth.js";
 
 test("repository factory uses in-memory repository when DATABASE_URL is missing", async () => {
   const repository = await createRepository({ env: {} });
@@ -189,10 +190,10 @@ test("orchestration blocks denied permissions", async () => {
 
 test("GET /api/requests/:id returns full request orchestration details", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const createdResponse = await app.inject({
+  const createdResponse = await inject({
     method: "POST",
     url: "/api/requests",
     payload: {
@@ -202,7 +203,7 @@ test("GET /api/requests/:id returns full request orchestration details", async (
   });
   const created = JSON.parse(createdResponse.body).request;
 
-  const response = await app.inject({ method: "GET", url: `/api/requests/${created.id}` });
+  const response = await inject({ method: "GET", url: `/api/requests/${created.id}` });
   const body = JSON.parse(response.body);
 
   assert.equal(response.statusCode, 200);

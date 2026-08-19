@@ -8,6 +8,7 @@ import {
   orchestrateRequest,
   seedMvpAgents
 } from "../src/index.js";
+import { buildAuthenticatedApi } from "../test-support/api-auth.js";
 
 const postgresIntegrationEnabled = process.env.RUN_POSTGRES_INTEGRATION === "true";
 const postgresUrlAvailable = hasValidDatabaseUrl(process.env.DATABASE_URL);
@@ -62,11 +63,11 @@ test("API with PostgreSQL persists POST /api/requests and returns full GET detai
 }, async () => {
   const prisma = await createPrismaClient();
   const repository = new PrismaRepository({ prisma });
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   let requestId = null;
 
   try {
-    const postResponse = await app.inject({
+    const postResponse = await inject({
       method: "POST",
       url: "/api/requests",
       payload: {
@@ -94,7 +95,7 @@ test("API with PostgreSQL persists POST /api/requests and returns full GET detai
       auditEvents: 66
     });
 
-    const getResponse = await app.inject({
+    const getResponse = await inject({
       method: "GET",
       url: `/api/requests/${requestId}`
     });

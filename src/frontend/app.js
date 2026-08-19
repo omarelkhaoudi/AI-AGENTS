@@ -65,6 +65,35 @@ document.querySelector("#refresh-approvals").addEventListener("click", () => ref
 await refreshApprovals();
 renderAgentRoster([]);
 
+// The cockpit authenticates like any other client. In demo mode the server
+// hands out a real token; otherwise the token is supplied by the operator.
+let apiToken = null;
+
+async function resolveApiToken() {
+  if (apiToken) {
+    return apiToken;
+  }
+
+  const stored = sessionStorage.getItem("aiAgentsApiToken");
+  if (stored) {
+    apiToken = stored;
+    return apiToken;
+  }
+
+  const response = await fetch("/api/auth/demo-session");
+  if (!response.ok) {
+    throw new Error("Authentification requise: aucun jeton disponible.");
+  }
+  const payload = await response.json();
+  apiToken = payload.token;
+  sessionStorage.setItem("aiAgentsApiToken", apiToken);
+  return apiToken;
+}
+
+async function authHeaders() {
+  return { authorization: `Bearer ${await resolveApiToken()}` };
+}
+
 async function submitDirectorRequest(message) {
   const cleanMessage = message.trim();
   if (!cleanMessage) {
@@ -88,7 +117,7 @@ async function submitDirectorRequest(message) {
 
 async function refreshApprovals() {
   try {
-    const response = await fetch("/api/approvals");
+    const response = await fetch("/api/approvals", { headers: await authHeaders() });
     if (!response.ok) {
       throw new Error("Impossible de recuperer les approvals.");
     }
@@ -103,9 +132,7 @@ async function refreshApprovals() {
 async function decideApproval(id, decision) {
   const statusTarget = approvalList.querySelector(`[data-approval-id="${id}"] .approval-status`);
   try {
-    const response = await postJson(`/api/approvals/${id}/${decision}`, {
-      approverId: "director-ui-demo"
-    });
+    const response = await postJson(`/api/approvals/${id}/${decision}`, {});
     statusTarget.textContent = decision === "approve"
       ? `Action executee: ${response.execution?.status ?? "completed"}`
       : "Action rejetee.";
@@ -118,7 +145,7 @@ async function decideApproval(id, decision) {
 async function postJson(url, body) {
   const response = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...(await authHeaders()) },
     body: JSON.stringify(body)
   });
   const payload = await response.json();

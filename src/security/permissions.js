@@ -54,10 +54,32 @@ export function evaluateActionPolicy({
     matchesResource(permission.resource, resource)
   );
 
+  // Absence of permission is denied before any approval consideration: needing a
+  // human approval must never be a way to bypass the permission model.
+  if (matchingPermissions.length === 0) {
+    return createDecision({
+      decision: "denied",
+      allowed: false,
+      canPrepare: false,
+      requiresApproval: false,
+      reason: "No matching permission allows this action."
+    });
+  }
+
   if (
     requiresApproval ||
     matchingPermissions.some((permission) => permission.kind === "human_approval_required")
   ) {
+    if (!hasAny(matchingPermissions, ["prepare_action", "execute_action", "human_approval_required"])) {
+      return createDecision({
+        decision: "denied",
+        allowed: false,
+        canPrepare: false,
+        requiresApproval: false,
+        reason: "No matching permission allows preparing this action for approval."
+      });
+    }
+
     return createDecision({
       decision: "requires_human_approval",
       allowed: false,
@@ -133,15 +155,21 @@ function hasAny(permissions, kinds) {
   return permissions.some((permission) => kinds.includes(permission.kind));
 }
 
-function matchesResource(permissionResource = "*", requestedResource = "*") {
-  if (permissionResource === "*" || requestedResource === "*") {
+// Single implementation, shared by every caller. A requested resource of "*" must
+// NOT match a narrowly scoped permission: only a wildcard permission grants all.
+export function matchesResource(permissionResource = "*", requestedResource = "*") {
+  if (typeof permissionResource !== "string" || typeof requestedResource !== "string") {
+    return false;
+  }
+  if (permissionResource === "*") {
     return true;
   }
   if (permissionResource === requestedResource) {
     return true;
   }
   if (permissionResource.endsWith(":*")) {
-    return requestedResource.startsWith(permissionResource.slice(0, -1));
+    const prefix = permissionResource.slice(0, -1);
+    return requestedResource.length > prefix.length && requestedResource.startsWith(prefix);
   }
   return false;
 }

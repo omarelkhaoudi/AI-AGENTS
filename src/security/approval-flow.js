@@ -1,6 +1,8 @@
 import { createAuditEvent } from "../observability/audit.js";
 import { ToolExecutionService } from "../tools/execution-service.js";
 import { ApprovalStateError } from "./approval.js";
+import { assertCapability, AuthorizationError } from "./authorization.js";
+import { createPrincipal } from "./authentication.js";
 
 export async function approveApprovalRequest({
   repository,
@@ -8,14 +10,15 @@ export async function approveApprovalRequest({
   approverId = null,
   decisionReason = null
 } = {}) {
+  const approver = await resolveDecidingUser(repository, approverId);
   const approval = await repository.approveApproval(approvalId, {
-    approverId,
+    approverId: approver.id,
     decisionReason
   });
 
   await audit(repository, {
     type: "approval_granted",
-    actorUserId: approverId,
+    actorUserId: approver.id,
     agentId: approval.requestingAgent,
     requestId: approval.requestId,
     planStepId: approval.planStepId,
@@ -37,14 +40,15 @@ export async function rejectApprovalRequest({
   approverId = null,
   decisionReason = null
 } = {}) {
+  const approver = await resolveDecidingUser(repository, approverId);
   const approval = await repository.rejectApproval(approvalId, {
-    approverId,
+    approverId: approver.id,
     decisionReason
   });
 
   await audit(repository, {
     type: "approval_rejected",
-    actorUserId: approverId,
+    actorUserId: approver.id,
     agentId: approval.requestingAgent,
     requestId: approval.requestId,
     planStepId: approval.planStepId,
@@ -110,6 +114,43 @@ export async function executeApprovedApproval({
       toolName: toolId
     }
   });
+}
+
+// An approval decision is only ever attributed to a real, stored User whose role
+// carries the approval capability. This holds even when the flow is called
+// directly, so the guarantee does not depend on the HTTP layer alone.
+async function resolveDecidingUser(repository, approverId) {
+  if (typeof approverId !== "string" || approverId.trim().length === 0) {
+    throw new ApprovalStateError(
+      "An approval decision requires an authenticated approver.",
+      "APPROVER_REQUIRED",
+      { approverId: null }
+    );
+  }
+
+  const user = await repository.getUser(approverId.trim());
+  if (!user) {
+    throw new ApprovalStateError(
+      "The approver does not match a known user.",
+      "APPROVER_UNKNOWN",
+      { approverId: approverId.trim() }
+    );
+  }
+
+  try {
+    assertCapability(createPrincipal({ user }), "decide_approvals");
+  } catch (cause) {
+    if (cause instanceof AuthorizationError) {
+      throw new ApprovalStateError(
+        "The approver is not allowed to decide approvals.",
+        "APPROVER_NOT_ALLOWED",
+        { approverId: user.id, role: cause.details?.role ?? null }
+      );
+    }
+    throw cause;
+  }
+
+  return user;
 }
 
 function findPlanStep(request, planStepId) {

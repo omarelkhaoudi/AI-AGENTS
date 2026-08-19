@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createMvpAgentPermissions,
   BUSINESS_DATA_SOURCES,
   BUSINESS_DOMAINS,
   BUSINESS_DOMAIN_DEFINITIONS,
@@ -231,7 +232,7 @@ test("MVP tools read current demo data through business memory without changing 
 
   const result = await service.execute({
     agentId: "finance",
-    agentPermissions: [createPermission({ kind: "read_analyze", resource: "request:*" })],
+    agentPermissions: createMvpAgentPermissions("finance"),
     toolId: "get_pending_payments",
     input: { requestId: "req-business-memory" },
     requestId: "req-business-memory"
@@ -259,7 +260,7 @@ test("MVP tools can read an explicit future source through business memory witho
 
   const result = await service.execute({
     agentId: "finance",
-    agentPermissions: [createPermission({ kind: "read_analyze", resource: "request:*" })],
+    agentPermissions: createMvpAgentPermissions("finance"),
     toolId: "get_pending_payments",
     input: { requestId: "req-business-memory-future" },
     requestId: "req-business-memory-future"

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createMvpAgentPermissions,
   InMemoryRepository,
   ToolExecutionService,
   ToolExecutionServiceError,
@@ -288,9 +289,7 @@ function createEchoTool({
 
 function createServiceInput({
   agentId = "finance",
-  agentPermissions = [
-    createPermission({ kind: "read_analyze", resource: "request:*" })
-  ],
+  agentPermissions = createMvpAgentPermissions("finance"),
   toolId = "get_pending_payments",
   input = { requestId: "req-service" },
   requestId = "req-service",

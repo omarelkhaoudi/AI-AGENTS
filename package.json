@@ -15,12 +15,14 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
-    "db:seed": "node scripts/db-seed.mjs"
+    "db:seed": "node scripts/db-seed.mjs",
+    "auth:create-token": "node scripts/create-api-token.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "@fastify/rate-limit": "^10.3.0",
     "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
     "fastify": "^5.11.3",

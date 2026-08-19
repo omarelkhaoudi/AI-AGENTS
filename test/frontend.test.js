@@ -9,12 +9,13 @@ import {
   createToolDefinition,
   createToolInputSchema
 } from "../src/index.js";
+import { buildAuthenticatedApi } from "../test-support/api-auth.js";
 
 test("Director frontend is served by the existing API server", async (t) => {
-  const app = buildApi({ repository: new InMemoryRepository() });
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
   t.after(() => app.close());
 
-  const response = await app.inject({ method: "GET", url: "/" });
+  const response = await inject({ method: "GET", url: "/" });
 
   assert.equal(response.statusCode, 200);
   assert.match(response.headers["content-type"], /text\/html/);
@@ -33,11 +34,11 @@ test("Director frontend is served by the existing API server", async (t) => {
 });
 
 test("Director frontend assets connect only to existing Director and approval endpoints", async (t) => {
-  const app = buildApi({ repository: new InMemoryRepository() });
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
   t.after(() => app.close());
 
-  const scriptResponse = await app.inject({ method: "GET", url: "/app/app.js" });
-  const styleResponse = await app.inject({ method: "GET", url: "/app/styles.css" });
+  const scriptResponse = await inject({ method: "GET", url: "/app/app.js" });
+  const styleResponse = await inject({ method: "GET", url: "/app/styles.css" });
 
   assert.equal(scriptResponse.statusCode, 200);
   assert.match(scriptResponse.headers["content-type"], /text\/javascript/);
@@ -59,7 +60,7 @@ test("Director frontend assets connect only to existing Director and approval en
 });
 
 test("Director cockpit API scenarios cover global, finance, production, purchasing, and multi-agent requests", async (t) => {
-  const app = buildApi({ repository: new InMemoryRepository() });
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
   t.after(() => app.close());
 
   const scenarios = [
@@ -86,7 +87,7 @@ test("Director cockpit API scenarios cover global, finance, production, purchasi
   ];
 
   for (const scenario of scenarios) {
-    const body = await postDirector(app, scenario.message);
+    const body = await postDirector(inject, scenario.message);
     assert.equal(body.status, "completed", scenario.message);
     assert.deepEqual(body.results.map((result) => result.agent), scenario.agents, scenario.message);
     assert.deepEqual(Object.keys(body.summary.minimumSections), [
@@ -107,13 +108,13 @@ test("Director cockpit API scenarios cover global, finance, production, purchasi
 });
 
 test("Director cockpit API reports partial responses without hiding successful agent results", async (t) => {
-  const app = buildApi({
+  const { app, inject } = await buildAuthenticatedApi({
     repository: new InMemoryRepository(),
     toolRegistry: createProductionFailureRegistry()
   });
   t.after(() => app.close());
 
-  const body = await postDirector(app, "Fais-moi le point complet de l'entreprise aujourd'hui.");
+  const body = await postDirector(inject, "Fais-moi le point complet de l'entreprise aujourd'hui.");
 
   assert.equal(body.status, "partial");
   assert.equal(body.results.some((result) => result.agent === "finance" && result.status === "completed"), true);
@@ -123,10 +124,10 @@ test("Director cockpit API reports partial responses without hiding successful a
 
 test("Director cockpit approval flow exposes pending approval, supports rejection, and prevents pre-approval execution", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const body = await postDirector(app, "Effectue le paiement de cette facture.", {
+  const body = await postDirector(inject, "Effectue le paiement de cette facture.", {
     approvalGranted: true
   });
 
@@ -135,17 +136,16 @@ test("Director cockpit approval flow exposes pending approval, supports rejectio
   assert.equal(body.audit.some((event) => event.type === "approval_requested"), true);
   assert.equal(body.audit.some((event) => event.type === "tool_called"), false);
 
-  const approvalsResponse = await app.inject({ method: "GET", url: "/api/approvals" });
+  const approvalsResponse = await inject({ method: "GET", url: "/api/approvals" });
   const approvalsBody = JSON.parse(approvalsResponse.body);
   assert.equal(approvalsResponse.statusCode, 200);
   assert.equal(approvalsBody.approvals.length, 1);
   assert.equal(approvalsBody.approvals[0].requestedAction, "execute_invoice_payment");
 
-  const rejectResponse = await app.inject({
+  const rejectResponse = await inject({
     method: "POST",
     url: `/api/approvals/${approvalsBody.approvals[0].id}/reject`,
     payload: {
-      approverId: "director-ui-test",
       decisionReason: "Rejected from cockpit test."
     }
   });
@@ -157,8 +157,8 @@ test("Director cockpit approval flow exposes pending approval, supports rejectio
   assert.equal(events.some((event) => event.type === "tool_called"), false);
 });
 
-async function postDirector(app, message, extraPayload = {}) {
-  const response = await app.inject({
+async function postDirector(inject, message, extraPayload = {}) {
+  const response = await inject({
     method: "POST",
     url: "/api/director/requests",
     payload: { message, ...extraPayload }

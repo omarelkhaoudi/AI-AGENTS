@@ -14,6 +14,7 @@ import {
   orchestrateRequest,
   seedMvpAgents
 } from "../src/index.js";
+import { buildAuthenticatedApi } from "../test-support/api-auth.js";
 
 test("OpenAI provider implements the LLMProvider contract", async () => {
   const provider = createOpenAIProvider({
@@ -247,7 +248,7 @@ test("PLANNER_PROVIDER=llm_openai selects LlmPlanner with OpenAIProvider and fak
 test("OpenAI planner end-to-end stays inside Director and ToolExecutionService with a fake client", async () => {
   const repository = new InMemoryRepository();
   await seedMvpAgents(repository);
-  const app = buildApi({
+  const { app, inject } = await buildAuthenticatedApi({
     repository,
     config: {
       planner: {
@@ -274,7 +275,7 @@ test("OpenAI planner end-to-end stays inside Director and ToolExecutionService w
   });
 
   try {
-    const response = await app.inject({
+    const response = await inject({
       method: "POST",
       url: "/api/requests",
       payload: {

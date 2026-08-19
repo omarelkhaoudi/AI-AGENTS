@@ -1,6 +1,10 @@
 export const REPOSITORY_METHODS = Object.freeze([
   "upsertUser",
   "getUser",
+  "createApiToken",
+  "findApiTokenByHash",
+  "listApiTokens",
+  "revokeApiToken",
   "upsertAgent",
   "getAgent",
   "listAgents",
@@ -42,6 +46,22 @@ export class AgentPlatformRepository {
 
   getUser() {
     throw new RepositoryContractError("getUser is not implemented.");
+  }
+
+  createApiToken() {
+    throw new RepositoryContractError("createApiToken is not implemented.");
+  }
+
+  findApiTokenByHash() {
+    throw new RepositoryContractError("findApiTokenByHash is not implemented.");
+  }
+
+  listApiTokens() {
+    throw new RepositoryContractError("listApiTokens is not implemented.");
+  }
+
+  revokeApiToken() {
+    throw new RepositoryContractError("revokeApiToken is not implemented.");
   }
 
   upsertAgent() {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createMvpAgentPermissions,
   InMemoryRepository,
   ToolExecutionService,
   ToolExecutionServiceError,
@@ -21,6 +22,7 @@ import {
   seedMvpAgents,
   validateAgentBusinessConfig
 } from "../src/index.js";
+import { buildAuthenticatedApi } from "../test-support/api-auth.js";
 
 const CDC_CORE_AGENT_IDS = Object.freeze([
   "finance",
@@ -70,10 +72,10 @@ const MVP_ORG_AGENT_IDS = Object.freeze([
 
 test("MVP central scenario orchestrates the CDC priority agents offline", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/requests",
     payload: {
@@ -107,10 +109,10 @@ test("MVP central scenario orchestrates the CDC priority agents offline", async 
 
 test("POST /api/director/requests returns a clean consolidated demo response", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/director/requests",
     payload: {
@@ -162,10 +164,10 @@ test("POST /api/director/requests returns a clean consolidated demo response", a
 
 test("Director handles point sur mon entreprise today as a multi-agent company overview with priority agents", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const { body, response } = await postDirector(app, "Fais-moi le point sur mon entreprise aujourd'hui.");
+  const { body, response } = await postDirector(inject, "Fais-moi le point sur mon entreprise aujourd'hui.");
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
@@ -199,7 +201,7 @@ test("Director handles point sur mon entreprise today as a multi-agent company o
 
 test("MVP business scenarios A to I return coherent Director summaries from demo tools only", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
   const scenarios = [
@@ -340,7 +342,7 @@ test("MVP business scenarios A to I return coherent Director summaries from demo
   ];
 
   for (const scenario of scenarios) {
-    const { body, response } = await postDirector(app, scenario.message);
+    const { body, response } = await postDirector(inject, scenario.message);
     assert.equal(response.statusCode, 201, scenario.label);
     assert.equal(body.status, "completed", scenario.label);
     assert.deepEqual(body.results.map((result) => result.agent), scenario.agents, scenario.label);
@@ -363,7 +365,7 @@ test("MVP business scenarios A to I return coherent Director summaries from demo
 
 test("Director API returns coherent functional MVP responses for leader requests", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
   const scenarios = [
@@ -703,7 +705,7 @@ test("Director API returns coherent functional MVP responses for leader requests
   ];
 
   for (const scenario of scenarios) {
-    const { body, response } = await postDirector(app, scenario.message);
+    const { body, response } = await postDirector(inject, scenario.message);
     assert.equal(response.statusCode, 201, scenario.message);
     assert.equal(body.status, scenario.status, scenario.message);
     assert.deepEqual(body.results.map((result) => result.agent), scenario.agents, scenario.message);
@@ -719,10 +721,10 @@ test("Director API returns coherent functional MVP responses for leader requests
 
 test("Director routes multi-domain finance and production requests without planner execution", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const { body, response } = await postDirector(app, "Combien devons-nous encaisser et quelles commandes risquent d'etre en retard ?");
+  const { body, response } = await postDirector(inject, "Combien devons-nous encaisser et quelles commandes risquent d'etre en retard ?");
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
@@ -735,10 +737,10 @@ test("Director routes multi-domain finance and production requests without plann
 
 test("Director routes commercial and purchasing requests together", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const { body, response } = await postDirector(app, "Quels clients devons-nous relancer et que devons-nous commander ?");
+  const { body, response } = await postDirector(inject, "Quels clients devons-nous relancer et que devons-nous commander ?");
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
@@ -750,10 +752,10 @@ test("Director routes commercial and purchasing requests together", async (t) =>
 
 test("Director routes Commercial Marketing combined requests without losing provenance", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const { body, response } = await postDirector(app, "Quels clients relancer et quelles actions marketing proposes-tu ?");
+  const { body, response } = await postDirector(inject, "Quels clients relancer et quelles actions marketing proposes-tu ?");
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
@@ -768,10 +770,10 @@ test("Director routes Commercial Marketing combined requests without losing prov
 
 test("Director routes Legal Commercial combined requests for contract and customer context", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const { body, response } = await postDirector(app, "Quels contrats client et devis doivent etre surveilles ?");
+  const { body, response } = await postDirector(inject, "Quels contrats client et devis doivent etre surveilles ?");
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
@@ -783,10 +785,10 @@ test("Director routes Legal Commercial combined requests for contract and custom
 
 test("Director routes Commercial Production After Sales combined customer issue requests", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const { body, response } = await postDirector(app, "Quels clients ont des problemes SAV sur des commandes en retard ?");
+  const { body, response } = await postDirector(inject, "Quels clients ont des problemes SAV sur des commandes en retard ?");
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
@@ -802,10 +804,10 @@ test("Director routes Commercial Production After Sales combined customer issue 
 
 test("Director routes Production After Sales quality requests without mixing domains", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const { body, response } = await postDirector(app, "Quels problemes qualite bloquent la production ?");
+  const { body, response } = await postDirector(inject, "Quels problemes qualite bloquent la production ?");
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
@@ -817,11 +819,11 @@ test("Director routes Production After Sales quality requests without mixing dom
 
 test("Director preserves provenance across Commercial Finance Production Purchasing chain", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
   const { body, response } = await postDirector(
-    app,
+    inject,
     "Quels clients, creances, commandes en retard et achats dois-je traiter ?"
   );
 
@@ -841,11 +843,11 @@ test("Director preserves provenance across Commercial Finance Production Purchas
 
 test("Director preserves Production Purchasing Production loop context without merging domains", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
   const { body, response } = await postDirector(
-    app,
+    inject,
     "Quels besoins matieres bloquent la production et quelles priorites production en decoulent ?"
   );
 
@@ -861,10 +863,10 @@ test("Director preserves Production Purchasing Production loop context without m
 
 test("Director keeps HR requests limited to HR", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const { body, response } = await postDirector(app, "Fais-moi le point RH sur les absences et conges.");
+  const { body, response } = await postDirector(inject, "Fais-moi le point RH sur les absences et conges.");
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
@@ -877,10 +879,10 @@ test("Director keeps HR requests limited to HR", async (t) => {
 
 test("Director routes communication requests through Marketing supervision", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const { body, response } = await postDirector(app, "Prepare la communication de cette semaine.");
+  const { body, response } = await postDirector(inject, "Prepare la communication de cette semaine.");
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
@@ -893,10 +895,10 @@ test("Director routes communication requests through Marketing supervision", asy
 
 test("MVP business scenario J creates approval and does not execute payment", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const { body, response } = await postDirector(app, "Effectue le paiement de cette facture.");
+  const { body, response } = await postDirector(inject, "Effectue le paiement de cette facture.");
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "requires_approval");
@@ -914,10 +916,10 @@ test("MVP business scenario J creates approval and does not execute payment", as
 
 test("POST /api/director/requests routes weekly communication through Marketing then Community Manager", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/director/requests",
     payload: {
@@ -960,13 +962,13 @@ test("POST /api/director/requests routes weekly communication through Marketing 
 
 test("POST /api/director/requests reports partial results when Marketing is unavailable", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({
+  const { app, inject } = await buildAuthenticatedApi({
     repository,
     toolRegistry: createMarketingFailureRegistry()
   });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/director/requests",
     payload: {
@@ -996,10 +998,10 @@ test("POST /api/director/requests reports partial results when an agent is unava
     ...(await repository.getAgent("marketing")),
     status: "disabled"
   });
-  const app = buildApi({ repository, seedAgents: false });
+  const { app, inject } = await buildAuthenticatedApi({ repository, seedAgents: false });
   t.after(() => app.close());
 
-  const { body, response } = await postDirector(app, "Prepare la communication de cette semaine.");
+  const { body, response } = await postDirector(inject, "Prepare la communication de cette semaine.");
   const marketing = body.results.find((result) => result.agent === "marketing");
 
   assert.equal(response.statusCode, 201);
@@ -1012,13 +1014,13 @@ test("POST /api/director/requests reports partial results when an agent is unava
 
 test("POST /api/director/requests preserves empty tool results without inventing findings", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({
+  const { app, inject } = await buildAuthenticatedApi({
     repository,
     toolRegistry: createEmptyLegalRegistry()
   });
   t.after(() => app.close());
 
-  const { body, response } = await postDirector(app, "Y a-t-il des sujets juridiques importants ?");
+  const { body, response } = await postDirector(inject, "Y a-t-il des sujets juridiques importants ?");
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
@@ -1037,7 +1039,7 @@ test("POST /api/director/requests creates approval for sensitive actions without
       createPermission({ kind: "execute_action", resource: "request:*" })
     ]
   });
-  const app = buildApi({
+  const { app, inject } = await buildAuthenticatedApi({
     repository,
     seedAgents: false,
     planner: createSensitivePaymentPlanner(),
@@ -1045,7 +1047,7 @@ test("POST /api/director/requests creates approval for sensitive actions without
   });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/director/requests",
     payload: {
@@ -1064,10 +1066,10 @@ test("POST /api/director/requests creates approval for sensitive actions without
   assert.equal(body.audit.some((event) => event.type === "approval_requested"), true);
   assert.equal(body.audit.some((event) => event.type === "tool_called"), false);
 
-  const approveResponse = await app.inject({
+  const approveResponse = await inject({
     method: "POST",
     url: `/api/approvals/${body.decisionsRequired[0].approvalId}/approve`,
-    payload: { approverId: "leader-demo" }
+    payload: {}
   });
   const approveBody = JSON.parse(approveResponse.body);
   const events = await repository.listAuditEvents({ requestId: body.requestId });
@@ -1077,10 +1079,10 @@ test("POST /api/director/requests creates approval for sensitive actions without
   assert.equal(events.some((event) => event.type === "tool_called"), true);
   assert.equal(events.some((event) => event.type === "approval_granted"), true);
 
-  const secondApproveResponse = await app.inject({
+  const secondApproveResponse = await inject({
     method: "POST",
     url: `/api/approvals/${body.decisionsRequired[0].approvalId}/approve`,
-    payload: { approverId: "leader-demo" }
+    payload: {}
   });
   assert.equal(secondApproveResponse.statusCode, 409);
 });
@@ -1220,10 +1222,10 @@ test("Community Manager is subordinate to Marketing and not a sibling agent", ()
 
 test("Marketing receives Community Manager results before Director synthesis", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/director/requests",
     payload: {
@@ -1558,8 +1560,8 @@ async function createServiceHarness({ registry = null } = {}) {
   return { repository, service };
 }
 
-async function postDirector(app, message) {
-  const response = await app.inject({
+async function postDirector(inject, message) {
+  const response = await inject({
     method: "POST",
     url: "/api/director/requests",
     payload: { message }
@@ -1682,9 +1684,7 @@ function createSensitivePaymentRegistry() {
 function createServiceInput({
   agentId,
   toolId,
-  agentPermissions = [
-    createPermission({ kind: "read_analyze", resource: "request:*" })
-  ]
+  agentPermissions = createMvpAgentPermissions(agentId)
 } = {}) {
   return {
     agentId,

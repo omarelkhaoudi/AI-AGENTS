@@ -18,7 +18,10 @@ export const AUDIT_EVENT_TYPES = Object.freeze([
   "approval_granted",
   "approval_rejected",
   "execution_completed",
-  "execution_failed"
+  "execution_failed",
+  "authentication_failed",
+  "authorization_denied",
+  "rate_limit_exceeded"
 ]);
 
 export class AuditEventError extends Error {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createMvpAgentPermissions,
   BUSINESS_DATA_SOURCES,
   BUSINESS_DOMAIN_ALIASES,
   BusinessMemoryError,
@@ -16,6 +17,7 @@ import {
   createPermission,
   normalizeBusinessDomain
 } from "../src/index.js";
+import { buildAuthenticatedApi } from "../test-support/api-auth.js";
 
 test("business domain aliases expose stable business names without changing stored domains", () => {
   assert.deepEqual(BUSINESS_DOMAIN_ALIASES, {
@@ -157,10 +159,10 @@ test("MVP overview, finance, and commercial tools keep current demo outputs", as
 
 test("Director still completes the company overview request through demo tools", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/director/requests",
     payload: {
@@ -178,10 +180,10 @@ test("Director still completes the company overview request through demo tools",
 
 test("Director payment request creates approval and never auto-executes payment", async (t) => {
   const repository = new InMemoryRepository();
-  const app = buildApi({ repository });
+  const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
 
-  const response = await app.inject({
+  const response = await inject({
     method: "POST",
     url: "/api/director/requests",
     payload: {
@@ -203,7 +205,7 @@ test("Director payment request creates approval and never auto-executes payment"
 async function executeReadTool(registry, toolId, agentId) {
   return registry.execute(toolId, {
     agentId,
-    agentPermissions: [createPermission({ kind: "read_analyze", resource: "request:*" })],
+    agentPermissions: createMvpAgentPermissions(agentId),
     requestId: `req-${toolId}`,
     audit: false
   }, {

@@ -16,7 +16,7 @@ import {
   domainResource,
   evaluateActionPolicy,
   matchesResource,
-  toolSecurityDomain
+  toolSecurityDomains
 } from "../src/index.js";
 import { listJavaScriptFiles } from "../scripts/list-js-files.mjs";
 
@@ -135,14 +135,16 @@ test("every MVP tool declares a security domain, and every allowed agent is scop
   const registry = createMvpToolRegistry();
 
   for (const tool of registry.list()) {
-    assert.ok(tool.securityDomain, `${tool.id} must declare a security domain`);
-    assert.equal(tool.securityDomain, toolSecurityDomain(tool.id));
+    assert.ok(tool.securityDomains.length > 0, `${tool.id} must declare at least one security domain`);
+    assert.deepEqual([...tool.securityDomains], toolSecurityDomains(tool.id));
 
     for (const agentId of tool.allowedAgents) {
-      assert.ok(
-        agentSecurityDomains(agentId).includes(tool.securityDomain),
-        `${agentId} must be scoped to ${tool.securityDomain} to use ${tool.id}`
-      );
+      for (const domain of tool.securityDomains) {
+        assert.ok(
+          agentSecurityDomains(agentId).includes(domain),
+          `${agentId} must be scoped to ${domain} to use ${tool.id}`
+        );
+      }
     }
   }
 });
@@ -154,7 +156,9 @@ test("the ten CDC agents are all present and none holds a domain it has no tool 
   const neededByAgent = new Map(MVP_AGENT_IDS.map((agentId) => [agentId, new Set()]));
   for (const tool of registry.list()) {
     for (const agentId of tool.allowedAgents) {
-      neededByAgent.get(agentId)?.add(tool.securityDomain);
+      for (const domain of tool.securityDomains) {
+        neededByAgent.get(agentId)?.add(domain);
+      }
     }
   }
 

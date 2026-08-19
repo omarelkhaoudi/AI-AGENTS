@@ -2,7 +2,7 @@ import { createMockToolAdapter } from "./adapters/mock-adapter.js";
 import { ToolAdapterError } from "./adapters/contract.js";
 import { createToolDefinition, createToolInputSchema } from "./contract.js";
 import { ToolRegistry } from "./registry.js";
-import { toolSecurityDomain } from "../security/tool-domains.js";
+import { toolSecurityDomains } from "../security/tool-domains.js";
 import { BusinessMemoryError } from "../business-memory/domain-contract.js";
 import { createBusinessMemoryRepository } from "../business-memory/repository-factory.js";
 import {
@@ -287,7 +287,7 @@ function createMvpMockTool({
     name,
     description,
     category,
-    securityDomain: toolSecurityDomain(id),
+    securityDomains: toolSecurityDomains(id),
     requiredPermission,
     allowedAgents,
     inputSchema: baseInputSchema,

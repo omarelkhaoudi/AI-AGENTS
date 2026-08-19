@@ -35,23 +35,23 @@ const EXPECTED_AGENT_SECURITY_DOMAINS = Object.freeze({
 });
 
 const EXPECTED_TOOL_SECURITY_DOMAINS = Object.freeze({
-  get_company_overview: "company_overview",
-  get_pending_payments: "payments",
-  get_pending_quotes: "quotes",
-  get_delayed_production_orders: "production",
-  get_purchase_needs: "purchase_needs",
-  get_hr_overview: "hr",
-  get_after_sales_overview: "after_sales",
-  get_marketing_overview: "marketing",
-  get_community_overview: "community",
-  get_legal_overview: "legal",
-  get_customer_overview: "customers",
-  get_customer_orders: "orders",
-  get_overdue_invoices: "invoices",
-  get_supplier_catalog: "suppliers",
-  execute_invoice_payment: "payments",
-  prepare_hr_sensitive_decision: "hr",
-  prepare_legal_sensitive_decision: "legal"
+  get_company_overview: ["company_overview"],
+  get_pending_payments: ["payments"],
+  get_pending_quotes: ["quotes"],
+  get_delayed_production_orders: ["production"],
+  get_purchase_needs: ["purchase_needs"],
+  get_hr_overview: ["hr"],
+  get_after_sales_overview: ["after_sales"],
+  get_marketing_overview: ["marketing"],
+  get_community_overview: ["community"],
+  get_legal_overview: ["legal"],
+  get_customer_overview: ["customers"],
+  get_customer_orders: ["orders"],
+  get_overdue_invoices: ["invoices"],
+  get_supplier_catalog: ["suppliers"],
+  execute_invoice_payment: ["payments"],
+  prepare_hr_sensitive_decision: ["hr"],
+  prepare_legal_sensitive_decision: ["legal"]
 });
 
 test("the ten CDC agents are all still present", () => {
@@ -74,8 +74,8 @@ test("agent security domains match the reviewed snapshot exactly", () => {
 
 test("tool security domains match the reviewed snapshot exactly", () => {
   assert.deepEqual(
-    { ...TOOL_SECURITY_DOMAINS },
-    { ...EXPECTED_TOOL_SECURITY_DOMAINS }
+    Object.fromEntries(Object.entries(TOOL_SECURITY_DOMAINS).map(([id, domains]) => [id, [...domains]])),
+    Object.fromEntries(Object.entries(EXPECTED_TOOL_SECURITY_DOMAINS).map(([id, domains]) => [id, [...domains]]))
   );
 });
 
@@ -94,7 +94,9 @@ test("each agent still holds exactly the domains its tools require", () => {
 
   for (const tool of registry.list()) {
     for (const agentId of tool.allowedAgents) {
-      needed.get(agentId)?.add(tool.securityDomain);
+      for (const domain of tool.securityDomains) {
+        needed.get(agentId)?.add(domain);
+      }
     }
   }
 

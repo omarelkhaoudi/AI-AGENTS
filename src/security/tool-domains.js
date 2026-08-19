@@ -4,23 +4,23 @@ import { MVP_AGENT_IDS } from "../agents/default-agents.js";
 // separate from the presentation domain reported by the Director API: narrowing
 // a security scope must never be coupled to how a result is displayed.
 export const TOOL_SECURITY_DOMAINS = Object.freeze({
-  get_company_overview: "company_overview",
-  get_pending_payments: "payments",
-  get_pending_quotes: "quotes",
-  get_delayed_production_orders: "production",
-  get_purchase_needs: "purchase_needs",
-  get_hr_overview: "hr",
-  get_after_sales_overview: "after_sales",
-  get_marketing_overview: "marketing",
-  get_community_overview: "community",
-  get_legal_overview: "legal",
-  get_customer_overview: "customers",
-  get_customer_orders: "orders",
-  get_overdue_invoices: "invoices",
-  get_supplier_catalog: "suppliers",
-  execute_invoice_payment: "payments",
-  prepare_hr_sensitive_decision: "hr",
-  prepare_legal_sensitive_decision: "legal"
+  get_company_overview: Object.freeze(["company_overview"]),
+  get_pending_payments: Object.freeze(["payments"]),
+  get_pending_quotes: Object.freeze(["quotes"]),
+  get_delayed_production_orders: Object.freeze(["production"]),
+  get_purchase_needs: Object.freeze(["purchase_needs"]),
+  get_hr_overview: Object.freeze(["hr"]),
+  get_after_sales_overview: Object.freeze(["after_sales"]),
+  get_marketing_overview: Object.freeze(["marketing"]),
+  get_community_overview: Object.freeze(["community"]),
+  get_legal_overview: Object.freeze(["legal"]),
+  get_customer_overview: Object.freeze(["customers"]),
+  get_customer_orders: Object.freeze(["orders"]),
+  get_overdue_invoices: Object.freeze(["invoices"]),
+  get_supplier_catalog: Object.freeze(["suppliers"]),
+  execute_invoice_payment: Object.freeze(["payments"]),
+  prepare_hr_sensitive_decision: Object.freeze(["hr"]),
+  prepare_legal_sensitive_decision: Object.freeze(["legal"])
 });
 
 // Least privilege: each of the ten agents is scoped to the domains its own
@@ -41,8 +41,8 @@ export const AGENT_SECURITY_DOMAINS = Object.freeze({
 
 export const DOMAIN_RESOURCE_PREFIX = "domain:";
 
-export function toolSecurityDomain(toolId) {
-  return TOOL_SECURITY_DOMAINS[toolId] ?? null;
+export function toolSecurityDomains(toolId) {
+  return TOOL_SECURITY_DOMAINS[toolId] ? [...TOOL_SECURITY_DOMAINS[toolId]] : [];
 }
 
 export function domainResource(domain) {

@@ -256,20 +256,29 @@ export class ToolExecutionService {
   // Least privilege: on top of allowedAgents, the agent must hold a permission
   // scoped to the business domain the tool reads or acts upon.
   async #assertDomainAllowed(tool, { agentId, agentPermissions, requestId, planId, planStepId, executionId }) {
-    if (!tool.securityDomain) {
+    const securityDomains = tool.securityDomains ?? [];
+    if (securityDomains.length === 0) {
       return;
     }
 
-    const resource = domainResource(tool.securityDomain);
-    const allowed = (agentPermissions ?? []).some((permission) => matchesResource(permission.resource, resource));
-    if (allowed) {
+    // A tool that reads several domains needs the agent to hold every one of
+    // them. Holding a subset is a denial, not a partial grant.
+    const missingDomains = securityDomains.filter((domain) => !(agentPermissions ?? []).some(
+      (permission) => matchesResource(permission.resource, domainResource(domain))
+    ));
+    if (missingDomains.length === 0) {
       return;
     }
 
     const error = new ToolExecutionServiceError(
-      `Agent is not scoped to the tool business domain: ${tool.securityDomain}`,
+      `Agent is not scoped to every tool business domain: ${missingDomains.join(", ")}`,
       "DOMAIN_NOT_ALLOWED",
-      { toolId: tool.id, agentId, securityDomain: tool.securityDomain }
+      {
+        toolId: tool.id,
+        agentId,
+        securityDomains: [...securityDomains],
+        missingDomains
+      }
     );
     await this.#auditPermissionDenied({ error, tool, agentId, requestId, planId, planStepId, executionId });
     throw error;

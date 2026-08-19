@@ -13,7 +13,7 @@ export function createToolDefinition({
   name,
   description,
   category,
-  securityDomain = null,
+  securityDomains = [],
   requiredPermission,
   allowedAgents = [],
   inputSchema = createToolInputSchema(),
@@ -26,7 +26,9 @@ export function createToolDefinition({
     name,
     description,
     category,
-    securityDomain,
+    // Spreading a string would silently turn it into a list of letters, so the
+    // value is passed through untouched and rejected by validation instead.
+    securityDomains: Array.isArray(securityDomains) ? [...securityDomains] : securityDomains,
     requiredPermission,
     allowedAgents: [...allowedAgents],
     inputSchema,
@@ -77,8 +79,17 @@ export function validateToolDefinition(tool) {
     errors.push("allowedAgents must contain non-empty strings");
   }
 
-  if (tool.securityDomain !== null && (typeof tool.securityDomain !== "string" || tool.securityDomain.trim().length === 0)) {
-    errors.push("securityDomain must be a non-empty string when provided");
+  // A tool may read several business domains. Every one of them is enforced,
+  // so the list must be well formed and free of duplicates.
+  if (!Array.isArray(tool.securityDomains)) {
+    errors.push("securityDomains must be an array");
+  } else {
+    if (tool.securityDomains.some((domain) => typeof domain !== "string" || domain.trim().length === 0)) {
+      errors.push("securityDomains must contain non-empty strings");
+    }
+    if (new Set(tool.securityDomains).size !== tool.securityDomains.length) {
+      errors.push("securityDomains must not contain duplicates");
+    }
   }
 
   validateInputSchema(tool.inputSchema, errors);

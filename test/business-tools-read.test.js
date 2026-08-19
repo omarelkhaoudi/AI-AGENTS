@@ -13,10 +13,10 @@ import {
 // The four Lot 2B.1 read tools, with the agent each one belongs to and the
 // business domain it is scoped to.
 const READ_TOOLS = Object.freeze([
-  { toolId: "get_customer_overview", agents: ["commercial", "finance"], securityDomain: "customers" },
-  { toolId: "get_customer_orders", agents: ["commercial", "production"], securityDomain: "orders" },
-  { toolId: "get_overdue_invoices", agents: ["finance"], securityDomain: "invoices" },
-  { toolId: "get_supplier_catalog", agents: ["purchasing"], securityDomain: "suppliers" }
+  { toolId: "get_customer_overview", agents: ["commercial", "finance"], securityDomains: ["customers"] },
+  { toolId: "get_customer_orders", agents: ["commercial", "production"], securityDomains: ["orders"] },
+  { toolId: "get_overdue_invoices", agents: ["finance"], securityDomains: ["invoices"] },
+  { toolId: "get_supplier_catalog", agents: ["purchasing"], securityDomains: ["suppliers"] }
 ]);
 
 function createHarness() {
@@ -42,12 +42,12 @@ function createInput({ agentId, toolId }) {
 test("the four read tools are registered with a declared security domain", () => {
   const registry = createMvpToolRegistry();
 
-  for (const { toolId, agents, securityDomain } of READ_TOOLS) {
+  for (const { toolId, agents, securityDomains } of READ_TOOLS) {
     const tool = registry.get(toolId);
 
     assert.ok(tool, `${toolId} must be registered`);
     assert.equal(tool.requiredPermission, "read_analyze", toolId);
-    assert.equal(tool.securityDomain, securityDomain, toolId);
+    assert.deepEqual([...tool.securityDomains], securityDomains, toolId);
     assert.deepEqual([...tool.allowedAgents].sort(), [...agents].sort(), toolId);
   }
 });

@@ -212,12 +212,7 @@ async function createAndOrchestrateRequest({
   setSeedPromise
 }) {
   if (seedAgents) {
-    const existingSeed = getSeedPromise();
-    const seedPromise = existingSeed ?? seedMvpAgents(repository);
-    if (!existingSeed) {
-      setSeedPromise(seedPromise);
-    }
-    await seedPromise;
+    await runSeedOnce({ repository, getSeedPromise, setSeedPromise });
   }
 
   const savedRequest = await repository.createRequest(request);
@@ -241,6 +236,25 @@ async function createAndOrchestrateRequest({
     planner,
     toolRegistry
   });
+}
+
+// The seed promise is shared while it is pending so concurrent requests seed
+// only once, and it is discarded when it fails so the next request can retry.
+async function runSeedOnce({ repository, getSeedPromise, setSeedPromise }) {
+  const existingSeed = getSeedPromise();
+  if (existingSeed) {
+    return existingSeed;
+  }
+
+  const seedPromise = seedMvpAgents(repository).catch((error) => {
+    if (getSeedPromise() === seedPromise) {
+      setSeedPromise(null);
+    }
+    throw error;
+  });
+
+  setSeedPromise(seedPromise);
+  return seedPromise;
 }
 
 function createDirectorDemoResponse(request) {

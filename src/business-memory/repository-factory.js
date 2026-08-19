@@ -1,5 +1,4 @@
-import { PrismaClient } from "@prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createRequire } from "node:module";
 import { hasValidDatabaseUrl } from "../persistence/repository-factory.js";
 import {
   collectBusinessSourceRecords,
@@ -83,7 +82,36 @@ export function createBusinessMemoryRepository({
   });
 }
 
+// Prisma is loaded lazily so the demo / in-memory provider starts without
+// requiring a generated Prisma Client. The real Prisma path is unchanged.
+let prismaModulesCache = null;
+
+export function loadPrismaModules() {
+  if (prismaModulesCache) {
+    return prismaModulesCache;
+  }
+
+  try {
+    const requirePrisma = createRequire(import.meta.url);
+    const { PrismaClient } = requirePrisma("@prisma/client");
+    const { PrismaPg } = requirePrisma("@prisma/adapter-pg");
+    prismaModulesCache = Object.freeze({ PrismaClient, PrismaPg });
+  } catch (cause) {
+    throw new BusinessMemoryConfigurationError(
+      "Prisma Client is not available. Run `npm install` and `npm run db:generate` before using BUSINESS_MEMORY_PROVIDER=postgres.",
+      {
+        causeName: cause?.name ?? "Error",
+        causeCode: cause?.code,
+        causeMessage: cause?.message ?? String(cause)
+      }
+    );
+  }
+
+  return prismaModulesCache;
+}
+
 export function createBusinessMemoryPrismaClient(databaseUrl) {
+  const { PrismaClient, PrismaPg } = loadPrismaModules();
   const adapter = new PrismaPg({ connectionString: databaseUrl });
   return new PrismaClient({ adapter });
 }

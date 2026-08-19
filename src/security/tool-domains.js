@@ -18,6 +18,8 @@ export const TOOL_SECURITY_DOMAINS = Object.freeze({
   get_customer_orders: Object.freeze(["orders"]),
   get_overdue_invoices: Object.freeze(["invoices"]),
   get_supplier_catalog: Object.freeze(["suppliers"]),
+  get_receivables_summary: Object.freeze(["payments", "invoices"]),
+  get_quote_follow_ups: Object.freeze(["quotes"]),
   execute_invoice_payment: Object.freeze(["payments"]),
   prepare_hr_sensitive_decision: Object.freeze(["hr"]),
   prepare_legal_sensitive_decision: Object.freeze(["legal"])

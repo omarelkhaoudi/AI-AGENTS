@@ -3,8 +3,11 @@ import test from "node:test";
 import {
   DEFAULT_TOOLS_BY_AGENT,
   InMemoryRepository,
+  collectedItemIdentity,
   createDemoCompanyData,
+  createMaterialRequirements,
   createProductionSchedule,
+  createSummaryAggregates,
   demoReferenceDate
 } from "../src/index.js";
 import { buildAuthenticatedApi } from "../test-support/api-auth.js";
@@ -159,16 +162,151 @@ test("the routing table keeps the historical tool ahead of the computing one", (
   assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.purchasing], ["get_purchase_needs", "get_material_requirements"]);
 });
 
-// The summary of the computing tools is not consumed by the Director yet: that
-// is the object of a later commit, and pinning it here keeps the scope honest.
-test("the receivables totals are not yet reflected in the Director sections", async (t) => {
+// Lot 2C commit 5 consumes what the computing tools aggregated. The totals sit
+// beside the sections, never inside them: a section entry stays one business
+// item, so an aggregate placed there would read as one more thing to act on.
+test("the receivables totals reach the Director as an aggregate, not as a section entry", async (t) => {
   const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
   t.after(() => app.close());
 
   const body = await ask(inject, "Fais-moi le point sur mon entreprise aujourd'hui.");
 
-  assert.equal("totalsByCurrency" in body.summary, false);
+  assert.deepEqual(body.summary.aggregates.payments.totalsByCurrency, { MAD: 20500 });
+  assert.equal(body.summary.aggregates.payments.tool, "get_receivables_summary");
+  assert.equal(body.summary.aggregates.payments.agent, "finance");
+  // The aggregate never leaks into the section entries.
   assert.ok(body.summary.minimumSections["A ENCAISSER"].every((entry) => !("totalsByCurrency" in entry)));
+  assert.ok(body.summary.minimumSections["A ENCAISSER"].every((entry) => "item" in entry));
+});
+
+// Adding a currency must never produce a single merged figure: two amounts in
+// two currencies are two amounts, and adding them would invent money.
+test("no aggregate ever merges currencies into one figure", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const body = await ask(inject, "Fais-moi le point sur mon entreprise aujourd'hui.");
+
+  for (const [domain, aggregate] of Object.entries(body.summary.aggregates)) {
+    assert.equal("total" in aggregate, false, domain);
+    assert.equal("totalAmount" in aggregate, false, domain);
+    assert.equal("amount" in aggregate, false, domain);
+  }
+  assert.equal(Object.keys(body.summary.aggregates.payments.totalsByCurrency).length, 1);
+});
+
+// The wall-clock derived figures stay out until the date convention is decided
+// on its own: production lateness is anchored on the demo operating date while
+// receivables overdue is not, and surfacing both would report two conventions.
+test("the wall clock derived receivable figures are deliberately not surfaced", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const body = await ask(inject, "Fais-moi le point sur mon entreprise aujourd'hui.");
+  const aggregate = body.summary.aggregates.payments;
+
+  assert.equal("overdueTotalsByCurrency" in aggregate, false);
+  assert.equal("overdue" in aggregate.counts, false);
+  // The tool still computes them: only the Director declines to report them.
+  const tool = body.results.find((result) => result.tool === "get_receivables_summary");
+  assert.ok("overdueTotalsByCurrency" in tool.result.summary);
+});
+
+test("the material requirements aggregate carries the shortages and the anomalies", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const body = await ask(inject, "Fais-moi le point sur mon entreprise aujourd'hui.");
+  const aggregate = body.summary.aggregates.purchase_needs;
+
+  assert.equal(aggregate.counts.shortages, 2);
+  assert.equal(aggregate.counts.covered, 0);
+  assert.deepEqual(aggregate.anomalies, []);
+  assert.equal(aggregate.tool, "get_material_requirements");
+});
+
+// An anomaly is what the tool could not compute. The demo data produces none,
+// so this goes through the injectable seam rather than changing the demo data.
+test("an anomaly computed by the tool is carried by the aggregate", () => {
+  const computed = createMaterialRequirements({
+    orders: [{ id: "order-x", status: "in_progress" }],
+    billsOfMaterial: [],
+    stock: [],
+    products: []
+  });
+
+  assert.equal(computed.summary.counts.anomalies, 1);
+  assert.equal(computed.summary.anomalies[0].reason, "bill_of_material_missing");
+});
+
+// An agent contributing several steps is one agent. body.agents names the
+// organisation that answered, so it must not repeat it.
+test("body.agents carries one entry per agent with the tools it ran", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const body = await ask(inject, "Fais-moi le point sur mon entreprise aujourd'hui.");
+  const ids = body.agents.map((agent) => agent.id);
+
+  assert.equal(ids.length, 10, "director plus nine agents");
+  assert.equal(new Set(ids).size, ids.length, "no agent is listed twice");
+  assert.deepEqual(
+    body.agents.find((agent) => agent.id === "production").tools,
+    ["get_delayed_production_orders", "get_production_schedule"]
+  );
+  // No tool was lost by deduplicating: the flattened list is still the plan.
+  assert.equal(body.agents.flatMap((agent) => agent.tools).length, body.results.length);
+});
+
+// Two tools of the same agent read the same reality, so the same invoice or the
+// same production order reached a section twice. The Director reported four
+// receivables where the business has two.
+test("a section never reports the same business signal twice", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const body = await ask(inject, "Fais-moi le point sur mon entreprise aujourd'hui.");
+
+  for (const [name, entries] of Object.entries(body.summary.minimumSections)) {
+    if (name === "DECISIONS NECESSAIRES") {
+      continue;
+    }
+    const identities = entries.map((entry) => `${entry.domain}:${entry.item.id ?? entry.item.lineId ?? entry.item.orderId}`);
+    assert.equal(new Set(identities).size, identities.length, name);
+  }
+  assert.equal(body.summary.minimumSections["A ENCAISSER"].length, 2);
+  assert.equal(body.summary.minimumSections["RETARDS / PROBLEMES"].length, 4);
+});
+
+// Add before replace: deduplication keeps the first occurrence, and steps run
+// with the historical tool first, so what the Director already reported stays.
+test("deduplication keeps the historical tool, not the computing one", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const body = await ask(inject, "Fais-moi le point sur mon entreprise aujourd'hui.");
+
+  assert.deepEqual(
+    body.summary.minimumSections["A ENCAISSER"].map((entry) => entry.tool),
+    ["get_pending_payments", "get_pending_payments"]
+  );
+  assert.deepEqual(
+    body.summary.minimumSections["RETARDS / PROBLEMES"]
+      .filter((entry) => entry.agent === "production")
+      .map((entry) => entry.tool),
+    ["get_delayed_production_orders", "get_delayed_production_orders", "get_delayed_production_orders"]
+  );
+});
+
+// An item carrying nothing identifying is never assumed to be a duplicate.
+test("the headline counts distinct signals, not repeated ones", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const body = await ask(inject, "Fais-moi le point sur mon entreprise aujourd'hui.");
+
+  assert.match(body.summary.headline, /9 high-priority demo signal\(s\)/);
+  assert.equal(body.summary.headline.includes("12 high-priority"), false);
 });
 
 // CDC section 6: "Quelles commandes risquent d'etre en retard ?" must reach the
@@ -232,4 +370,87 @@ test("the material requirements are derived from the bills of material and the s
   assert.deepEqual(missing, { "Demo Aluminum Sheet A": 20, "Demo Packaging B": 90 });
   assert.ok(items.every((item) => item.required > item.available), "only shortages are reported");
   assert.ok(items.every((item) => item.covered === false));
+});
+
+// The demo data completes every step, so this guard has no observable effect
+// through the API. It is reached directly: a step that did not complete has an
+// absent or partial output, and a half-computed total is worse than none.
+test("a step that did not complete never feeds an aggregate", () => {
+  const step = {
+    agent: "finance",
+    tool: "get_receivables_summary",
+    domain: "payments",
+    result: { summary: { totalsByCurrency: { MAD: 999 }, counts: { receivables: 1 } } }
+  };
+
+  assert.deepEqual(createSummaryAggregates([{ ...step, status: "not_executed" }]), {});
+  assert.deepEqual(createSummaryAggregates([{ ...step, status: "failed" }]), {});
+  assert.deepEqual(
+    createSummaryAggregates([{ ...step, status: "completed" }]).payments.totalsByCurrency,
+    { MAD: 999 }
+  );
+});
+
+test("a tool with no projection contributes no aggregate", () => {
+  const aggregates = createSummaryAggregates([
+    {
+      agent: "finance",
+      tool: "get_pending_payments",
+      domain: "payments",
+      status: "completed",
+      result: { summary: { totalsByCurrency: { MAD: 1 } } }
+    }
+  ]);
+
+  assert.deepEqual(aggregates, {});
+});
+
+// The first completed step of a domain wins, like deduplication elsewhere.
+test("one aggregate per domain, the first one wins", () => {
+  const make = (tool, amount) => ({
+    agent: "finance",
+    tool,
+    domain: "payments",
+    status: "completed",
+    result: { summary: { totalsByCurrency: { MAD: amount }, counts: {} } }
+  });
+  const aggregates = createSummaryAggregates([
+    make("get_receivables_summary", 100),
+    make("get_receivables_summary", 200)
+  ]);
+
+  assert.deepEqual(aggregates.payments.totalsByCurrency, { MAD: 100 });
+});
+
+// Every demo item carries an identifier and no identifier is shared across two
+// domains, so these two guards are reached directly as well.
+test("an item identity is scoped to its presentation domain", () => {
+  assert.notEqual(
+    collectedItemIdentity("payments", { id: "shared-001" }),
+    collectedItemIdentity("invoices", { id: "shared-001" }),
+    "the same identifier in two domains is two different signals"
+  );
+  assert.equal(
+    collectedItemIdentity("payments", { id: "shared-001" }),
+    collectedItemIdentity("payments", { id: "shared-001" })
+  );
+});
+
+test("an item carrying nothing identifying is never assumed to be a duplicate", () => {
+  assert.equal(collectedItemIdentity("payments", {}), null);
+  assert.equal(collectedItemIdentity("payments", { amount: 10 }), null);
+  assert.equal(collectedItemIdentity("payments", null), null);
+  // Falsy but present identifiers are still identifiers.
+  assert.notEqual(collectedItemIdentity("payments", { id: 0 }), null);
+  assert.notEqual(collectedItemIdentity("payments", { label: "" }), null);
+});
+
+// The fallback chain is ordered: a record carrying several of them is
+// recognised by the most specific one.
+test("the identity falls back through id, lineId, orderId, subject, label", () => {
+  assert.equal(collectedItemIdentity("d", { id: "a", lineId: "b", orderId: "c" }).endsWith("a"), true);
+  assert.equal(collectedItemIdentity("d", { lineId: "b", orderId: "c" }).endsWith("b"), true);
+  assert.equal(collectedItemIdentity("d", { orderId: "c", subject: "s" }).endsWith("c"), true);
+  assert.equal(collectedItemIdentity("d", { subject: "s", label: "l" }).endsWith("s"), true);
+  assert.equal(collectedItemIdentity("d", { label: "l" }).endsWith("l"), true);
 });

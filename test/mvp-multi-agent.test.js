@@ -96,9 +96,12 @@ const CDC_CORE_STEP_TOOL_IDS = Object.freeze([
   "get_after_sales_overview"
 ]);
 
+// body.agents names the organisation that answered, so it carries one entry
+// per agent, not per step: the AGENT constant is the right basis, not the STEP
+// one it used before Lot 2C commit 5.
 const CDC_CORE_RESPONSE_AGENT_IDS = Object.freeze([
   "director",
-  ...CDC_CORE_STEP_AGENT_IDS
+  ...CDC_CORE_AGENT_IDS
 ]);
 
 const MVP_ORG_AGENT_IDS = Object.freeze([
@@ -171,7 +174,10 @@ test("POST /api/director/requests returns a clean consolidated demo response", a
   assert.equal(body.message, "Fais-moi le point complet de l'entreprise aujourd'hui.");
   assert.match(body.summary.headline, /Point complete: 5\/5 agents responded/);
   assert.deepEqual(body.agents.map((agent) => agent.id), CDC_CORE_RESPONSE_AGENT_IDS);
-  assert.deepEqual(body.agents.slice(1).map((agent) => agent.tool), CDC_CORE_STEP_TOOL_IDS);
+  // Each agent carries the tools it ran, in plan order. Flattened, they are
+  // still exactly the plan steps: deduplicating agents loses no tool.
+  assert.deepEqual(body.agents.slice(1).flatMap((agent) => agent.tools), CDC_CORE_STEP_TOOL_IDS);
+  assert.deepEqual(body.agents[0], { id: "director", tools: [], status: "completed" });
   assert.equal(body.results.length, 9);
   assert.equal(body.results.every((result) => result.result.demo === true), true);
   assert.equal(body.findings.every((finding) => finding.demo === true), true);

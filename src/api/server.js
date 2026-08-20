@@ -568,19 +568,40 @@ function createDirectorDemoResponse(request) {
   });
 }
 
+// One entry per agent, not per step. An agent contributing several steps is
+// listed once and carries the tools it ran, in plan order: this list names the
+// organisation that answered, so a repeated agent would overstate it.
 function createDemoAgentList(agentResults) {
-  return [
-    Object.freeze({
-      id: "director",
-      tool: null,
-      status: agentResults.some((result) => result.status !== "completed") ? "partial" : "completed"
-    }),
-    ...agentResults.map((result) => Object.freeze({
+  const byAgent = new Map();
+
+  for (const result of agentResults) {
+    const existing = byAgent.get(result.agent);
+    if (existing) {
+      existing.tools.push(result.tool);
+      // An agent is only complete when every one of its steps completed.
+      if (result.status !== "completed") {
+        existing.status = result.status;
+      }
+      continue;
+    }
+    byAgent.set(result.agent, {
       id: result.agent,
-      tool: result.tool,
+      tools: [result.tool],
       status: result.status,
       supervisorAgentId: result.supervisorAgentId,
       supervisedAgentIds: result.supervisedAgentIds
+    });
+  }
+
+  return [
+    Object.freeze({
+      id: "director",
+      tools: Object.freeze([]),
+      status: agentResults.some((result) => result.status !== "completed") ? "partial" : "completed"
+    }),
+    ...[...byAgent.values()].map((entry) => Object.freeze({
+      ...entry,
+      tools: Object.freeze(entry.tools)
     }))
   ];
 }
@@ -709,6 +730,7 @@ function createDemoSummary({ status, completedCount, expectedCount, agentResults
     blockers: sections.blockers,
     decisionsRequired: sections.decisionsRequired,
     minimumSections,
+    aggregates: createSummaryAggregates(agentResults),
     domainSources: createDomainSourceSummary(agentResults),
     sections
   });
@@ -723,6 +745,64 @@ function createMinimumDirectorSections(sections) {
     "RISQUES / BLOCAGES": sections.blockers,
     "DECISIONS NECESSAIRES": sections.decisionsRequired
   });
+}
+
+// Aggregates a tool computed for itself, surfaced next to the sections rather
+// than inside them: a section entry is always one business item, so an
+// aggregate placed there would read as one more item to act on.
+//
+// The projection is explicit, never a copy of the whole summary. Two figures
+// are deliberately left out until they are decided on their own:
+// overdueTotalsByCurrency and counts.overdue, both derived from the wall clock
+// while production lateness is anchored on the demo operating date.
+const SUMMARY_AGGREGATE_BY_TOOL = Object.freeze({
+  get_receivables_summary: (summary) => ({
+    // Currencies are never merged into a single figure: two amounts in two
+    // currencies are two amounts, and adding them would invent money.
+    totalsByCurrency: Object.freeze({ ...summary.totalsByCurrency }),
+    counts: Object.freeze({
+      receivables: summary.counts?.receivables ?? 0,
+      deduplicatedInvoices: summary.counts?.deduplicatedInvoices ?? 0
+    })
+  }),
+  get_material_requirements: (summary) => ({
+    counts: Object.freeze({
+      orders: summary.counts?.orders ?? 0,
+      lines: summary.counts?.lines ?? 0,
+      shortages: summary.counts?.shortages ?? 0,
+      covered: summary.counts?.covered ?? 0,
+      anomalies: summary.counts?.anomalies ?? 0
+    }),
+    anomalies: Object.freeze([...(summary.anomalies ?? [])])
+  })
+});
+
+// Keyed by presentation domain, so an aggregate lands beside the section it
+// informs. A step that did not complete never contributes: its output is
+// absent or partial, and a half-computed total is worse than none.
+// Exported so a structural test can reach the guards directly: the demo data
+// completes every step and identifies every item, so neither guard is
+// observable through the API today.
+export function createSummaryAggregates(agentResults) {
+  const aggregates = {};
+
+  for (const result of agentResults) {
+    if (result.status !== "completed" || !result.domain) {
+      continue;
+    }
+    const project = SUMMARY_AGGREGATE_BY_TOOL[result.tool];
+    const summary = result.result?.summary;
+    if (!project || !isJsonObject(summary) || aggregates[result.domain]) {
+      continue;
+    }
+    aggregates[result.domain] = Object.freeze({
+      agent: result.agent,
+      tool: result.tool,
+      ...project(summary)
+    });
+  }
+
+  return Object.freeze(aggregates);
 }
 
 function createDomainSourceSummary(agentResults) {
@@ -845,22 +925,48 @@ function summarizeResultPriority(result) {
   return result.status === "completed" ? "normal" : "unavailable";
 }
 
+// Identity of a business signal inside its presentation domain. Two tools of
+// the same agent read the same reality, so the same invoice or the same
+// production order reaches a section twice. Returns null when the item carries
+// nothing identifying: an item we cannot recognise is never assumed to be a
+// duplicate, it is kept.
+export function collectedItemIdentity(domain, item) {
+  const identity = item?.id ?? item?.lineId ?? item?.orderId ?? item?.subject ?? item?.label;
+  if (identity === null || identity === undefined) {
+    return null;
+  }
+  // The separator cannot appear in an identifier, so two different pairs
+  // never collide into the same key.
+  return `${domain ?? ""}\u0000${identity}`;
+}
+
+// The first occurrence wins, and steps run in plan order with the historical
+// tool first: what the Director already reported stays what it reports.
 function collectItems(agentResults, predicate) {
   const collected = [];
+  const seen = new Set();
   for (const result of agentResults) {
     const items = Array.isArray(result.result?.items) ? result.result.items : [];
     for (const item of items) {
-      if (predicate({ agent: result.agent, tool: result.tool, item })) {
-        collected.push(Object.freeze({
-          agent: result.agent,
-          tool: result.tool,
-          domain: result.domain,
-          dataSource: result.dataSource,
-          sourceProvider: result.sourceProvider,
-          sourceId: result.sourceId,
-          item
-        }));
+      if (!predicate({ agent: result.agent, tool: result.tool, item })) {
+        continue;
       }
+      const identity = collectedItemIdentity(result.domain, item);
+      if (identity !== null) {
+        if (seen.has(identity)) {
+          continue;
+        }
+        seen.add(identity);
+      }
+      collected.push(Object.freeze({
+        agent: result.agent,
+        tool: result.tool,
+        domain: result.domain,
+        dataSource: result.dataSource,
+        sourceProvider: result.sourceProvider,
+        sourceId: result.sourceId,
+        item
+      }));
     }
   }
   return collected;

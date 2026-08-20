@@ -804,3 +804,86 @@ export function isQuoteFollowUpDue(quote, {
 export function createQuoteFollowUps({ quotes = [] } = {}, options = {}) {
   return quotes.filter((quote) => isQuoteFollowUpDue(quote, options));
 }
+
+// --- Lot 2B.2 production schedule (CDC section 6) --------------------------
+
+const COMPLETED_PRODUCTION_STATUSES = Object.freeze([
+  "completed",
+  "done",
+  "delivered",
+  "finished",
+  "closed"
+]);
+
+const STORED_PRODUCTION_CLASSIFICATIONS = Object.freeze(["IN_DANGER", "AT_RISK", "ON_TIME"]);
+
+export const PRODUCTION_CLASSIFICATION_LABELS = Object.freeze({
+  LATE: "en retard",
+  IN_DANGER: "en danger",
+  AT_RISK: "a surveiller",
+  ON_TIME: "a l'heure",
+  UNKNOWN: "inconnu"
+});
+
+export function isProductionCompleted(record) {
+  return COMPLETED_PRODUCTION_STATUSES.includes(record?.status);
+}
+
+function parseIsoDate(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+// The planned date is the workshop deadline and takes priority. The order due
+// date is the commercial commitment and only stands in when no planned date is
+// usable, so a missing order never invents a deadline.
+export function resolveProductionDueDate(record, orders = []) {
+  const order = orders.find((candidate) => candidate?.id === record?.orderId) ?? null;
+
+  if (parseIsoDate(record?.plannedDate) !== null) {
+    return { dueDate: record.plannedDate, dueDateSource: "planned_date", orderFound: Boolean(order) };
+  }
+  if (parseIsoDate(order?.due) !== null) {
+    return { dueDate: order.due, dueDateSource: "order_due", orderFound: true };
+  }
+  return { dueDate: null, dueDateSource: "none", orderFound: Boolean(order) };
+}
+
+// LATE is derived, never stored: a deadline passed on work that is not finished.
+// It overrides the stored classification. Without a usable deadline the stored
+// value is kept untouched.
+export function classifyProductionRecord(record, { orders = [], referenceDate = new Date() } = {}) {
+  const { dueDate } = resolveProductionDueDate(record, orders);
+  const due = parseIsoDate(dueDate);
+
+  if (due !== null && due < referenceDate.getTime() && !isProductionCompleted(record)) {
+    return "LATE";
+  }
+
+  return STORED_PRODUCTION_CLASSIFICATIONS.includes(record?.classification)
+    ? record.classification
+    : "UNKNOWN";
+}
+
+export function createProductionSchedule(
+  { production = [], orders = [] } = {},
+  { referenceDate = new Date() } = {}
+) {
+  return production.map((record) => {
+    const due = resolveProductionDueDate(record, orders);
+    const classification = classifyProductionRecord(record, { orders, referenceDate });
+
+    return Object.freeze({
+      ...record,
+      classification,
+      timing: PRODUCTION_CLASSIFICATION_LABELS[classification],
+      dueDate: due.dueDate,
+      dueDateSource: due.dueDateSource,
+      orderFound: due.orderFound,
+      late: classification === "LATE"
+    });
+  });
+}

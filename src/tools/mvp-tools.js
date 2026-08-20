@@ -27,7 +27,8 @@ import {
   getOverdueInvoices,
   getSupplierCatalog,
   createReceivablesSummary,
-  createQuoteFollowUps
+  createQuoteFollowUps,
+  createProductionSchedule
 } from "../demo/company-data.js";
 
 const baseInputSchema = createToolInputSchema({
@@ -206,6 +207,17 @@ export function createMvpTools({ businessMemory = createBusinessMemoryRepository
       businessMemory,
       domains: ["quotes"],
       resolveItems: createQuoteFollowUps
+    }),
+    createMvpMockTool({
+      id: "get_production_schedule",
+      name: "Get Production Schedule",
+      description: "Returns demo production orders classified as on time, to watch, in danger or late. Lateness is derived from the planned date, falling back to the order due date, and never stored.",
+      category: "production",
+      requiredPermission: "read_analyze",
+      allowedAgents: ["production"],
+      businessMemory,
+      domains: ["production", "orders"],
+      resolveItems: createProductionSchedule
     })
   ]);
 }

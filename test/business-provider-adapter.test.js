@@ -229,10 +229,21 @@ test("Director still completes the company overview request with adapter-backed 
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
-  // finance and commercial each contribute two steps since Lot 2C commit 3.
+  // finance, commercial, production and purchasing each contribute two steps
+  // since Lot 2C commit 4: the historical tool then the computing one.
   assert.deepEqual(
     body.results.map((result) => result.agent),
-    ["finance", "finance", "commercial", "commercial", "production", "purchasing", "after_sales"]
+    [
+      "finance",
+      "finance",
+      "commercial",
+      "commercial",
+      "production",
+      "production",
+      "purchasing",
+      "purchasing",
+      "after_sales"
+    ]
   );
   assert.deepEqual(
     [...new Set(body.results.map((result) => result.agent))],

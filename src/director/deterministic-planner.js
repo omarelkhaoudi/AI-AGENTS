@@ -190,8 +190,8 @@ const MATERIAL_NEEDS_AGENT_IDS = Object.freeze(["production", "purchasing"]);
 export const DEFAULT_TOOLS_BY_AGENT = Object.freeze({
   finance: Object.freeze(["get_pending_payments", "get_receivables_summary"]),
   commercial: Object.freeze(["get_pending_quotes", "get_quote_follow_ups"]),
-  production: Object.freeze(["get_delayed_production_orders"]),
-  purchasing: Object.freeze(["get_purchase_needs"]),
+  production: Object.freeze(["get_delayed_production_orders", "get_production_schedule"]),
+  purchasing: Object.freeze(["get_purchase_needs", "get_material_requirements"]),
   hr: Object.freeze(["get_hr_overview"]),
   after_sales: Object.freeze(["get_after_sales_overview"]),
   marketing: Object.freeze(["get_marketing_overview"]),

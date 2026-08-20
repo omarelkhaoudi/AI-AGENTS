@@ -585,7 +585,10 @@ function createDemoAgentList(agentResults) {
   ];
 }
 
-const BUSINESS_DOMAIN_BY_TOOL = Object.freeze({
+// Presentation domain of each tool, used to group results into the Director
+// sections. Exported so a structural test can verify that no registered tool is
+// left without one.
+export const BUSINESS_DOMAIN_BY_TOOL = Object.freeze({
   get_pending_payments: "payments",
   get_pending_quotes: "quotes",
   get_delayed_production_orders: "production",
@@ -596,7 +599,22 @@ const BUSINESS_DOMAIN_BY_TOOL = Object.freeze({
   get_marketing_overview: "marketing_demo_overview",
   get_community_overview: "community_demo_overview",
   get_legal_overview: "legal_demo_overview",
-  prepare_legal_sensitive_decision: "legal_demo_overview"
+  prepare_legal_sensitive_decision: "legal_demo_overview",
+  // Lot 2B.1 read tools.
+  get_company_overview: "company_overview",
+  get_customer_overview: "customers",
+  get_customer_orders: "orders",
+  get_overdue_invoices: "invoices",
+  get_supplier_catalog: "suppliers",
+  // Lot 2B.2 computing tools. A tool reading several business domains reports
+  // the presentation domain of the section it feeds, so receivables land in
+  // A ENCAISSER and material requirements in A COMMANDER.
+  get_receivables_summary: "payments",
+  get_quote_follow_ups: "quotes",
+  get_production_schedule: "production",
+  get_material_requirements: "purchase_needs",
+  // Already routed for sensitive payment requests, but reported no domain.
+  execute_invoice_payment: "payments"
 });
 
 function createAgentResults(request) {

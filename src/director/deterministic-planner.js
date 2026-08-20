@@ -188,8 +188,8 @@ const MATERIAL_NEEDS_AGENT_IDS = Object.freeze(["production", "purchasing"]);
 // carry several steps; every agent holds exactly one tool today, so the plans
 // produced are unchanged.
 export const DEFAULT_TOOLS_BY_AGENT = Object.freeze({
-  finance: Object.freeze(["get_pending_payments"]),
-  commercial: Object.freeze(["get_pending_quotes"]),
+  finance: Object.freeze(["get_pending_payments", "get_receivables_summary"]),
+  commercial: Object.freeze(["get_pending_quotes", "get_quote_follow_ups"]),
   production: Object.freeze(["get_delayed_production_orders"]),
   purchasing: Object.freeze(["get_purchase_needs"]),
   hr: Object.freeze(["get_hr_overview"]),

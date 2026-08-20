@@ -825,6 +825,14 @@ export const PRODUCTION_CLASSIFICATION_LABELS = Object.freeze({
   UNKNOWN: "inconnu"
 });
 
+// The demo data set is anchored on a fixed operating date. Lateness is measured
+// against that date rather than the wall clock: otherwise every demo order
+// silently drifts into LATE as real time passes, and the Director would report
+// that everything is late.
+export function demoReferenceDate(data = createDemoCompanyData()) {
+  return new Date(data.company.operatingDate);
+}
+
 export function isProductionCompleted(record) {
   return COMPLETED_PRODUCTION_STATUSES.includes(record?.status);
 }
@@ -855,7 +863,7 @@ export function resolveProductionDueDate(record, orders = []) {
 // LATE is derived, never stored: a deadline passed on work that is not finished.
 // It overrides the stored classification. Without a usable deadline the stored
 // value is kept untouched.
-export function classifyProductionRecord(record, { orders = [], referenceDate = new Date() } = {}) {
+export function classifyProductionRecord(record, { orders = [], referenceDate = demoReferenceDate() } = {}) {
   const { dueDate } = resolveProductionDueDate(record, orders);
   const due = parseIsoDate(dueDate);
 
@@ -870,7 +878,7 @@ export function classifyProductionRecord(record, { orders = [], referenceDate = 
 
 export function createProductionSchedule(
   { production = [], orders = [] } = {},
-  { referenceDate = new Date() } = {}
+  { referenceDate = demoReferenceDate() } = {}
 ) {
   return production.map((record) => {
     const due = resolveProductionDueDate(record, orders);

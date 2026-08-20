@@ -63,12 +63,26 @@ test("Director cockpit API scenarios cover global, finance, production, purchasi
   const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
   t.after(() => app.close());
 
-  // agents lists one entry per step. Since Lot 2C commit 3 finance and
-  // commercial each contribute two, so they appear twice.
+  // agents lists one entry per step. Since Lot 2C commit 4 finance, commercial,
+  // production and purchasing each contribute two, so they appear twice.
   const scenarios = [
     {
       message: "Fais-moi le point sur mon entreprise aujourd'hui.",
-      agents: ["finance", "finance", "commercial", "commercial", "production", "purchasing", "hr", "after_sales", "marketing", "community_manager", "legal"]
+      agents: [
+        "finance",
+        "finance",
+        "commercial",
+        "commercial",
+        "production",
+        "production",
+        "purchasing",
+        "purchasing",
+        "hr",
+        "after_sales",
+        "marketing",
+        "community_manager",
+        "legal"
+      ]
     },
     {
       message: "Combien dois-je encaisser cette semaine ?",
@@ -76,11 +90,11 @@ test("Director cockpit API scenarios cover global, finance, production, purchasi
     },
     {
       message: "Quelles commandes risquent d'etre en retard ?",
-      agents: ["production"]
+      agents: ["production", "production"]
     },
     {
       message: "Qu'est-ce que je dois commander ?",
-      agents: ["purchasing"]
+      agents: ["purchasing", "purchasing"]
     },
     {
       message: "Quels clients dois-je relancer et quelles actions marketing proposes-tu ?",

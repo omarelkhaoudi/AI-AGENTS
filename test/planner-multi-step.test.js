@@ -24,13 +24,16 @@ const REFERENCE_PLANS = Object.freeze([
       ["finance", 2, "get_receivables_summary", "read_analyze", false],
       ["commercial", 3, "get_pending_quotes", "read_analyze", false],
       ["commercial", 4, "get_quote_follow_ups", "read_analyze", false],
+      // Lot 2C commit 4: production and purchasing follow the same pattern.
       ["production", 5, "get_delayed_production_orders", "read_analyze", false],
-      ["purchasing", 6, "get_purchase_needs", "read_analyze", false],
-      ["hr", 7, "get_hr_overview", "read_analyze", false],
-      ["after_sales", 8, "get_after_sales_overview", "read_analyze", false],
-      ["marketing", 9, "get_marketing_overview", "read_analyze", false],
-      ["community_manager", 10, "get_community_overview", "read_analyze", false],
-      ["legal", 11, "get_legal_overview", "read_analyze", false]
+      ["production", 6, "get_production_schedule", "read_analyze", false],
+      ["purchasing", 7, "get_purchase_needs", "read_analyze", false],
+      ["purchasing", 8, "get_material_requirements", "read_analyze", false],
+      ["hr", 9, "get_hr_overview", "read_analyze", false],
+      ["after_sales", 10, "get_after_sales_overview", "read_analyze", false],
+      ["marketing", 11, "get_marketing_overview", "read_analyze", false],
+      ["community_manager", 12, "get_community_overview", "read_analyze", false],
+      ["legal", 13, "get_legal_overview", "read_analyze", false]
     ]
   },
   {
@@ -50,7 +53,9 @@ const REFERENCE_PLANS = Object.freeze([
     agents: ["production", "purchasing"],
     steps: [
       ["production", 1, "get_delayed_production_orders", "read_analyze", false],
-      ["purchasing", 2, "get_purchase_needs", "read_analyze", false]
+      ["production", 2, "get_production_schedule", "read_analyze", false],
+      ["purchasing", 3, "get_purchase_needs", "read_analyze", false],
+      ["purchasing", 4, "get_material_requirements", "read_analyze", false]
     ]
   },
   {
@@ -130,11 +135,11 @@ test("the plan agent list carries no duplicate", () => {
   }
 });
 
-// Only finance and commercial carry a second step. Every other agent keeps
-// exactly one, so no routing was widened beyond what Lot 2C commit 3 allows.
-const AGENTS_WITH_TWO_STEPS = Object.freeze(["finance", "commercial"]);
+// Only these four agents carry a second step. Every other agent keeps exactly
+// one, so no routing was widened beyond what Lot 2C commit 4 allows.
+const AGENTS_WITH_TWO_STEPS = Object.freeze(["finance", "commercial", "production", "purchasing"]);
 
-test("only finance and commercial contribute a second step", () => {
+test("only the four routed agents contribute a second step", () => {
   for (const reference of REFERENCE_PLANS) {
     const plan = planFor(reference.message);
     const stepsByAgent = new Map();
@@ -164,6 +169,8 @@ test("every planned tool is still one the planner routed before", () => {
     "get_legal_overview",
     "get_receivables_summary",
     "get_quote_follow_ups",
+    "get_production_schedule",
+    "get_material_requirements",
     "execute_invoice_payment",
     "prepare_hr_sensitive_decision",
     "prepare_legal_sensitive_decision"
@@ -273,7 +280,7 @@ test("a sensitive request still collapses the agent to its single approval tool"
   assert.equal(plan.steps[0].requiresApproval, true);
 });
 
-test("only finance and commercial declare a second tool", () => {
+test("only the four routed agents declare a second tool", () => {
   for (const [agentId, tools] of Object.entries(DEFAULT_TOOLS_BY_AGENT)) {
     assert.ok(Array.isArray(tools), agentId);
     assert.equal(tools.length, AGENTS_WITH_TWO_STEPS.includes(agentId) ? 2 : 1, agentId);
@@ -283,4 +290,6 @@ test("only finance and commercial declare a second tool", () => {
   // computing one.
   assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.finance], ["get_pending_payments", "get_receivables_summary"]);
   assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.commercial], ["get_pending_quotes", "get_quote_follow_ups"]);
+  assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.production], ["get_delayed_production_orders", "get_production_schedule"]);
+  assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.purchasing], ["get_purchase_needs", "get_material_requirements"]);
 });

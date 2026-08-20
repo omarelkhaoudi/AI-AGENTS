@@ -8,7 +8,9 @@ import {
   classifyProductionRecord,
   createMvpAgentPermissions,
   createMvpToolRegistry,
+  createDemoCompanyData,
   createProductionSchedule,
+  demoReferenceDate,
   isProductionCompleted,
   resolveProductionDueDate
 } from "../src/index.js";
@@ -143,6 +145,22 @@ test("an unknown or missing stored state becomes UNKNOWN, never invented", () =>
   assert.equal(classify({ plannedDate: "2026-08-25" }), "UNKNOWN");
   assert.equal(classify({}), "UNKNOWN");
   assert.equal(classify(null), "UNKNOWN");
+});
+
+// Both entry points must default to the same reference. classifyProductionRecord
+// is exported on its own, so a caller omitting the option must not silently get
+// the wall clock while the schedule uses the operating date.
+test("the classification defaults to the demo operating date, not the wall clock", () => {
+  const operatingDate = createDemoCompanyData().company.operatingDate;
+
+  assert.equal(demoReferenceDate().toISOString().slice(0, 10), operatingDate);
+  // One day before the operating date: late against the wall clock, not late
+  // against the operating date.
+  const beforeOperatingDate = { orderId: "o1", plannedDate: "2026-08-12", classification: "ON_TIME" };
+  assert.equal(classifyProductionRecord(beforeOperatingDate), "LATE");
+  const afterOperatingDate = { orderId: "o1", plannedDate: "2026-08-14", classification: "AT_RISK" };
+  assert.equal(classifyProductionRecord(afterOperatingDate), "AT_RISK");
+  assert.ok(new Date(afterOperatingDate.plannedDate) < new Date(), "the deadline is already past in real time");
 });
 
 test("the schedule exposes the deadline it used and whether the order was found", () => {

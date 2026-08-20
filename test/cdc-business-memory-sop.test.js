@@ -125,13 +125,16 @@ test("Director central CDC scenario has the five priority agents and demo-marked
   const body = JSON.parse(response.body);
 
   assert.equal(response.statusCode, 201);
-  // finance and commercial each contribute two steps since Lot 2C commit 3.
+  // finance, commercial, production and purchasing each contribute two steps
+  // since Lot 2C commit 4: the historical tool then the computing one.
   assert.deepEqual(body.results.map((result) => result.agent), [
     "finance",
     "finance",
     "commercial",
     "commercial",
     "production",
+    "production",
+    "purchasing",
     "purchasing",
     "after_sales"
   ]);

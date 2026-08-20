@@ -82,12 +82,20 @@ test("Request Commercial routes to commercial agent", async () => {
 
 test("Request Production routes to production agent", async () => {
   const request = await createOrchestratedRequest("quelles commandes risquent d'etre en retard");
-  assert.deepEqual(selectedAgents(request), ["production"]);
+  assert.deepEqual(selectedAgents(request), ["production", "production"]);
+  assert.deepEqual(
+    request.plans[0].steps.map((step) => step.toolName),
+    ["get_delayed_production_orders", "get_production_schedule"]
+  );
 });
 
 test("Request Purchasing routes to purchasing agent", async () => {
   const request = await createOrchestratedRequest("qu'est-ce que je dois commander");
-  assert.deepEqual(selectedAgents(request), ["purchasing"]);
+  assert.deepEqual(selectedAgents(request), ["purchasing", "purchasing"]);
+  assert.deepEqual(
+    request.plans[0].steps.map((step) => step.toolName),
+    ["get_purchase_needs", "get_material_requirements"]
+  );
 });
 
 test("Request HR routes to hr agent", async () => {
@@ -123,14 +131,17 @@ test("Request Legal routes to legal agent", async () => {
 
 test("Global request routes to all specialized agents", async () => {
   const request = await createOrchestratedRequest("fais-moi le point sur mon entreprise");
-  // Eleven steps for nine distinct agents: finance and commercial each carry
-  // their historical tool followed by their computing one.
+  // Thirteen steps for nine distinct agents: finance, commercial, production
+  // and purchasing each carry their historical tool followed by their
+  // computing one.
   assert.deepEqual(selectedAgents(request), [
     "finance",
     "finance",
     "commercial",
     "commercial",
     "production",
+    "production",
+    "purchasing",
     "purchasing",
     "hr",
     "after_sales",
@@ -160,10 +171,10 @@ test("orchestration creates a Plan", async () => {
 
 test("orchestration creates PlanSteps", async () => {
   const request = await createOrchestratedRequest("fais-moi le point sur mon entreprise");
-  assert.equal(request.plans[0].steps.length, 11);
+  assert.equal(request.plans[0].steps.length, 13);
   assert.deepEqual(
     request.plans[0].steps.map((step) => step.sequence),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
   );
 });
 
@@ -235,11 +246,11 @@ test("GET /api/requests/:id returns full request orchestration details", async (
   assert.equal(response.statusCode, 200);
   assert.equal(body.request.status, "orchestrated");
   assert.equal(body.request.plans.length, 1);
-  assert.equal(body.request.plans[0].steps.length, 11);
+  assert.equal(body.request.plans[0].steps.length, 13);
   assert.equal(body.request.plans[0].steps[0].agent.id, "finance");
-  assert.equal(body.request.executions.length, 11);
-  // Eleven steps executed for nine distinct agents.
-  assert.equal(body.request.result.summary.completedExecutions, 11);
+  assert.equal(body.request.executions.length, 13);
+  // Thirteen steps executed for nine distinct agents.
+  assert.equal(body.request.result.summary.completedExecutions, 13);
   assert.ok(body.request.auditEvents.length >= 1);
   assert.deepEqual(body.request.approvals, []);
 });

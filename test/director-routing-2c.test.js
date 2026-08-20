@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEFAULT_TOOLS_BY_AGENT, InMemoryRepository } from "../src/index.js";
+import {
+  DEFAULT_TOOLS_BY_AGENT,
+  InMemoryRepository,
+  createDemoCompanyData,
+  createProductionSchedule,
+  demoReferenceDate
+} from "../src/index.js";
 import { buildAuthenticatedApi } from "../test-support/api-auth.js";
 
 async function ask(inject, message) {
@@ -66,16 +72,18 @@ test("the follow-up tool applies the five day rule and excludes closed quotes", 
   );
 });
 
-test("the company overview runs eleven steps for nine distinct agents", async (t) => {
+test("the company overview runs thirteen steps for nine distinct agents", async (t) => {
   const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
   t.after(() => app.close());
 
   const body = await ask(inject, "Fais-moi le point sur mon entreprise aujourd'hui.");
 
-  assert.equal(body.results.length, 11);
+  assert.equal(body.results.length, 13);
   assert.equal(new Set(body.results.map((result) => result.agent)).size, 9);
   assert.deepEqual(toolsOf(body, "finance"), ["get_pending_payments", "get_receivables_summary"]);
   assert.deepEqual(toolsOf(body, "commercial"), ["get_pending_quotes", "get_quote_follow_ups"]);
+  assert.deepEqual(toolsOf(body, "production"), ["get_delayed_production_orders", "get_production_schedule"]);
+  assert.deepEqual(toolsOf(body, "purchasing"), ["get_purchase_needs", "get_material_requirements"]);
 });
 
 // The headline names agents, so it must count agents and not steps.
@@ -86,7 +94,7 @@ test("the headline counts distinct agents, not steps", async (t) => {
   const body = await ask(inject, "Fais-moi le point sur mon entreprise aujourd'hui.");
 
   assert.match(body.summary.headline, /Point complete: 9\/9 agents responded/);
-  assert.equal(body.summary.headline.includes("11/11"), false);
+  assert.equal(body.summary.headline.includes("13/13"), false);
 });
 
 // Add before replace: the historical tools are still routed and still reported.
@@ -112,7 +120,7 @@ test("no historical tool was dropped from the company overview", async (t) => {
   }
 });
 
-test("no agent other than finance and commercial gained a step", async (t) => {
+test("no agent outside the four routed ones gained a step", async (t) => {
   const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
   t.after(() => app.close());
 
@@ -124,7 +132,7 @@ test("no agent other than finance and commercial gained a step", async (t) => {
   }
 
   for (const [agentId, count] of stepsByAgent) {
-    assert.equal(count, ["finance", "commercial"].includes(agentId) ? 2 : 1, agentId);
+    assert.equal(count, ["finance", "commercial", "production", "purchasing"].includes(agentId) ? 2 : 1, agentId);
   }
 });
 
@@ -147,6 +155,8 @@ test("a sensitive payment still runs a single step and still needs approval", as
 test("the routing table keeps the historical tool ahead of the computing one", () => {
   assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.finance], ["get_pending_payments", "get_receivables_summary"]);
   assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.commercial], ["get_pending_quotes", "get_quote_follow_ups"]);
+  assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.production], ["get_delayed_production_orders", "get_production_schedule"]);
+  assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.purchasing], ["get_purchase_needs", "get_material_requirements"]);
 });
 
 // The summary of the computing tools is not consumed by the Director yet: that
@@ -159,4 +169,67 @@ test("the receivables totals are not yet reflected in the Director sections", as
 
   assert.equal("totalsByCurrency" in body.summary, false);
   assert.ok(body.summary.minimumSections["A ENCAISSER"].every((entry) => !("totalsByCurrency" in entry)));
+});
+
+// CDC section 6: "Quelles commandes risquent d'etre en retard ?" must reach the
+// derived schedule, not only the stored delayed-order list.
+test("the production risk question reaches both production tools, historical one first", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const body = await ask(inject, "Quelles commandes risquent d'etre en retard ?");
+
+  assert.deepEqual(toolsOf(body, "production"), ["get_delayed_production_orders", "get_production_schedule"]);
+});
+
+// Lateness is measured against the demo operating date, not the wall clock.
+// Anchoring it there is what keeps the four CDC states observable instead of
+// collapsing every demo order into LATE as real time passes.
+test("the schedule derives the CDC states from the demo operating date", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const body = await ask(inject, "Quelles commandes risquent d'etre en retard ?");
+  const items = body.results.find((result) => result.tool === "get_production_schedule").result.items;
+
+  assert.deepEqual(items.map((item) => item.classification), ["IN_DANGER", "AT_RISK", "ON_TIME"]);
+  assert.equal(items.every((item) => item.late === false), true, "no demo order is late on the operating date");
+  // The wall clock has passed those planned dates, so a Date.now() based
+  // reference would report every one of them as late.
+  assert.ok(items.some((item) => new Date(item.dueDate) < new Date()), "the demo deadlines are in the past");
+});
+
+test("the reference date is the operating date and stays injectable", () => {
+  const data = createDemoCompanyData();
+
+  assert.equal(demoReferenceDate().toISOString().slice(0, 10), data.company.operatingDate);
+  assert.deepEqual(
+    createProductionSchedule(data, { referenceDate: new Date("2026-08-19") }).map((item) => item.classification),
+    ["LATE", "LATE", "ON_TIME"],
+    "an explicit reference date still drives the derivation"
+  );
+});
+
+// CDC section 7: "Qu'est-ce que je dois commander ?" must reach the derived
+// material requirements, not only the stored purchase need list.
+test("the purchasing question reaches both purchasing tools, historical one first", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const body = await ask(inject, "Qu'est-ce que je dois commander ?");
+
+  assert.deepEqual(toolsOf(body, "purchasing"), ["get_purchase_needs", "get_material_requirements"]);
+});
+
+test("the material requirements are derived from the bills of material and the stock", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const body = await ask(inject, "Qu'est-ce que je dois commander ?");
+  const items = body.results.find((result) => result.tool === "get_material_requirements").result.items;
+  const missing = Object.fromEntries(items.map((item) => [item.productName, item.shortage]));
+
+  assert.deepEqual(missing, { "Demo Aluminum Sheet A": 20, "Demo Packaging B": 90 });
+  assert.ok(items.every((item) => item.required > item.available), "only shortages are reported");
+  assert.ok(items.every((item) => item.covered === false));
 });

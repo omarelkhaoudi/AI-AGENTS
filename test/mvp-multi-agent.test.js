@@ -52,8 +52,8 @@ const CDC_CORE_TOOL_IDS = Object.freeze([
   "get_after_sales_overview"
 ]);
 
-// Since Lot 2C commit 3 finance and commercial each contribute two steps: their
-// historical tool first, then the computing one. The AGENT constants above list
+// Since Lot 2C commit 4 finance, commercial, production and purchasing each
+// contribute two steps: their historical tool first, then the computing one. The AGENT constants above list
 // the agents solicited; the STEP constants below list one entry per plan step,
 // which is what results, body.agents and domainSources map over.
 const CDC_CORE_STEP_AGENT_IDS = Object.freeze([
@@ -62,6 +62,8 @@ const CDC_CORE_STEP_AGENT_IDS = Object.freeze([
   "commercial",
   "commercial",
   "production",
+  "production",
+  "purchasing",
   "purchasing",
   "after_sales"
 ]);
@@ -72,6 +74,8 @@ const CDC_EXTENDED_STEP_AGENT_IDS = Object.freeze([
   "commercial",
   "commercial",
   "production",
+  "production",
+  "purchasing",
   "purchasing",
   "hr",
   "after_sales",
@@ -86,7 +90,9 @@ const CDC_CORE_STEP_TOOL_IDS = Object.freeze([
   "get_pending_quotes",
   "get_quote_follow_ups",
   "get_delayed_production_orders",
+  "get_production_schedule",
   "get_purchase_needs",
+  "get_material_requirements",
   "get_after_sales_overview"
 ]);
 
@@ -129,21 +135,21 @@ test("MVP central scenario orchestrates the CDC priority agents offline", async 
   assert.equal(request.status, "orchestrated");
   assert.deepEqual(plan.steps.map((step) => step.agentId), CDC_CORE_STEP_AGENT_IDS);
   assert.deepEqual(plan.steps.map((step) => step.toolName), CDC_CORE_STEP_TOOL_IDS);
-  assert.deepEqual(plan.steps.map((step) => step.sequence), [1, 2, 3, 4, 5, 6, 7]);
-  assert.equal(request.executions.length, 7);
+  assert.deepEqual(plan.steps.map((step) => step.sequence), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.equal(request.executions.length, 9);
   assert.equal(request.executions.every((execution) => execution.status === "completed"), true);
   assert.equal(request.executions.every((execution) => execution.output.result.demo === true), true);
   assert.equal(request.executions.every((execution) => execution.output.result.dataSource === "demo_mock"), true);
-  assert.equal(request.result.summary.completedExecutions, 7);
+  assert.equal(request.result.summary.completedExecutions, 9);
   assert.deepEqual(request.result.summary.agents, CDC_CORE_AGENT_IDS);
   assert.equal(request.result.toolResults.every((result) => result.demo === true), true);
   assert.deepEqual(request.approvals, []);
   assert.ok(events.includes("request_created"));
   assert.ok(events.includes("plan_created"));
-  // One permission_checked per step.
-  assert.equal(events.filter((type) => type === "permission_checked").length, 7);
-  assert.equal(events.filter((type) => type === "tool_called").length, 7);
-  assert.equal(events.filter((type) => type === "execution_completed").length, 7);
+  // One permission_checked per step: nine steps for five distinct agents.
+  assert.equal(events.filter((type) => type === "permission_checked").length, 9);
+  assert.equal(events.filter((type) => type === "tool_called").length, 9);
+  assert.equal(events.filter((type) => type === "execution_completed").length, 9);
 });
 
 test("POST /api/director/requests returns a clean consolidated demo response", async (t) => {
@@ -166,7 +172,7 @@ test("POST /api/director/requests returns a clean consolidated demo response", a
   assert.match(body.summary.headline, /Point complete: 5\/5 agents responded/);
   assert.deepEqual(body.agents.map((agent) => agent.id), CDC_CORE_RESPONSE_AGENT_IDS);
   assert.deepEqual(body.agents.slice(1).map((agent) => agent.tool), CDC_CORE_STEP_TOOL_IDS);
-  assert.equal(body.results.length, 7);
+  assert.equal(body.results.length, 9);
   assert.equal(body.results.every((result) => result.result.demo === true), true);
   assert.equal(body.findings.every((finding) => finding.demo === true), true);
   assert.equal(body.summary.receivables.length > 0, true);
@@ -189,7 +195,11 @@ test("POST /api/director/requests returns a clean consolidated demo response", a
       ["finance", "payments", "demo_mock"],
       ["commercial", "quotes", "demo_mock"],
       ["commercial", "quotes", "demo_mock"],
+      // The computing tools feed the same section as their historical
+      // counterpart, so the presentation domain is unchanged.
       ["production", "production", "demo_mock"],
+      ["production", "production", "demo_mock"],
+      ["purchasing", "purchase_needs", "demo_mock"],
       ["purchasing", "purchase_needs", "demo_mock"],
       ["after_sales", "after_sales_tickets", "demo_mock"]
     ]
@@ -197,9 +207,9 @@ test("POST /api/director/requests returns a clean consolidated demo response", a
   assert.equal(body.decisionsRequired.some((decision) => decision.type === "business_decision"), true);
   assert.ok(body.audit.some((event) => event.type === "request_created"));
   assert.ok(body.audit.some((event) => event.type === "plan_created"));
-  assert.equal(body.audit.filter((event) => event.type === "permission_checked").length, 7);
-  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 7);
-  assert.equal(body.audit.filter((event) => event.type === "execution_completed").length, 7);
+  assert.equal(body.audit.filter((event) => event.type === "permission_checked").length, 9);
+  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 9);
+  assert.equal(body.audit.filter((event) => event.type === "execution_completed").length, 9);
   assert.doesNotMatch(response.body, /api[_-]?key|password|token|secret/i);
 });
 
@@ -316,8 +326,9 @@ test("MVP business scenarios A to I return coherent Director summaries from demo
     {
       label: "E",
       message: "Quelles commandes risquent d'etre en retard ?",
-      agents: ["production"],
+      agents: ["production", "production"],
       assertBody: (body) => {
+        assert.equal(body.results[0].tool, "get_delayed_production_orders");
         const timings = body.results[0].result.items.map((item) => item.timing);
         assert.equal(timings.includes("a l'heure"), true);
         assert.equal(timings.includes("a surveiller"), true);
@@ -327,8 +338,9 @@ test("MVP business scenarios A to I return coherent Director summaries from demo
     {
       label: "F",
       message: "Qu'est-ce qu'on doit commander aujourd'hui ?",
-      agents: ["purchasing"],
+      agents: ["purchasing", "purchasing"],
       assertBody: (body) => {
+        assert.equal(body.results[0].tool, "get_purchase_needs");
         const needs = body.results[0].result.items;
         assert.equal(needs.every((need) => typeof need.quantity === "number"), true);
         assert.equal(needs.every((need) => typeof need.supplierName === "string"), true);
@@ -337,11 +349,14 @@ test("MVP business scenarios A to I return coherent Director summaries from demo
     {
       label: "F2",
       message: "Quels besoins matieres sont lies aux commandes en retard ?",
-      agents: ["production", "purchasing"],
+      agents: ["production", "production", "purchasing", "purchasing"],
       assertBody: (body) => {
-        assert.deepEqual(body.results.map((result) => result.agent), ["production", "purchasing"]);
+        assert.deepEqual(
+          body.results.map((result) => result.agent),
+          ["production", "production", "purchasing", "purchasing"]
+        );
         assert.equal(body.results[0].result.items.some((item) => item.classification === "IN_DANGER"), true);
-        assert.equal(body.results[1].result.items.some((item) => item.linkedOrderId === "order-atlas-001"), true);
+        assert.equal(body.results[2].result.items.some((item) => item.linkedOrderId === "order-atlas-001"), true);
       }
     },
     {
@@ -356,10 +371,20 @@ test("MVP business scenarios A to I return coherent Director summaries from demo
     {
       label: "G2",
       message: "Quels sont les besoins matieres pour les commandes en retard ?",
-      agents: ["production", "purchasing"],
+      agents: ["production", "production", "purchasing", "purchasing"],
       assertBody: (body) => {
-        assert.deepEqual(body.results.map((result) => result.tool), ["get_delayed_production_orders", "get_purchase_needs"]);
-        assert.deepEqual(body.summary.domainSources.map((entry) => entry.domain), ["production", "purchase_needs"]);
+        assert.deepEqual(body.results.map((result) => result.tool), [
+          "get_delayed_production_orders",
+          "get_production_schedule",
+          "get_purchase_needs",
+          "get_material_requirements"
+        ]);
+        assert.deepEqual(body.summary.domainSources.map((entry) => entry.domain), [
+          "production",
+          "production",
+          "purchase_needs",
+          "purchase_needs"
+        ]);
         assert.equal(body.summary.delayed.some((entry) => entry.agent === "production"), true);
         assert.equal(body.summary.purchaseNeeds.some((entry) => entry.agent === "purchasing"), true);
       }
@@ -467,8 +492,8 @@ test("Director API returns coherent functional MVP responses for leader requests
     {
       message: "Quelles commandes risquent d'etre en retard ?",
       status: "completed",
-      agents: ["production"],
-      tools: ["get_delayed_production_orders"],
+      agents: ["production", "production"],
+      tools: ["get_delayed_production_orders", "get_production_schedule"],
       verify: (body) => {
         assert.equal(body.summary.delayed.length > 0, true);
       }
@@ -476,8 +501,8 @@ test("Director API returns coherent functional MVP responses for leader requests
     {
       message: "Quelles commandes sont deja en retard ?",
       status: "completed",
-      agents: ["production"],
-      tools: ["get_delayed_production_orders"],
+      agents: ["production", "production"],
+      tools: ["get_delayed_production_orders", "get_production_schedule"],
       verify: (body) => {
         assert.equal(body.results[0].result.items.some((item) => item.classification === "IN_DANGER"), true);
       }
@@ -485,8 +510,8 @@ test("Director API returns coherent functional MVP responses for leader requests
     {
       message: "Quelles sont les priorites production ?",
       status: "completed",
-      agents: ["production"],
-      tools: ["get_delayed_production_orders"],
+      agents: ["production", "production"],
+      tools: ["get_delayed_production_orders", "get_production_schedule"],
       verify: (body) => {
         assert.equal(body.results[0].result.items.every((item) => ["ON_TIME", "AT_RISK", "IN_DANGER", "DELAYED"].includes(item.classification)), true);
       }
@@ -503,8 +528,8 @@ test("Director API returns coherent functional MVP responses for leader requests
     {
       message: "Qu'est-ce qu'on doit commander aujourd'hui ?",
       status: "completed",
-      agents: ["purchasing"],
-      tools: ["get_purchase_needs"],
+      agents: ["purchasing", "purchasing"],
+      tools: ["get_purchase_needs", "get_material_requirements"],
       verify: (body) => {
         assert.equal(body.summary.purchaseNeeds.length > 0, true);
       }
@@ -512,10 +537,20 @@ test("Director API returns coherent functional MVP responses for leader requests
     {
       message: "Quels besoins matieres sont lies aux commandes en retard ?",
       status: "completed",
-      agents: ["production", "purchasing"],
-      tools: ["get_delayed_production_orders", "get_purchase_needs"],
+      agents: ["production", "production", "purchasing", "purchasing"],
+      tools: [
+        "get_delayed_production_orders",
+        "get_production_schedule",
+        "get_purchase_needs",
+        "get_material_requirements"
+      ],
       verify: (body) => {
-        assert.deepEqual(body.summary.domainSources.map((entry) => entry.domain), ["production", "purchase_needs"]);
+        assert.deepEqual(body.summary.domainSources.map((entry) => entry.domain), [
+          "production",
+          "production",
+          "purchase_needs",
+          "purchase_needs"
+        ]);
         assert.equal(body.summary.minimumSections["A COMMANDER"].some((entry) => entry.item.linkedOrderId === "order-atlas-001"), true);
       }
     },
@@ -772,10 +807,15 @@ test("Director routes multi-domain finance and production requests without plann
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
-  assert.deepEqual(body.results.map((result) => result.agent), ["finance", "finance", "production"]);
-  assert.deepEqual(body.results.map((result) => result.tool), ["get_pending_payments", "get_receivables_summary", "get_delayed_production_orders"]);
-  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 3);
-  assert.equal(body.audit.filter((event) => event.type === "execution_completed").length, 3);
+  assert.deepEqual(body.results.map((result) => result.agent), ["finance", "finance", "production", "production"]);
+  assert.deepEqual(body.results.map((result) => result.tool), [
+    "get_pending_payments",
+    "get_receivables_summary",
+    "get_delayed_production_orders",
+    "get_production_schedule"
+  ]);
+  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 4);
+  assert.equal(body.audit.filter((event) => event.type === "execution_completed").length, 4);
   assert.equal(body.audit.some((event) => event.type === "approval_requested"), false);
 });
 
@@ -788,10 +828,15 @@ test("Director routes commercial and purchasing requests together", async (t) =>
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
-  assert.deepEqual(body.results.map((result) => result.agent), ["commercial", "commercial", "purchasing"]);
-  assert.deepEqual(body.results.map((result) => result.tool), ["get_pending_quotes", "get_quote_follow_ups", "get_purchase_needs"]);
+  assert.deepEqual(body.results.map((result) => result.agent), ["commercial", "commercial", "purchasing", "purchasing"]);
+  assert.deepEqual(body.results.map((result) => result.tool), [
+    "get_pending_quotes",
+    "get_quote_follow_ups",
+    "get_purchase_needs",
+    "get_material_requirements"
+  ]);
   assert.equal(body.summary.purchaseNeeds.length > 0, true);
-  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 3);
+  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 4);
 });
 
 test("Director routes Commercial Marketing combined requests without losing provenance", async (t) => {
@@ -837,11 +882,24 @@ test("Director routes Commercial Production After Sales combined customer issue 
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
-  assert.deepEqual(body.results.map((result) => result.agent), ["commercial", "commercial", "production", "after_sales"]);
-  assert.deepEqual(body.results.map((result) => result.tool), ["get_pending_quotes", "get_quote_follow_ups", "get_delayed_production_orders", "get_after_sales_overview"]);
+  assert.deepEqual(body.results.map((result) => result.agent), [
+    "commercial",
+    "commercial",
+    "production",
+    "production",
+    "after_sales"
+  ]);
+  assert.deepEqual(body.results.map((result) => result.tool), [
+    "get_pending_quotes",
+    "get_quote_follow_ups",
+    "get_delayed_production_orders",
+    "get_production_schedule",
+    "get_after_sales_overview"
+  ]);
   assert.deepEqual(body.summary.domainSources.map((entry) => [entry.agent, entry.domain]), [
     ["commercial", "quotes"],
     ["commercial", "quotes"],
+    ["production", "production"],
     ["production", "production"],
     ["after_sales", "after_sales_tickets"]
   ]);
@@ -857,8 +915,12 @@ test("Director routes Production After Sales quality requests without mixing dom
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
-  assert.deepEqual(body.results.map((result) => result.agent), ["production", "after_sales"]);
-  assert.deepEqual(body.summary.domainSources.map((entry) => entry.domain), ["production", "after_sales_tickets"]);
+  assert.deepEqual(body.results.map((result) => result.agent), ["production", "production", "after_sales"]);
+  assert.deepEqual(body.summary.domainSources.map((entry) => entry.domain), [
+    "production",
+    "production",
+    "after_sales_tickets"
+  ]);
   assert.equal(body.summary.afterSales.every((entry) => entry.domain === "after_sales_tickets"), true);
   assert.equal(body.summary.delayed.some((entry) => entry.domain === "production"), true);
 });
@@ -875,13 +937,24 @@ test("Director preserves provenance across Commercial Finance Production Purchas
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
-  assert.deepEqual(body.results.map((result) => result.agent), ["finance", "finance", "commercial", "commercial", "production", "purchasing"]);
+  assert.deepEqual(body.results.map((result) => result.agent), [
+    "finance",
+    "finance",
+    "commercial",
+    "commercial",
+    "production",
+    "production",
+    "purchasing",
+    "purchasing"
+  ]);
   assert.deepEqual(body.summary.domainSources.map((entry) => [entry.agent, entry.domain, entry.dataSource]), [
     ["finance", "payments", "demo_mock"],
     ["finance", "payments", "demo_mock"],
     ["commercial", "quotes", "demo_mock"],
     ["commercial", "quotes", "demo_mock"],
     ["production", "production", "demo_mock"],
+    ["production", "production", "demo_mock"],
+    ["purchasing", "purchase_needs", "demo_mock"],
     ["purchasing", "purchase_needs", "demo_mock"]
   ]);
   assert.equal(body.summary.minimumSections["A ENCAISSER"].some((entry) => entry.agent === "finance"), true);
@@ -901,10 +974,20 @@ test("Director preserves Production Purchasing Production loop context without m
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
-  assert.deepEqual(body.results.map((result) => result.agent), ["production", "purchasing"]);
-  assert.deepEqual(body.summary.domainSources.map((entry) => entry.domain), ["production", "purchase_needs"]);
+  assert.deepEqual(body.results.map((result) => result.agent), [
+    "production",
+    "production",
+    "purchasing",
+    "purchasing"
+  ]);
+  assert.deepEqual(body.summary.domainSources.map((entry) => entry.domain), [
+    "production",
+    "production",
+    "purchase_needs",
+    "purchase_needs"
+  ]);
   assert.equal(body.results[0].result.items.some((item) => item.missingMaterialId === "material-aluminum-a"), true);
-  assert.equal(body.results[1].result.items.some((item) => item.materialId === "material-aluminum-a"), true);
+  assert.equal(body.results[2].result.items.some((item) => item.materialId === "material-aluminum-a"), true);
   assert.equal(body.summary.minimumSections["RETARDS / PROBLEMES"].every((entry) => entry.domain !== "purchase_needs"), true);
   assert.equal(body.summary.minimumSections["A COMMANDER"].every((entry) => entry.domain === "purchase_needs"), true);
 });

@@ -58,6 +58,12 @@ test("PostgreSQL persists Request -> Plan -> PlanStep -> Execution -> AuditEvent
   }
 });
 
+// This test is skipped whenever DATABASE_URL is absent, which is the case in
+// the current environment: its expectations are therefore NOT verified by any
+// run. They were derived from the in-memory orchestration of the same message,
+// which shares the planner and the orchestrator with the Prisma path. It had
+// already drifted before Lot 2C commit 4: it expected eight steps and omitted
+// the hr agent entirely.
 test("API with PostgreSQL persists POST /api/requests and returns full GET details", {
   skip: skipReason
 }, async () => {
@@ -82,17 +88,18 @@ test("API with PostgreSQL persists POST /api/requests and returns full GET detai
     assert.equal(postBody.request.title, "Fais-moi le point sur mon entreprise aujourd'hui");
     assert.equal(postBody.request.payload.message, "Fais-moi le point sur mon entreprise aujourd'hui");
     assert.equal(postBody.request.plans.length, 1);
-    assert.equal(postBody.request.plans[0].steps.length, 8);
-    assert.equal(postBody.request.executions.length, 8);
-    assert.equal(postBody.request.result.summary.completedExecutions, 8);
+    assert.equal(postBody.request.plans[0].steps.length, 13);
+    assert.equal(postBody.request.executions.length, 13);
+    assert.equal(postBody.request.result.summary.completedExecutions, 13);
 
     const persistedCounts = await countPersistedRequestGraph(prisma, requestId);
     assert.deepEqual(persistedCounts, {
       requests: 1,
       plans: 1,
-      planSteps: 8,
-      executions: 8,
-      auditEvents: 66
+      planSteps: 13,
+      executions: 13,
+      // Eight audit events per step plus two for the request itself.
+      auditEvents: 106
     });
 
     const getResponse = await inject({
@@ -108,16 +115,21 @@ test("API with PostgreSQL persists POST /api/requests and returns full GET detai
       getBody.request.plans[0].steps.map((step) => step.agentId),
       [
         "finance",
+        "finance",
+        "commercial",
         "commercial",
         "production",
+        "production",
         "purchasing",
+        "purchasing",
+        "hr",
         "after_sales",
         "marketing",
         "community_manager",
         "legal"
       ]
     );
-    assert.equal(getBody.request.executions.length, 8);
+    assert.equal(getBody.request.executions.length, 13);
     assert.ok(getBody.request.auditEvents.some((event) => event.type === "request_created"));
     assert.ok(getBody.request.auditEvents.some((event) => event.type === "execution_completed"));
     assert.deepEqual(getBody.request.approvals, []);

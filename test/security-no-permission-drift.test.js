@@ -25,6 +25,8 @@ import {
 //          get_receivables_summary reads payments and invoices, both already
 //          held by finance, and get_quote_follow_ups reads quotes, already
 //          held by commercial. Only the tool table below grows.
+// Lot 2B.2 commit 4 adds get_production_schedule, reading production and
+//          orders, both already held by production. Again no agent scope moves.
 const EXPECTED_AGENT_SECURITY_DOMAINS = Object.freeze({
   director: ["company_overview"],
   commercial: ["quotes", "customers", "orders"],
@@ -55,6 +57,7 @@ const EXPECTED_TOOL_SECURITY_DOMAINS = Object.freeze({
   get_supplier_catalog: ["suppliers"],
   get_receivables_summary: ["payments", "invoices"],
   get_quote_follow_ups: ["quotes"],
+  get_production_schedule: ["production", "orders"],
   execute_invoice_payment: ["payments"],
   prepare_hr_sensitive_decision: ["hr"],
   prepare_legal_sensitive_decision: ["legal"]

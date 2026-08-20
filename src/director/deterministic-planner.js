@@ -184,28 +184,19 @@ const EXTENDED_GLOBAL_AGENT_IDS = Object.freeze([
 const COMMUNICATION_AGENT_IDS = Object.freeze(["marketing", "community_manager"]);
 const MATERIAL_NEEDS_AGENT_IDS = Object.freeze(["production", "purchasing"]);
 
-const DEFAULT_TOOL_BY_AGENT = Object.freeze({
-  finance: "get_pending_payments",
-  commercial: "get_pending_quotes",
-  production: "get_delayed_production_orders",
-  purchasing: "get_purchase_needs",
-  hr: "get_hr_overview",
-  after_sales: "get_after_sales_overview",
-  marketing: "get_marketing_overview",
-  community_manager: "get_community_overview",
-  legal: "get_legal_overview"
-});
-
-const INTENT_TOOL_BY_AGENT = Object.freeze({
-  finance: "get_pending_payments",
-  commercial: "get_pending_quotes",
-  production: "get_delayed_production_orders",
-  purchasing: "get_purchase_needs",
-  hr: "get_hr_overview",
-  after_sales: "get_after_sales_overview",
-  marketing: "get_marketing_overview",
-  community_manager: "get_community_overview",
-  legal: "get_legal_overview"
+// Tools an agent contributes to a plan, in order. The list shape lets an agent
+// carry several steps; every agent holds exactly one tool today, so the plans
+// produced are unchanged.
+export const DEFAULT_TOOLS_BY_AGENT = Object.freeze({
+  finance: Object.freeze(["get_pending_payments"]),
+  commercial: Object.freeze(["get_pending_quotes"]),
+  production: Object.freeze(["get_delayed_production_orders"]),
+  purchasing: Object.freeze(["get_purchase_needs"]),
+  hr: Object.freeze(["get_hr_overview"]),
+  after_sales: Object.freeze(["get_after_sales_overview"]),
+  marketing: Object.freeze(["get_marketing_overview"]),
+  community_manager: Object.freeze(["get_community_overview"]),
+  legal: Object.freeze(["get_legal_overview"])
 });
 
 export function createDeterministicPlanner() {
@@ -217,10 +208,13 @@ export function createDeterministicPlanner() {
   });
 }
 
-export function createDeterministicPlan(request) {
+// toolNamesByAgent is a seam: it defaults to the production table and lets a
+// test exercise an agent carrying several tools without touching that table.
+export function createDeterministicPlan(request, { toolNamesByAgent = DEFAULT_TOOLS_BY_AGENT } = {}) {
   const text = normalizeRequestText(request);
   const agentIds = selectAgentIds(text);
   const requestId = request.id ?? request.requestId;
+  let stepIndex = 0;
 
   return Object.freeze({
     version: PLANNER_PLAN_VERSION,
@@ -229,11 +223,17 @@ export function createDeterministicPlan(request) {
     summary: "Deterministic MVP plan generated from request wording.",
     planner: "deterministic",
     agents: agentIds,
-    steps: agentIds.map((agentId, index) => {
+    // Steps are numbered across the whole plan, not per agent: a plan step
+    // sequence and a step id must stay unique however many steps an agent
+    // contributes.
+    steps: agentIds.flatMap((agentId) => {
       const definition = AGENT_PATTERNS.find((pattern) => pattern.agentId === agentId);
       const sensitivePayment = agentId === "finance" && isSensitivePaymentRequest(text);
       const sensitiveHr = agentId === "hr" && isSensitiveHrRequest(text);
       const sensitiveLegal = agentId === "legal" && isSensitiveLegalRequest(text);
+      return selectToolNames(agentId, text, toolNamesByAgent).map((toolName) => {
+      const index = stepIndex;
+      stepIndex += 1;
       return Object.freeze({
         id: createStepId(requestId, agentId, index),
         agentId,
@@ -246,7 +246,7 @@ export function createDeterministicPlan(request) {
             : sensitiveLegal
               ? "prepare_legal_sensitive_decision"
               : "analyze_request",
-        toolName: selectToolName(agentId, text),
+        toolName,
         resource: `request:${requestId}`,
         reason: sensitivePayment
           ? "The request asks for a sensitive payment action that requires human approval."
@@ -267,6 +267,7 @@ export function createDeterministicPlan(request) {
         },
         requiresApproval: sensitivePayment || sensitiveHr || sensitiveLegal
       });
+      });
     }),
     metadata: {
       planner: "deterministic",
@@ -275,22 +276,20 @@ export function createDeterministicPlan(request) {
   });
 }
 
-function selectToolName(agentId, text) {
+// A sensitive request replaces the agent tools with the single tool that must go
+// through human approval. Otherwise the agent contributes its declared list.
+function selectToolNames(agentId, text, toolNamesByAgent = DEFAULT_TOOLS_BY_AGENT) {
   if (agentId === "finance" && isSensitivePaymentRequest(text)) {
-    return "execute_invoice_payment";
+    return ["execute_invoice_payment"];
   }
   if (agentId === "hr" && isSensitiveHrRequest(text)) {
-    return "prepare_hr_sensitive_decision";
+    return ["prepare_hr_sensitive_decision"];
   }
   if (agentId === "legal" && isSensitiveLegalRequest(text)) {
-    return "prepare_legal_sensitive_decision";
+    return ["prepare_legal_sensitive_decision"];
   }
 
-  if (agentId === "finance" && AGENT_PATTERNS[0].patterns.some((pattern) => text.includes(pattern))) {
-    return INTENT_TOOL_BY_AGENT.finance;
-  }
-
-  return DEFAULT_TOOL_BY_AGENT[agentId] ?? null;
+  return [...(toolNamesByAgent[agentId] ?? [])];
 }
 
 function inferIntent(text, agentIds) {

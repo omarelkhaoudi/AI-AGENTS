@@ -158,6 +158,7 @@ export async function validatePlannerPlan(plan, { repository, toolRegistry } = {
     errors.push("steps must contain at least one step");
   } else {
     const stepIds = new Set();
+    const stepSequences = new Set();
     for (const [index, step] of plan.steps.entries()) {
       await validatePlannerStep(step, index, { repository, toolRegistry, errors });
       if (typeof step?.id === "string") {
@@ -165,6 +166,15 @@ export async function validatePlannerPlan(plan, { repository, toolRegistry } = {
           errors.push(`steps[${index}].id is duplicated: ${step.id}`);
         }
         stepIds.add(step.id);
+      }
+      // A step sequence is unique per plan in the database schema. Checking it
+      // here keeps an invalid plan from passing in memory and failing only once
+      // it reaches PostgreSQL.
+      if (Number.isInteger(step?.sequence)) {
+        if (stepSequences.has(step.sequence)) {
+          errors.push(`steps[${index}].sequence is duplicated: ${step.sequence}`);
+        }
+        stepSequences.add(step.sequence);
       }
     }
   }

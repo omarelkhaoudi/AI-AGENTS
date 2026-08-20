@@ -173,9 +173,18 @@ test("Director still completes the company overview request through demo tools",
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
-  assert.deepEqual(body.results.map((result) => result.agent), ["finance", "commercial", "production", "purchasing", "after_sales"]);
+  // finance and commercial each contribute two steps since Lot 2C commit 3.
+  assert.deepEqual(
+    body.results.map((result) => result.agent),
+    ["finance", "finance", "commercial", "commercial", "production", "purchasing", "after_sales"]
+  );
+  assert.deepEqual(
+    [...new Set(body.results.map((result) => result.agent))],
+    ["finance", "commercial", "production", "purchasing", "after_sales"]
+  );
   assert.equal(body.results.every((result) => result.result?.demo === true), true);
-  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 5);
+  // One tool_called per step: seven steps for five distinct agents.
+  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 7);
 });
 
 test("Director payment request creates approval and never auto-executes payment", async (t) => {

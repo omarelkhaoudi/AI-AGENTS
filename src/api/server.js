@@ -757,19 +757,25 @@ function createMarketingSynthesis(agentResults) {
   });
 }
 
+// An agent can contribute several steps, so the headline counts distinct
+// agents. Counting steps would claim more agents answered than there are.
 function createSummaryHeadline({ status, completedCount, expectedCount, agentResults, decisionsRequired }) {
-  const unavailableAgents = agentResults
+  const unavailableAgents = [...new Set(agentResults
     .filter((result) => result.status !== "completed")
-    .map((result) => result.agent);
+    .map((result) => result.agent))];
+  const respondingAgents = new Set(agentResults
+    .filter((result) => result.status === "completed")
+    .map((result) => result.agent)).size;
+  const solicitedAgents = new Set(agentResults.map((result) => result.agent)).size;
   const highPriorityCount = countHighPrioritySignals(agentResults);
 
   if (status === "requires_approval") {
     return `Action prepared. ${decisionsRequired.length} human approval decision(s) required before execution.`;
   }
   if (status === "partial") {
-    return `Point available with ${completedCount} agent(s) out of ${expectedCount}. Missing: ${unavailableAgents.join(", ")}.`;
+    return `Point available with ${respondingAgents} agent(s) out of ${solicitedAgents}. Missing: ${unavailableAgents.join(", ")}.`;
   }
-  return `Point complete: ${completedCount}/${expectedCount} agents responded with ${highPriorityCount} high-priority demo signal(s).`;
+  return `Point complete: ${respondingAgents}/${solicitedAgents} agents responded with ${highPriorityCount} high-priority demo signal(s).`;
 }
 
 function countHighPrioritySignals(agentResults) {

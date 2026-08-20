@@ -52,9 +52,47 @@ const CDC_CORE_TOOL_IDS = Object.freeze([
   "get_after_sales_overview"
 ]);
 
+// Since Lot 2C commit 3 finance and commercial each contribute two steps: their
+// historical tool first, then the computing one. The AGENT constants above list
+// the agents solicited; the STEP constants below list one entry per plan step,
+// which is what results, body.agents and domainSources map over.
+const CDC_CORE_STEP_AGENT_IDS = Object.freeze([
+  "finance",
+  "finance",
+  "commercial",
+  "commercial",
+  "production",
+  "purchasing",
+  "after_sales"
+]);
+
+const CDC_EXTENDED_STEP_AGENT_IDS = Object.freeze([
+  "finance",
+  "finance",
+  "commercial",
+  "commercial",
+  "production",
+  "purchasing",
+  "hr",
+  "after_sales",
+  "marketing",
+  "community_manager",
+  "legal"
+]);
+
+const CDC_CORE_STEP_TOOL_IDS = Object.freeze([
+  "get_pending_payments",
+  "get_receivables_summary",
+  "get_pending_quotes",
+  "get_quote_follow_ups",
+  "get_delayed_production_orders",
+  "get_purchase_needs",
+  "get_after_sales_overview"
+]);
+
 const CDC_CORE_RESPONSE_AGENT_IDS = Object.freeze([
   "director",
-  ...CDC_CORE_AGENT_IDS
+  ...CDC_CORE_STEP_AGENT_IDS
 ]);
 
 const MVP_ORG_AGENT_IDS = Object.freeze([
@@ -89,22 +127,23 @@ test("MVP central scenario orchestrates the CDC priority agents offline", async 
 
   assert.equal(response.statusCode, 201);
   assert.equal(request.status, "orchestrated");
-  assert.deepEqual(plan.steps.map((step) => step.agentId), CDC_CORE_AGENT_IDS);
-  assert.deepEqual(plan.steps.map((step) => step.toolName), CDC_CORE_TOOL_IDS);
-  assert.deepEqual(plan.steps.map((step) => step.sequence), [1, 2, 3, 4, 5]);
-  assert.equal(request.executions.length, 5);
+  assert.deepEqual(plan.steps.map((step) => step.agentId), CDC_CORE_STEP_AGENT_IDS);
+  assert.deepEqual(plan.steps.map((step) => step.toolName), CDC_CORE_STEP_TOOL_IDS);
+  assert.deepEqual(plan.steps.map((step) => step.sequence), [1, 2, 3, 4, 5, 6, 7]);
+  assert.equal(request.executions.length, 7);
   assert.equal(request.executions.every((execution) => execution.status === "completed"), true);
   assert.equal(request.executions.every((execution) => execution.output.result.demo === true), true);
   assert.equal(request.executions.every((execution) => execution.output.result.dataSource === "demo_mock"), true);
-  assert.equal(request.result.summary.completedExecutions, 5);
+  assert.equal(request.result.summary.completedExecutions, 7);
   assert.deepEqual(request.result.summary.agents, CDC_CORE_AGENT_IDS);
   assert.equal(request.result.toolResults.every((result) => result.demo === true), true);
   assert.deepEqual(request.approvals, []);
   assert.ok(events.includes("request_created"));
   assert.ok(events.includes("plan_created"));
-  assert.equal(events.filter((type) => type === "permission_checked").length, 5);
-  assert.equal(events.filter((type) => type === "tool_called").length, 5);
-  assert.equal(events.filter((type) => type === "execution_completed").length, 5);
+  // One permission_checked per step.
+  assert.equal(events.filter((type) => type === "permission_checked").length, 7);
+  assert.equal(events.filter((type) => type === "tool_called").length, 7);
+  assert.equal(events.filter((type) => type === "execution_completed").length, 7);
 });
 
 test("POST /api/director/requests returns a clean consolidated demo response", async (t) => {
@@ -126,8 +165,8 @@ test("POST /api/director/requests returns a clean consolidated demo response", a
   assert.equal(body.message, "Fais-moi le point complet de l'entreprise aujourd'hui.");
   assert.match(body.summary.headline, /Point complete: 5\/5 agents responded/);
   assert.deepEqual(body.agents.map((agent) => agent.id), CDC_CORE_RESPONSE_AGENT_IDS);
-  assert.deepEqual(body.agents.slice(1).map((agent) => agent.tool), CDC_CORE_TOOL_IDS);
-  assert.equal(body.results.length, 5);
+  assert.deepEqual(body.agents.slice(1).map((agent) => agent.tool), CDC_CORE_STEP_TOOL_IDS);
+  assert.equal(body.results.length, 7);
   assert.equal(body.results.every((result) => result.result.demo === true), true);
   assert.equal(body.findings.every((finding) => finding.demo === true), true);
   assert.equal(body.summary.receivables.length > 0, true);
@@ -147,6 +186,8 @@ test("POST /api/director/requests returns a clean consolidated demo response", a
     body.summary.domainSources.map((entry) => [entry.agent, entry.domain, entry.dataSource]),
     [
       ["finance", "payments", "demo_mock"],
+      ["finance", "payments", "demo_mock"],
+      ["commercial", "quotes", "demo_mock"],
       ["commercial", "quotes", "demo_mock"],
       ["production", "production", "demo_mock"],
       ["purchasing", "purchase_needs", "demo_mock"],
@@ -156,9 +197,9 @@ test("POST /api/director/requests returns a clean consolidated demo response", a
   assert.equal(body.decisionsRequired.some((decision) => decision.type === "business_decision"), true);
   assert.ok(body.audit.some((event) => event.type === "request_created"));
   assert.ok(body.audit.some((event) => event.type === "plan_created"));
-  assert.equal(body.audit.filter((event) => event.type === "permission_checked").length, 5);
-  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 5);
-  assert.equal(body.audit.filter((event) => event.type === "execution_completed").length, 5);
+  assert.equal(body.audit.filter((event) => event.type === "permission_checked").length, 7);
+  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 7);
+  assert.equal(body.audit.filter((event) => event.type === "execution_completed").length, 7);
   assert.doesNotMatch(response.body, /api[_-]?key|password|token|secret/i);
 });
 
@@ -174,7 +215,8 @@ test("Director handles point sur mon entreprise today as a multi-agent company o
   for (const agentId of CDC_EXTENDED_AGENT_IDS) {
     assert.equal(body.results.some((result) => result.agent === agentId), true, agentId);
   }
-  assert.deepEqual(body.results.map((result) => result.agent), CDC_EXTENDED_AGENT_IDS);
+  assert.deepEqual(body.results.map((result) => result.agent), CDC_EXTENDED_STEP_AGENT_IDS);
+  assert.deepEqual([...new Set(body.results.map((result) => result.agent))], CDC_EXTENDED_AGENT_IDS);
   assert.equal(body.results.every((result) => result.result?.demo === true), true);
   assert.equal(body.findings.every((finding) => finding.dataSource === "demo_mock"), true);
   assert.deepEqual(Object.keys(body.summary.minimumSections), [
@@ -196,7 +238,8 @@ test("Director handles point sur mon entreprise today as a multi-agent company o
   assert.equal(body.summary.minimumSections["A COMMANDER"].every((entry) => entry.domain === "purchase_needs"), true);
   assert.equal(body.summary.minimumSections["RETARDS / PROBLEMES"].some((entry) => entry.domain === "production"), true);
   assert.equal(body.summary.minimumSections["RISQUES / BLOCAGES"].some((entry) => entry.domain === "legal_demo_overview"), true);
-  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, CDC_EXTENDED_AGENT_IDS.length);
+  // One tool_called per step.
+  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, CDC_EXTENDED_STEP_AGENT_IDS.length);
 });
 
 test("MVP business scenarios A to I return coherent Director summaries from demo tools only", async (t) => {
@@ -208,7 +251,7 @@ test("MVP business scenarios A to I return coherent Director summaries from demo
     {
       label: "A",
       message: "Fais-moi le point complet de l'entreprise aujourd'hui.",
-      agents: CDC_CORE_AGENT_IDS,
+      agents: CDC_CORE_STEP_AGENT_IDS,
       assertBody: (body) => {
         assert.equal(body.summary.delayed.length > 0, true);
         assert.equal(body.summary.receivables.length > 0, true);
@@ -220,7 +263,7 @@ test("MVP business scenarios A to I return coherent Director summaries from demo
     {
       label: "B",
       message: "Quels sont les problemes importants aujourd'hui ?",
-      agents: CDC_EXTENDED_AGENT_IDS,
+      agents: CDC_EXTENDED_STEP_AGENT_IDS,
       assertBody: (body) => {
         assert.equal(body.summary.urgent.length > 0, true);
         assert.equal(body.findings.some((finding) => finding.priority === "urgent"), true);
@@ -232,7 +275,7 @@ test("MVP business scenarios A to I return coherent Director summaries from demo
     {
       label: "C",
       message: "Combien devons-nous encaisser cette semaine ?",
-      agents: ["finance"],
+      agents: ["finance", "finance"],
       assertBody: (body) => {
         const payments = body.results[0].result.items;
         const total = payments.reduce((sum, payment) => sum + payment.amount, 0);
@@ -243,7 +286,7 @@ test("MVP business scenarios A to I return coherent Director summaries from demo
     {
       label: "D",
       message: "Quels clients devons-nous relancer ?",
-      agents: ["commercial"],
+      agents: ["commercial", "commercial"],
       assertBody: (body) => {
         assert.equal(body.results[0].tool, "get_pending_quotes");
         assert.equal(body.results[0].result.items.some((quote) => quote.status.includes("pending")), true);
@@ -253,7 +296,7 @@ test("MVP business scenarios A to I return coherent Director summaries from demo
     {
       label: "D2",
       message: "Quels devis sont sans reponse depuis plus de 5 jours ?",
-      agents: ["commercial"],
+      agents: ["commercial", "commercial"],
       assertBody: (body) => {
         const quotes = body.results[0].result.items;
         assert.equal(quotes.some((quote) => quote.followUpReason === "quote_without_reply" && quote.noResponseDays >= 5), true);
@@ -263,7 +306,7 @@ test("MVP business scenarios A to I return coherent Director summaries from demo
     {
       label: "D3",
       message: "Quelles commandes commerciales necessitent mon attention ?",
-      agents: ["commercial"],
+      agents: ["commercial", "commercial"],
       assertBody: (body) => {
         const quotes = body.results[0].result.items;
         assert.equal(body.results[0].tool, "get_pending_quotes");
@@ -372,8 +415,8 @@ test("Director API returns coherent functional MVP responses for leader requests
     {
       message: "Fais-moi le point complet de l'entreprise aujourd'hui.",
       status: "completed",
-      agents: CDC_CORE_AGENT_IDS,
-      tools: CDC_CORE_TOOL_IDS,
+      agents: CDC_CORE_STEP_AGENT_IDS,
+      tools: CDC_CORE_STEP_TOOL_IDS,
       verify: (body) => {
         assert.equal(body.summary.receivables.length > 0, true);
         assert.equal(body.summary.purchaseNeeds.length > 0, true);
@@ -384,8 +427,8 @@ test("Director API returns coherent functional MVP responses for leader requests
     {
       message: "Qu'est-ce qui est urgent aujourd'hui ?",
       status: "completed",
-      agents: CDC_CORE_AGENT_IDS,
-      tools: CDC_CORE_TOOL_IDS,
+      agents: CDC_CORE_STEP_AGENT_IDS,
+      tools: CDC_CORE_STEP_TOOL_IDS,
       verify: (body) => {
         assert.equal(body.summary.urgent.length > 0, true);
         assert.equal(body.summary.monitoring.length > 0, true);
@@ -394,8 +437,8 @@ test("Director API returns coherent functional MVP responses for leader requests
     {
       message: "Combien devons-nous encaisser cette semaine ?",
       status: "completed",
-      agents: ["finance"],
-      tools: ["get_pending_payments"],
+      agents: ["finance", "finance"],
+      tools: ["get_pending_payments", "get_receivables_summary"],
       verify: (body) => {
         assert.equal(body.summary.receivables.length > 0, true);
         assert.equal(body.results[0].result.items.every((item) => item.currency === "MAD"), true);
@@ -404,8 +447,8 @@ test("Director API returns coherent functional MVP responses for leader requests
     {
       message: "Quels paiements sont en retard ?",
       status: "completed",
-      agents: ["finance"],
-      tools: ["get_pending_payments"],
+      agents: ["finance", "finance"],
+      tools: ["get_pending_payments", "get_receivables_summary"],
       verify: (body) => {
         assert.equal(body.results[0].result.items.some((item) => item.dueStatus === "overdue" && item.daysLate > 0), true);
         assert.equal(body.summary.receivables.every((entry) => entry.domain === "payments"), true);
@@ -414,11 +457,11 @@ test("Director API returns coherent functional MVP responses for leader requests
     {
       message: "Quels clients ont une creance ?",
       status: "completed",
-      agents: ["finance"],
-      tools: ["get_pending_payments"],
+      agents: ["finance", "finance"],
+      tools: ["get_pending_payments", "get_receivables_summary"],
       verify: (body) => {
         assert.equal(body.results[0].result.items.every((item) => item.receivable === true), true);
-        assert.deepEqual(body.results.map((result) => result.agent), ["finance"]);
+        assert.deepEqual(body.results.map((result) => result.agent), ["finance", "finance"]);
       }
     },
     {
@@ -451,8 +494,8 @@ test("Director API returns coherent functional MVP responses for leader requests
     {
       message: "Quels clients devons-nous relancer ?",
       status: "completed",
-      agents: ["commercial"],
-      tools: ["get_pending_quotes"],
+      agents: ["commercial", "commercial"],
+      tools: ["get_pending_quotes", "get_quote_follow_ups"],
       verify: (body) => {
         assert.equal(body.results[0].result.items.some((item) => item.status.includes("pending")), true);
       }
@@ -692,6 +735,7 @@ test("Director API returns coherent functional MVP responses for leader requests
     {
       message: "Effectue le paiement de cette facture.",
       status: "requires_approval",
+      // A sensitive request collapses finance to its single approval tool.
       agents: ["finance"],
       tools: ["execute_invoice_payment"],
       verify: (body) => {
@@ -728,10 +772,10 @@ test("Director routes multi-domain finance and production requests without plann
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
-  assert.deepEqual(body.results.map((result) => result.agent), ["finance", "production"]);
-  assert.deepEqual(body.results.map((result) => result.tool), ["get_pending_payments", "get_delayed_production_orders"]);
-  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 2);
-  assert.equal(body.audit.filter((event) => event.type === "execution_completed").length, 2);
+  assert.deepEqual(body.results.map((result) => result.agent), ["finance", "finance", "production"]);
+  assert.deepEqual(body.results.map((result) => result.tool), ["get_pending_payments", "get_receivables_summary", "get_delayed_production_orders"]);
+  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 3);
+  assert.equal(body.audit.filter((event) => event.type === "execution_completed").length, 3);
   assert.equal(body.audit.some((event) => event.type === "approval_requested"), false);
 });
 
@@ -744,10 +788,10 @@ test("Director routes commercial and purchasing requests together", async (t) =>
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
-  assert.deepEqual(body.results.map((result) => result.agent), ["commercial", "purchasing"]);
-  assert.deepEqual(body.results.map((result) => result.tool), ["get_pending_quotes", "get_purchase_needs"]);
+  assert.deepEqual(body.results.map((result) => result.agent), ["commercial", "commercial", "purchasing"]);
+  assert.deepEqual(body.results.map((result) => result.tool), ["get_pending_quotes", "get_quote_follow_ups", "get_purchase_needs"]);
   assert.equal(body.summary.purchaseNeeds.length > 0, true);
-  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 2);
+  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 3);
 });
 
 test("Director routes Commercial Marketing combined requests without losing provenance", async (t) => {
@@ -759,13 +803,14 @@ test("Director routes Commercial Marketing combined requests without losing prov
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
-  assert.deepEqual(body.results.map((result) => result.agent), ["commercial", "marketing"]);
-  assert.deepEqual(body.results.map((result) => result.tool), ["get_pending_quotes", "get_marketing_overview"]);
+  assert.deepEqual(body.results.map((result) => result.agent), ["commercial", "commercial", "marketing"]);
+  assert.deepEqual(body.results.map((result) => result.tool), ["get_pending_quotes", "get_quote_follow_ups", "get_marketing_overview"]);
   assert.deepEqual(body.summary.domainSources.map((entry) => [entry.agent, entry.domain, entry.dataSource]), [
+    ["commercial", "quotes", "demo_mock"],
     ["commercial", "quotes", "demo_mock"],
     ["marketing", "marketing_demo_overview", "demo_mock"]
   ]);
-  assert.equal(body.results[1].result.items.some((item) => item.opportunity), true);
+  assert.equal(body.results.find((result) => result.agent === "marketing").result.items.some((item) => item.opportunity), true);
 });
 
 test("Director routes Legal Commercial combined requests for contract and customer context", async (t) => {
@@ -777,8 +822,8 @@ test("Director routes Legal Commercial combined requests for contract and custom
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
-  assert.deepEqual(body.results.map((result) => result.agent), ["commercial", "legal"]);
-  assert.deepEqual(body.results.map((result) => result.tool), ["get_pending_quotes", "get_legal_overview"]);
+  assert.deepEqual(body.results.map((result) => result.agent), ["commercial", "commercial", "legal"]);
+  assert.deepEqual(body.results.map((result) => result.tool), ["get_pending_quotes", "get_quote_follow_ups", "get_legal_overview"]);
   assert.equal(body.results.find((result) => result.agent === "legal").result.items.some((item) => item.clause), true);
   assert.equal(body.results.find((result) => result.agent === "commercial").result.items.some((item) => item.customerId || item.prospectId), true);
 });
@@ -792,9 +837,10 @@ test("Director routes Commercial Production After Sales combined customer issue 
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
-  assert.deepEqual(body.results.map((result) => result.agent), ["commercial", "production", "after_sales"]);
-  assert.deepEqual(body.results.map((result) => result.tool), ["get_pending_quotes", "get_delayed_production_orders", "get_after_sales_overview"]);
+  assert.deepEqual(body.results.map((result) => result.agent), ["commercial", "commercial", "production", "after_sales"]);
+  assert.deepEqual(body.results.map((result) => result.tool), ["get_pending_quotes", "get_quote_follow_ups", "get_delayed_production_orders", "get_after_sales_overview"]);
   assert.deepEqual(body.summary.domainSources.map((entry) => [entry.agent, entry.domain]), [
+    ["commercial", "quotes"],
     ["commercial", "quotes"],
     ["production", "production"],
     ["after_sales", "after_sales_tickets"]
@@ -829,9 +875,11 @@ test("Director preserves provenance across Commercial Finance Production Purchas
 
   assert.equal(response.statusCode, 201);
   assert.equal(body.status, "completed");
-  assert.deepEqual(body.results.map((result) => result.agent), ["finance", "commercial", "production", "purchasing"]);
+  assert.deepEqual(body.results.map((result) => result.agent), ["finance", "finance", "commercial", "commercial", "production", "purchasing"]);
   assert.deepEqual(body.summary.domainSources.map((entry) => [entry.agent, entry.domain, entry.dataSource]), [
     ["finance", "payments", "demo_mock"],
+    ["finance", "payments", "demo_mock"],
+    ["commercial", "quotes", "demo_mock"],
     ["commercial", "quotes", "demo_mock"],
     ["production", "production", "demo_mock"],
     ["purchasing", "purchase_needs", "demo_mock"]

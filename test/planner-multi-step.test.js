@@ -18,15 +18,19 @@ const REFERENCE_PLANS = Object.freeze([
     intent: "global_company_overview",
     agents: ["finance", "commercial", "production", "purchasing", "hr", "after_sales", "marketing", "community_manager", "legal"],
     steps: [
+      // Lot 2C commit 3: finance and commercial each keep their historical tool
+      // and gain a computing one, in that order.
       ["finance", 1, "get_pending_payments", "read_analyze", false],
-      ["commercial", 2, "get_pending_quotes", "read_analyze", false],
-      ["production", 3, "get_delayed_production_orders", "read_analyze", false],
-      ["purchasing", 4, "get_purchase_needs", "read_analyze", false],
-      ["hr", 5, "get_hr_overview", "read_analyze", false],
-      ["after_sales", 6, "get_after_sales_overview", "read_analyze", false],
-      ["marketing", 7, "get_marketing_overview", "read_analyze", false],
-      ["community_manager", 8, "get_community_overview", "read_analyze", false],
-      ["legal", 9, "get_legal_overview", "read_analyze", false]
+      ["finance", 2, "get_receivables_summary", "read_analyze", false],
+      ["commercial", 3, "get_pending_quotes", "read_analyze", false],
+      ["commercial", 4, "get_quote_follow_ups", "read_analyze", false],
+      ["production", 5, "get_delayed_production_orders", "read_analyze", false],
+      ["purchasing", 6, "get_purchase_needs", "read_analyze", false],
+      ["hr", 7, "get_hr_overview", "read_analyze", false],
+      ["after_sales", 8, "get_after_sales_overview", "read_analyze", false],
+      ["marketing", 9, "get_marketing_overview", "read_analyze", false],
+      ["community_manager", 10, "get_community_overview", "read_analyze", false],
+      ["legal", 11, "get_legal_overview", "read_analyze", false]
     ]
   },
   {
@@ -34,7 +38,10 @@ const REFERENCE_PLANS = Object.freeze([
     message: "Quels paiements sont en retard ?",
     intent: "finance",
     agents: ["finance"],
-    steps: [["finance", 1, "get_pending_payments", "read_analyze", false]]
+    steps: [
+      ["finance", 1, "get_pending_payments", "read_analyze", false],
+      ["finance", 2, "get_receivables_summary", "read_analyze", false]
+    ]
   },
   {
     label: "production and purchasing",
@@ -123,7 +130,11 @@ test("the plan agent list carries no duplicate", () => {
   }
 });
 
-test("today every agent still contributes exactly one step", () => {
+// Only finance and commercial carry a second step. Every other agent keeps
+// exactly one, so no routing was widened beyond what Lot 2C commit 3 allows.
+const AGENTS_WITH_TWO_STEPS = Object.freeze(["finance", "commercial"]);
+
+test("only finance and commercial contribute a second step", () => {
   for (const reference of REFERENCE_PLANS) {
     const plan = planFor(reference.message);
     const stepsByAgent = new Map();
@@ -132,7 +143,11 @@ test("today every agent still contributes exactly one step", () => {
       stepsByAgent.set(step.agentId, (stepsByAgent.get(step.agentId) ?? 0) + 1);
     }
 
-    assert.deepEqual([...stepsByAgent.values()], plan.agents.map(() => 1), reference.label);
+    for (const [agentId, count] of stepsByAgent) {
+      const sensitive = plan.intent.startsWith("sensitive_");
+      const expected = AGENTS_WITH_TWO_STEPS.includes(agentId) && !sensitive ? 2 : 1;
+      assert.equal(count, expected, `${reference.label}: ${agentId}`);
+    }
   }
 });
 
@@ -147,6 +162,8 @@ test("every planned tool is still one the planner routed before", () => {
     "get_marketing_overview",
     "get_community_overview",
     "get_legal_overview",
+    "get_receivables_summary",
+    "get_quote_follow_ups",
     "execute_invoice_payment",
     "prepare_hr_sensitive_decision",
     "prepare_legal_sensitive_decision"
@@ -256,9 +273,14 @@ test("a sensitive request still collapses the agent to its single approval tool"
   assert.equal(plan.steps[0].requiresApproval, true);
 });
 
-test("the production tool table still carries exactly one tool per agent", () => {
+test("only finance and commercial declare a second tool", () => {
   for (const [agentId, tools] of Object.entries(DEFAULT_TOOLS_BY_AGENT)) {
     assert.ok(Array.isArray(tools), agentId);
-    assert.equal(tools.length, 1, `${agentId} must not route a second tool yet`);
+    assert.equal(tools.length, AGENTS_WITH_TWO_STEPS.includes(agentId) ? 2 : 1, agentId);
   }
+
+  // The historical tool stays first: the Director keeps reporting it before the
+  // computing one.
+  assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.finance], ["get_pending_payments", "get_receivables_summary"]);
+  assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.commercial], ["get_pending_quotes", "get_quote_follow_ups"]);
 });

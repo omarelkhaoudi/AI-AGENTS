@@ -58,15 +58,26 @@ test("MVP agent seed is idempotent and creates active agent records", async () =
 
 test("Request Finance routes to finance agent", async () => {
   const request = await createOrchestratedRequest("combien dois-je encaisser cette semaine");
-  assert.deepEqual(selectedAgents(request), ["finance"]);
-  assert.equal(request.plans[0].steps[0].toolName, "get_pending_payments");
+  // Finance now contributes two steps: its historical tool first, then the
+  // computing one. The agent selected is still finance alone.
+  assert.deepEqual(selectedAgents(request), ["finance", "finance"]);
+  assert.deepEqual(distinctAgents(request), ["finance"]);
+  assert.deepEqual(
+    request.plans[0].steps.map((step) => step.toolName),
+    ["get_pending_payments", "get_receivables_summary"]
+  );
   assert.equal(request.executions[0].output.toolId, "get_pending_payments");
   assert.equal(request.executions[0].output.result.demo, true);
 });
 
 test("Request Commercial routes to commercial agent", async () => {
   const request = await createOrchestratedRequest("quels clients dois-je relancer");
-  assert.deepEqual(selectedAgents(request), ["commercial"]);
+  assert.deepEqual(selectedAgents(request), ["commercial", "commercial"]);
+  assert.deepEqual(distinctAgents(request), ["commercial"]);
+  assert.deepEqual(
+    request.plans[0].steps.map((step) => step.toolName),
+    ["get_pending_quotes", "get_quote_follow_ups"]
+  );
 });
 
 test("Request Production routes to production agent", async () => {
@@ -112,7 +123,22 @@ test("Request Legal routes to legal agent", async () => {
 
 test("Global request routes to all specialized agents", async () => {
   const request = await createOrchestratedRequest("fais-moi le point sur mon entreprise");
+  // Eleven steps for nine distinct agents: finance and commercial each carry
+  // their historical tool followed by their computing one.
   assert.deepEqual(selectedAgents(request), [
+    "finance",
+    "finance",
+    "commercial",
+    "commercial",
+    "production",
+    "purchasing",
+    "hr",
+    "after_sales",
+    "marketing",
+    "community_manager",
+    "legal"
+  ]);
+  assert.deepEqual(distinctAgents(request), [
     "finance",
     "commercial",
     "production",
@@ -134,18 +160,18 @@ test("orchestration creates a Plan", async () => {
 
 test("orchestration creates PlanSteps", async () => {
   const request = await createOrchestratedRequest("fais-moi le point sur mon entreprise");
-  assert.equal(request.plans[0].steps.length, 9);
+  assert.equal(request.plans[0].steps.length, 11);
   assert.deepEqual(
     request.plans[0].steps.map((step) => step.sequence),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
   );
 });
 
 test("orchestration creates Executions", async () => {
   const request = await createOrchestratedRequest("quels clients dois-je relancer");
-  assert.equal(request.executions.length, 1);
-  assert.equal(request.executions[0].agentId, "commercial");
-  assert.equal(request.executions[0].status, "completed");
+  assert.equal(request.executions.length, 2);
+  assert.deepEqual(request.executions.map((execution) => execution.agentId), ["commercial", "commercial"]);
+  assert.ok(request.executions.every((execution) => execution.status === "completed"));
 });
 
 test("orchestration creates AuditEvents", async () => {
@@ -209,10 +235,11 @@ test("GET /api/requests/:id returns full request orchestration details", async (
   assert.equal(response.statusCode, 200);
   assert.equal(body.request.status, "orchestrated");
   assert.equal(body.request.plans.length, 1);
-  assert.equal(body.request.plans[0].steps.length, 9);
+  assert.equal(body.request.plans[0].steps.length, 11);
   assert.equal(body.request.plans[0].steps[0].agent.id, "finance");
-  assert.equal(body.request.executions.length, 9);
-  assert.equal(body.request.result.summary.completedExecutions, 9);
+  assert.equal(body.request.executions.length, 11);
+  // Eleven steps executed for nine distinct agents.
+  assert.equal(body.request.result.summary.completedExecutions, 11);
   assert.ok(body.request.auditEvents.length >= 1);
   assert.deepEqual(body.request.approvals, []);
 });
@@ -230,4 +257,10 @@ async function createOrchestratedRequest(title) {
 
 function selectedAgents(request) {
   return request.plans[0].steps.map((step) => step.agentId);
+}
+
+// An agent may contribute several steps, so the agents actually solicited are
+// the distinct ones.
+function distinctAgents(request) {
+  return [...new Set(selectedAgents(request))];
 }

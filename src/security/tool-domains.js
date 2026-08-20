@@ -21,6 +21,7 @@ export const TOOL_SECURITY_DOMAINS = Object.freeze({
   get_receivables_summary: Object.freeze(["payments", "invoices"]),
   get_quote_follow_ups: Object.freeze(["quotes"]),
   get_production_schedule: Object.freeze(["production", "orders"]),
+  get_material_requirements: Object.freeze(["orders", "bills_of_material", "stock", "products"]),
   execute_invoice_payment: Object.freeze(["payments"]),
   prepare_hr_sensitive_decision: Object.freeze(["hr"]),
   prepare_legal_sensitive_decision: Object.freeze(["legal"])
@@ -34,7 +35,7 @@ export const AGENT_SECURITY_DOMAINS = Object.freeze({
   commercial: Object.freeze(["quotes", "customers", "orders"]),
   finance: Object.freeze(["company_overview", "payments", "customers", "invoices"]),
   production: Object.freeze(["production", "orders"]),
-  purchasing: Object.freeze(["purchase_needs", "suppliers"]),
+  purchasing: Object.freeze(["purchase_needs", "suppliers", "orders", "bills_of_material", "stock", "products"]),
   hr: Object.freeze(["hr"]),
   after_sales: Object.freeze(["after_sales"]),
   marketing: Object.freeze(["marketing"]),

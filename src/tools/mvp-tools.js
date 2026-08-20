@@ -28,7 +28,8 @@ import {
   getSupplierCatalog,
   createReceivablesSummary,
   createQuoteFollowUps,
-  createProductionSchedule
+  createProductionSchedule,
+  createMaterialRequirements
 } from "../demo/company-data.js";
 
 const baseInputSchema = createToolInputSchema({
@@ -218,6 +219,17 @@ export function createMvpTools({ businessMemory = createBusinessMemoryRepository
       businessMemory,
       domains: ["production", "orders"],
       resolveItems: createProductionSchedule
+    }),
+    createMvpMockTool({
+      id: "get_material_requirements",
+      name: "Get Material Requirements",
+      description: "Derives demo material shortages from open orders, their bill of material and available stock. Only stock explicitly available is counted, and anything that cannot be derived is reported as an anomaly.",
+      category: "purchasing",
+      requiredPermission: "read_analyze",
+      allowedAgents: ["purchasing"],
+      businessMemory,
+      domains: ["orders", "bills_of_material", "stock", "products"],
+      resolveItems: createMaterialRequirements
     })
   ]);
 }

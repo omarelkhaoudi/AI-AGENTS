@@ -27,12 +27,17 @@ import {
 //          held by commercial. Only the tool table below grows.
 // Lot 2B.2 commit 4 adds get_production_schedule, reading production and
 //          orders, both already held by production. Again no agent scope moves.
+// Lot 2B.2 commit 5 adds get_material_requirements and IS the one commit of the
+//          lot that widens an agent: purchasing gains orders,
+//          bills_of_material, stock and products, the four domains the CDC
+//          section 7 chain needs. All four are within the business memory
+//          ceilings already declared for purchasing. No other agent moves.
 const EXPECTED_AGENT_SECURITY_DOMAINS = Object.freeze({
   director: ["company_overview"],
   commercial: ["quotes", "customers", "orders"],
   finance: ["company_overview", "payments", "customers", "invoices"],
   production: ["production", "orders"],
-  purchasing: ["purchase_needs", "suppliers"],
+  purchasing: ["purchase_needs", "suppliers", "orders", "bills_of_material", "stock", "products"],
   hr: ["hr"],
   after_sales: ["after_sales"],
   marketing: ["marketing"],
@@ -58,6 +63,7 @@ const EXPECTED_TOOL_SECURITY_DOMAINS = Object.freeze({
   get_receivables_summary: ["payments", "invoices"],
   get_quote_follow_ups: ["quotes"],
   get_production_schedule: ["production", "orders"],
+  get_material_requirements: ["orders", "bills_of_material", "stock", "products"],
   execute_invoice_payment: ["payments"],
   prepare_hr_sensitive_decision: ["hr"],
   prepare_legal_sensitive_decision: ["legal"]
@@ -118,10 +124,11 @@ test("each agent still holds exactly the domains its tools require", () => {
   }
 });
 
-// The new reference domains are persistable but unreachable: no agent carries a
-// permission that would match them.
-test("the new business reference domains grant no agent any access", () => {
-  const referenceDomains = ["products", "prices", "stock", "bills_of_material", "payment_terms"];
+// Reference domains still unreachable by every agent. Lot 2B.2 commit 5 gives
+// purchasing products, stock and bills_of_material for the CDC section 7 chain,
+// so only prices and payment_terms remain out of reach for all ten agents.
+test("the remaining business reference domains grant no agent any access", () => {
+  const referenceDomains = ["prices", "payment_terms"];
 
   for (const domain of referenceDomains) {
     assert.ok(BUSINESS_DOMAINS.includes(domain), `${domain} must be a declared business domain`);

@@ -887,3 +887,156 @@ export function createProductionSchedule(
     });
   });
 }
+
+// --- Lot 2B.2 material requirements (CDC section 7) -----------------------
+// Order -> bill of material -> stock -> shortage. Nothing is pre-computed: the
+// shortage is derived, and anything that cannot be derived is reported as an
+// anomaly rather than dropped.
+
+const CLOSED_ORDER_STATUSES = Object.freeze(["cancelled", "completed", "delivered", "closed"]);
+
+// Fail closed on purpose: only stock we are sure is available counts. Treating
+// reserved stock as usable would stop the workshop, which is worse than
+// ordering slightly too much.
+const AVAILABLE_STOCK_STATUSES = Object.freeze(["available", "in_stock", "free"]);
+
+export function isOrderClosed(order) {
+  return CLOSED_ORDER_STATUSES.includes(order?.status);
+}
+
+export function isStockAvailable(stockItem) {
+  return AVAILABLE_STOCK_STATUSES.includes(stockItem?.status);
+}
+
+function positiveQuantity(value) {
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+// An order quantity multiplies every bill of material line. The field is not
+// part of the persisted order model, so it defaults to one and is only
+// exercised through fixtures.
+function orderMultiplier(order) {
+  return positiveQuantity(order?.quantity) ?? 1;
+}
+
+function findBillOfMaterial(order, billsOfMaterial) {
+  return billsOfMaterial.find((bill) => bill?.orderId && bill.orderId === order?.id)
+    ?? billsOfMaterial.find((bill) => bill?.productId && bill.productId === order?.productId)
+    ?? null;
+}
+
+export function summarizeProductStock(productId, stock = []) {
+  let available = 0;
+  let unavailableQuantity = 0;
+  let stockRecordsIgnored = 0;
+  let stockKnown = false;
+  let supplierId = null;
+
+  for (const item of stock) {
+    if (item?.productId !== productId) {
+      continue;
+    }
+    stockKnown = true;
+    supplierId = supplierId ?? item.supplierId ?? null;
+    const quantity = Number.isFinite(item.quantity) ? Math.max(0, item.quantity) : 0;
+
+    if (isStockAvailable(item)) {
+      available += quantity;
+    } else {
+      unavailableQuantity += quantity;
+      stockRecordsIgnored += 1;
+    }
+  }
+
+  return { available, unavailableQuantity, stockRecordsIgnored, stockKnown, supplierId };
+}
+
+export function createMaterialRequirements({
+  orders = [],
+  billsOfMaterial = [],
+  stock = [],
+  products = []
+} = {}) {
+  const items = [];
+  const anomalies = [];
+  let consideredOrders = 0;
+  let unavailableQuantity = 0;
+  let stockRecordsIgnored = 0;
+
+  for (const order of orders) {
+    if (isOrderClosed(order)) {
+      continue;
+    }
+    consideredOrders += 1;
+
+    const bill = findBillOfMaterial(order, billsOfMaterial);
+    if (!bill) {
+      anomalies.push(Object.freeze({ reason: "bill_of_material_missing", orderId: order?.id ?? null }));
+      continue;
+    }
+
+    const lines = Array.isArray(bill.lines) ? bill.lines : [];
+    if (lines.length === 0) {
+      anomalies.push(Object.freeze({
+        reason: "bill_of_material_empty",
+        orderId: order?.id ?? null,
+        billOfMaterialId: bill.id ?? null
+      }));
+      continue;
+    }
+
+    const multiplier = orderMultiplier(order);
+    for (const line of lines) {
+      const lineQuantity = positiveQuantity(line?.quantity);
+      if (lineQuantity === null) {
+        anomalies.push(Object.freeze({
+          reason: "invalid_line",
+          orderId: order?.id ?? null,
+          billOfMaterialId: bill.id ?? null,
+          lineId: line?.lineId ?? null
+        }));
+        continue;
+      }
+
+      const required = lineQuantity * multiplier;
+      const stockSummary = summarizeProductStock(line.productId, stock);
+      const product = products.find((candidate) => candidate?.id === line.productId) ?? null;
+      const shortage = Math.max(0, required - stockSummary.available);
+
+      unavailableQuantity += stockSummary.unavailableQuantity;
+      stockRecordsIgnored += stockSummary.stockRecordsIgnored;
+
+      items.push(Object.freeze({
+        orderId: order?.id ?? null,
+        billOfMaterialId: bill.id ?? null,
+        lineId: line?.lineId ?? null,
+        productId: line.productId ?? null,
+        productName: product?.name ?? null,
+        productKnown: Boolean(product),
+        unit: line.unit ?? product?.unit ?? null,
+        required,
+        available: stockSummary.available,
+        shortage,
+        covered: shortage === 0,
+        stockKnown: stockSummary.stockKnown,
+        supplierId: stockSummary.supplierId
+      }));
+    }
+  }
+
+  return {
+    items,
+    summary: Object.freeze({
+      counts: Object.freeze({
+        orders: consideredOrders,
+        lines: items.length,
+        shortages: items.filter((item) => !item.covered).length,
+        covered: items.filter((item) => item.covered).length,
+        unavailableQuantity,
+        stockRecordsIgnored,
+        anomalies: anomalies.length
+      }),
+      anomalies: Object.freeze([...anomalies])
+    })
+  };
+}

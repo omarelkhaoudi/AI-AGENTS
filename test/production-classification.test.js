@@ -213,8 +213,8 @@ test("an agent without both domains is denied", async () => {
   await assert.rejects(
     () => service.execute({
       agentId: "production",
-      // Purchasing holds purchase_needs and suppliers: neither production nor orders.
-      agentPermissions: createMvpAgentPermissions("purchasing"),
+      // HR is scoped to its own domain only: neither production nor orders.
+      agentPermissions: createMvpAgentPermissions("hr"),
       toolId: "get_production_schedule",
       input: { requestId: "req-sched" },
       requestId: "req-sched"

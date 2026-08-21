@@ -7,6 +7,7 @@ import {
   InMemorySopRepository,
   buildApi,
   createDemoBusinessMemoryRepository,
+  demoDate,
   getAgentBusinessConfig
 } from "../src/index.js";
 import { buildAuthenticatedApi } from "../test-support/api-auth.js";
@@ -95,17 +96,17 @@ test("CDC priority business memory records expose useful relations and dates", (
   assert.equal(quote.relations.linkedOrderId, "order-atlas-001");
   assert.equal(invoice.relations.customerId, "customer-atlas");
   assert.equal(invoice.relations.orderId, "order-atlas-001");
-  assert.equal(invoice.dates.dueAt, "2026-08-16");
+  assert.equal(invoice.dates.dueAt, demoDate(-2));
   assert.equal(payment.relations.invoiceId, "invoice-atlas-deposit");
   assert.equal(payment.dates.dueAt, "this_week");
-  assert.equal(order.dates.dueAt, "2026-08-16");
+  assert.equal(order.dates.dueAt, demoDate(3));
   assert.equal(production.relations.orderId, "order-atlas-001");
-  assert.equal(production.dates.dueAt, "2026-08-16");
+  assert.equal(production.dates.dueAt, demoDate(3));
   assert.equal(purchaseNeed.relations.supplierId, "supplier-metal-one");
   assert.equal(purchaseNeed.relations.linkedOrderId, "order-atlas-001");
   assert.equal(supplier.status, "active");
   assert.equal(hrSignal.relations.employeeId, "employee-demo-002");
-  assert.equal(hrSignal.dates.observedAt, "2026-08-18");
+  assert.equal(hrSignal.dates.observedAt, demoDate(5));
   assert.equal(ticket.relations.customerId, "customer-atlas");
   assert.equal(ticket.relations.orderId, "order-atlas-001");
 });

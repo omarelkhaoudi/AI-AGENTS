@@ -5,6 +5,7 @@ import {
   InMemoryRepository,
   collectedItemIdentity,
   createDemoCompanyData,
+  demoDate,
   createMaterialRequirements,
   createProductionSchedule,
   createSummaryAggregates,
@@ -323,9 +324,10 @@ test("the production risk question reaches both production tools, historical one
 });
 
 // Lateness is measured against the demo operating date, not the wall clock.
-// Anchoring it there is what keeps the four CDC states observable instead of
-// collapsing every demo order into LATE as real time passes.
-test("the schedule derives the CDC states from the demo operating date", async (t) => {
+// The schedule measures lateness against the clock, like any real report.
+// The demo deadlines sit ahead of today, so the four CDC states stay
+// observable without a fixture date deciding what is late.
+test("the schedule derives the CDC states from the clock", async (t) => {
   const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
   t.after(() => app.close());
 
@@ -333,19 +335,24 @@ test("the schedule derives the CDC states from the demo operating date", async (
   const items = body.results.find((result) => result.tool === "get_production_schedule").result.items;
 
   assert.deepEqual(items.map((item) => item.classification), ["IN_DANGER", "AT_RISK", "ON_TIME"]);
-  assert.equal(items.every((item) => item.late === false), true, "no demo order is late on the operating date");
-  // The wall clock has passed those planned dates, so a Date.now() based
-  // reference would report every one of them as late.
-  assert.ok(items.some((item) => new Date(item.dueDate) < new Date()), "the demo deadlines are in the past");
+  assert.equal(items.every((item) => item.late === false), true, "no demo order is past its deadline");
+  // No reference was injected: these states come from the clock, and the demo
+  // deadlines sit ahead of it rather than behind it.
+  assert.ok(
+    items.every((item) => item.dueDate >= demoDate(0)),
+    "the demo deadlines are ahead of today"
+  );
 });
 
-test("the reference date is the operating date and stays injectable", () => {
+test("the demo operating date is today, and a reference stays injectable", () => {
   const data = createDemoCompanyData();
 
-  assert.equal(demoReferenceDate().toISOString().slice(0, 10), data.company.operatingDate);
+  assert.equal(data.company.operatingDate, demoDate(0));
+  assert.equal(demoReferenceDate().toISOString().slice(0, 10), demoDate(0));
+  // Far enough ahead that every planned date sits behind it.
   assert.deepEqual(
-    createProductionSchedule(data, { referenceDate: new Date("2026-08-19") }).map((item) => item.classification),
-    ["LATE", "LATE", "ON_TIME"],
+    createProductionSchedule(data, { referenceDate: new Date(demoDate(30)) }).map((item) => item.classification),
+    ["LATE", "LATE", "LATE"],
     "an explicit reference date still drives the derivation"
   );
 });

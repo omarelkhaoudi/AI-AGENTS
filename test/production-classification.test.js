@@ -9,6 +9,7 @@ import {
   createMvpAgentPermissions,
   createMvpToolRegistry,
   createDemoCompanyData,
+  demoDate,
   createProductionSchedule,
   demoReferenceDate,
   isProductionCompleted,
@@ -147,20 +148,19 @@ test("an unknown or missing stored state becomes UNKNOWN, never invented", () =>
   assert.equal(classify(null), "UNKNOWN");
 });
 
-// Both entry points must default to the same reference. classifyProductionRecord
-// is exported on its own, so a caller omitting the option must not silently get
-// the wall clock while the schedule uses the operating date.
-test("the classification defaults to the demo operating date, not the wall clock", () => {
-  const operatingDate = createDemoCompanyData().company.operatingDate;
+// Both entry points default to the clock. They used to default to the demo
+// operating date, so a real order whose deadline had passed was compared to a
+// date belonging to a fixture and reported as running on time.
+test("the classification defaults to the clock, never to a fixture date", () => {
+  const yesterday = { orderId: "o1", plannedDate: demoDate(-1), classification: "ON_TIME" };
+  const tomorrow = { orderId: "o1", plannedDate: demoDate(1), classification: "AT_RISK" };
 
-  assert.equal(demoReferenceDate().toISOString().slice(0, 10), operatingDate);
-  // One day before the operating date: late against the wall clock, not late
-  // against the operating date.
-  const beforeOperatingDate = { orderId: "o1", plannedDate: "2026-08-12", classification: "ON_TIME" };
-  assert.equal(classifyProductionRecord(beforeOperatingDate), "LATE");
-  const afterOperatingDate = { orderId: "o1", plannedDate: "2026-08-14", classification: "AT_RISK" };
-  assert.equal(classifyProductionRecord(afterOperatingDate), "AT_RISK");
-  assert.ok(new Date(afterOperatingDate.plannedDate) < new Date(), "the deadline is already past in real time");
+  assert.equal(classifyProductionRecord(yesterday), "LATE", "a deadline passed yesterday is late");
+  assert.equal(classifyProductionRecord(tomorrow), "AT_RISK", "a deadline still ahead keeps its stored state");
+  // The demo operating date is today, so it can no longer drag a real
+  // deadline backwards.
+  assert.equal(createDemoCompanyData().company.operatingDate, demoDate(0));
+  assert.equal(demoReferenceDate().toISOString().slice(0, 10), demoDate(0));
 });
 
 test("the schedule exposes the deadline it used and whether the order was found", () => {

@@ -22,11 +22,13 @@ const CDC_SECTIONS = Object.freeze([
 // any, and a caller reading the report must not have to change.
 const ORIGINAL_SECTIONS = Object.freeze(CDC_SECTIONS.slice(0, 6));
 
-// What each heading held before this lot. A count moving here means the four
-// additions changed what the six were reporting.
+// What each of the six original headings reports. A count moving here means a
+// change altered what they say, which is a business decision, never a side
+// effect. Lot 2 moved an order running on time out of what is late and into
+// what is going well, and left an at risk one under what may block only.
 const ORIGINAL_COUNTS = Object.freeze({
-  "CE QUI VA BIEN": 1,
-  "RETARDS / PROBLEMES": 4,
+  "CE QUI VA BIEN": 2,
+  "RETARDS / PROBLEMES": 2,
   "A ENCAISSER": 2,
   "A COMMANDER": 4,
   "RISQUES / BLOCAGES": 13,

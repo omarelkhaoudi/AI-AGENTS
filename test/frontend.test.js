@@ -112,7 +112,11 @@ test("Director cockpit API scenarios cover global, finance, production, purchasi
       "A ENCAISSER",
       "A COMMANDER",
       "RISQUES / BLOCAGES",
-      "DECISIONS NECESSAIRES"
+      "DECISIONS NECESSAIRES",
+      "CE QUI NECESSITE UNE ACTION COMMERCIALE",
+      "CE QUI NECESSITE UNE ACTION MARKETING OU COMMUNICATION",
+      "CE QUI NECESSITE UNE INTERVENTION SAV",
+      "CE QUI PRESENTE UN RISQUE JURIDIQUE"
     ]);
     assert.equal(body.summary.domainSources.every((entry) =>
       entry.domain &&

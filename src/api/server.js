@@ -707,8 +707,16 @@ function createDemoSummary({ status, completedCount, expectedCount, agentResults
       agent === "production" || item.delayRisk || item.topic?.toLowerCase().includes("quality")
     , directory),
     receivables: collectItems(agentResults, ({ agent }) => agent === "finance", directory),
+    commercial: collectItems(agentResults, ({ agent }) => agent === "commercial", directory),
     purchaseNeeds: collectItems(agentResults, ({ agent }) => agent === "purchasing", directory),
     marketingSynthesis: createMarketingSynthesis(agentResults),
+    // Marketing and Community Manager answer the same question for the
+    // Director: what needs to be said, and on which channel.
+    marketingCommunication: collectItems(
+      agentResults,
+      ({ agent }) => agent === "marketing" || agent === "community_manager",
+      directory
+    ),
     legal: collectItems(agentResults, ({ agent }) => agent === "legal", directory),
     hr: collectItems(agentResults, ({ agent }) => agent === "hr", directory),
     afterSales: collectItems(agentResults, ({ agent }) => agent === "after_sales", directory),
@@ -729,6 +737,8 @@ function createDemoSummary({ status, completedCount, expectedCount, agentResults
     monitoring: sections.monitoring,
     delayed: sections.delayed,
     receivables: sections.receivables,
+    commercial: sections.commercial,
+    marketingCommunication: sections.marketingCommunication,
     purchaseNeeds: sections.purchaseNeeds,
     marketingSynthesis: sections.marketingSynthesis,
     legal: sections.legal,
@@ -743,6 +753,9 @@ function createDemoSummary({ status, completedCount, expectedCount, agentResults
   });
 }
 
+// The ten headings CDC section 31 asks the Director to answer with. The six
+// original keys keep their exact wording: renaming them would break callers
+// for no functional gain, and is a decision of its own.
 function createMinimumDirectorSections(sections) {
   return Object.freeze({
     "CE QUI VA BIEN": sections.whatIsGoingWell,
@@ -750,7 +763,11 @@ function createMinimumDirectorSections(sections) {
     "A ENCAISSER": sections.receivables,
     "A COMMANDER": sections.purchaseNeeds,
     "RISQUES / BLOCAGES": sections.blockers,
-    "DECISIONS NECESSAIRES": sections.decisionsRequired
+    "DECISIONS NECESSAIRES": sections.decisionsRequired,
+    "CE QUI NECESSITE UNE ACTION COMMERCIALE": sections.commercial,
+    "CE QUI NECESSITE UNE ACTION MARKETING OU COMMUNICATION": sections.marketingCommunication,
+    "CE QUI NECESSITE UNE INTERVENTION SAV": sections.afterSales,
+    "CE QUI PRESENTE UN RISQUE JURIDIQUE": sections.legal
   });
 }
 

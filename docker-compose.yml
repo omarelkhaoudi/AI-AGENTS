@@ -1,0 +1,41 @@
+# Local PostgreSQL for development and for the opt-in integration tests.
+#
+# This file is tooling only: nothing in the application reads it, and the demo
+# path keeps working without Docker. It exists so the ten PostgreSQL tests can
+# be run reproducibly instead of depending on whatever PostgreSQL each machine
+# happens to have.
+#
+#   docker compose up -d db      start it
+#   docker compose down          stop it, keep the data
+#   docker compose down -v       stop it and drop the data
+#
+# The host port is 5433, not 5432: a PostgreSQL already listening on the
+# default port is common, and colliding with it would be worse than an unusual
+# port. Change POSTGRES_HOST_PORT if 5433 is taken too.
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: ai_agents_db
+    restart: unless-stopped
+    environment:
+      # Development credentials for a throwaway local container. They are not
+      # secrets and must never be reused anywhere else.
+      POSTGRES_USER: ai_agents
+      POSTGRES_PASSWORD: ai_agents_local_dev
+      POSTGRES_DB: ai_agents
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - ai_agents_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Migrations and tests must not start against a database that is still
+      # booting, so the container reports ready only once it accepts queries.
+      test: ["CMD-SHELL", "pg_isready -U ai_agents -d ai_agents"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+volumes:
+  ai_agents_pgdata:

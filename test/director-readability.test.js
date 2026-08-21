@@ -20,8 +20,8 @@ const SECTION_NAMES = Object.freeze([
 // Counts are frozen on purpose: this commit changes how entries read, never how
 // many there are. A count moving here means the rendering changed the selection.
 const SECTION_COUNTS = Object.freeze({
-  "CE QUI VA BIEN": 1,
-  "RETARDS / PROBLEMES": 4,
+  "CE QUI VA BIEN": 2,
+  "RETARDS / PROBLEMES": 2,
   "A ENCAISSER": 2,
   "A COMMANDER": 4,
   "RISQUES / BLOCAGES": 13,

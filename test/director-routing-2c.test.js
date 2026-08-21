@@ -275,7 +275,7 @@ test("a section never reports the same business signal twice", async (t) => {
     assert.equal(new Set(identities).size, identities.length, name);
   }
   assert.equal(body.summary.minimumSections["A ENCAISSER"].length, 2);
-  assert.equal(body.summary.minimumSections["RETARDS / PROBLEMES"].length, 4);
+  assert.equal(body.summary.minimumSections["RETARDS / PROBLEMES"].length, 2);
 });
 
 // Add before replace: deduplication keeps the first occurrence, and steps run
@@ -294,7 +294,9 @@ test("deduplication keeps the historical tool, not the computing one", async (t)
     body.summary.minimumSections["RETARDS / PROBLEMES"]
       .filter((entry) => entry.agent === "production")
       .map((entry) => entry.tool),
-    ["get_delayed_production_orders", "get_delayed_production_orders", "get_delayed_production_orders"]
+    // Only the dangerous order is reported as late now, and the historical
+    // tool is still the one kept by deduplication.
+    ["get_delayed_production_orders"]
   );
 });
 

@@ -687,7 +687,9 @@ function createDirectorHierarchy(agentResults) {
 function createDemoSummary({ status, completedCount, expectedCount, agentResults, decisionsRequired, directory }) {
   const sections = Object.freeze({
     whatIsGoingWell: collectItems(agentResults, ({ item }) =>
-      ["ok", "completed"].includes(item.status) || item.performance === "ok"
+      ["ok", "completed"].includes(item.status) ||
+      item.performance === "ok" ||
+      PRODUCTION_GOING_WELL.includes(item.classification)
     , directory),
     urgent: collectItems(agentResults, ({ item }) =>
       item.urgency === "high" ||
@@ -704,7 +706,9 @@ function createDemoSummary({ status, completedCount, expectedCount, agentResults
       item.delayRisk === "medium"
     , directory),
     delayed: collectItems(agentResults, ({ agent, item }) =>
-      agent === "production" || item.delayRisk || item.topic?.toLowerCase().includes("quality")
+      (agent === "production" && PRODUCTION_LATE.includes(item.classification)) ||
+      item.delayRisk === "high" ||
+      item.topic?.toLowerCase().includes("quality")
     , directory),
     receivables: collectItems(agentResults, ({ agent }) => agent === "finance", directory),
     commercial: collectItems(agentResults, ({ agent }) => agent === "commercial", directory),
@@ -860,6 +864,13 @@ function createMarketingSynthesis(agentResults) {
     summary: "Marketing consolidates demo campaign signals with Community Manager editorial work before reporting to Director."
   });
 }
+
+// CDC section 6 defines four production states, and section 31 sorts them
+// into different headings: an order running on time belongs under what is
+// going well, one to keep an eye on under what may block, and only a
+// dangerous or late one under what is late.
+const PRODUCTION_GOING_WELL = Object.freeze(["ON_TIME"]);
+const PRODUCTION_LATE = Object.freeze(["IN_DANGER", "LATE"]);
 
 // An agent can contribute several steps, so the headline counts distinct
 // agents. Counting steps would claim more agents answered than there are.

@@ -281,6 +281,25 @@ async function orchestrateRequestInTransaction({ requestId, repository, planner,
           agent,
           status: "failed"
         });
+      } else if (!isAwaitingApproval(error)) {
+        // A step that failed used to leave nothing behind: no execution row and
+        // no execution_failed event, so the request reported blockedSteps as a
+        // bare count with no cause attached to any step. A tool refused for a
+        // domain its agent does not hold looked exactly like a tool that was
+        // never planned. The step now records why it stopped, the same way a
+        // step refused by the orchestration policy already did.
+        executions.push(
+          await createBlockedExecution(repository, {
+            request,
+            plan,
+            planStep,
+            agent,
+            status: "blocked",
+            input: plannedStep.input,
+            error: describeStepFailure(error, plannedStep),
+            metadata: { policyDecision }
+          })
+        );
       }
       blockedSteps.push(plannedStep);
       continue;
@@ -367,6 +386,36 @@ async function createValidatedPlan({ planner, request, repository, toolRegistry 
       causeMessage: cause?.message ?? String(cause)
     });
   }
+}
+
+// An approval is not a failure: the step is waiting for a human, the approval
+// flow has already recorded it, and turning that into a blocked execution
+// would change what a sensitive request reports.
+function isAwaitingApproval(error) {
+  return error?.code === "APPROVAL_REQUIRED";
+}
+
+// An allow list, never a copy of error.details: only values the code itself
+// defines reach the audit. error.message is deliberately excluded. It is free
+// text, and redact() masks by key name rather than by content, so a message
+// that happened to carry a connection string or a token would be written
+// through untouched.
+function describeStepFailure(error, plannedStep) {
+  const details = error?.details ?? {};
+  const failure = {
+    code: typeof error?.code === "string" ? error.code : "EXECUTION_FAILED",
+    toolName: plannedStep.toolName ?? null
+  };
+
+  if (Array.isArray(details.missingDomains)) {
+    failure.missingDomains = [...details.missingDomains];
+  }
+  // The permission model's own wording, not the error message.
+  if (typeof details.permissionDecision?.reason === "string") {
+    failure.reason = details.permissionDecision.reason;
+  }
+
+  return Object.freeze(failure);
 }
 
 async function createBlockedExecution(repository, options) {

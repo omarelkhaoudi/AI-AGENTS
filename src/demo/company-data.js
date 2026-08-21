@@ -1,11 +1,26 @@
 export const DEMO_NOTICE = "Demonstration data only. This is not real company data.";
 
+// The demo data set used to carry absolute dates anchored on a fixed
+// operating date, and production lateness was measured against that date
+// rather than against the clock. A real order whose deadline had passed was
+// therefore reported as on time, because it was compared to 2026-08-13.
+//
+// Dates are now offsets from the day the set is built: the demo keeps the
+// same shape whenever it runs, and real data is measured against the real
+// clock instead of inheriting a date that belongs to a fixture.
+export function demoDate(offsetDays) {
+  const day = new Date();
+  day.setUTCHours(0, 0, 0, 0);
+  day.setUTCDate(day.getUTCDate() + offsetDays);
+  return day.toISOString().slice(0, 10);
+}
+
 export function createDemoCompanyData() {
   return Object.freeze({
     company: Object.freeze({
       id: "demo-company",
       name: "Demo Manufacturing Company",
-      operatingDate: "2026-08-13",
+      operatingDate: demoDate(0),
       currency: "MAD"
     }),
     customers: Object.freeze([
@@ -14,7 +29,7 @@ export function createDemoCompanyData() {
         name: "Demo Client Atlas",
         segment: "manufacturing",
         pipelineStage: "deposit_follow_up",
-        lastContactAt: "2026-08-07",
+        lastContactAt: demoDate(-6),
         history: ["quote accepted", "deposit invoice issued", "production started"],
         outstandingBalance: 12000,
         currency: "MAD"
@@ -24,7 +39,7 @@ export function createDemoCompanyData() {
         name: "Demo Client Nova",
         segment: "retail",
         pipelineStage: "balance_collection",
-        lastContactAt: "2026-08-12",
+        lastContactAt: demoDate(-1),
         history: ["order scheduled", "balance invoice issued"],
         outstandingBalance: 8500,
         currency: "MAD"
@@ -71,8 +86,8 @@ export function createDemoCompanyData() {
         status: "issued",
         amount: 12000,
         currency: "MAD",
-        issuedAt: "2026-08-10",
-        dueAt: "2026-08-16",
+        issuedAt: demoDate(-3),
+        dueAt: demoDate(-2),
         linkedPaymentId: "payment-atlas-deposit"
       }),
       Object.freeze({
@@ -82,8 +97,8 @@ export function createDemoCompanyData() {
         status: "issued",
         amount: 8500,
         currency: "MAD",
-        issuedAt: "2026-08-12",
-        dueAt: "2026-08-18",
+        issuedAt: demoDate(-1),
+        dueAt: demoDate(0),
         linkedPaymentId: "payment-nova-balance"
       })
     ]),
@@ -98,7 +113,7 @@ export function createDemoCompanyData() {
         amount: 12000,
         currency: "MAD",
         due: "this_week",
-        expectedPaymentDate: "2026-08-16",
+        expectedPaymentDate: demoDate(-2),
         dueStatus: "overdue",
         receivable: true,
         daysLate: 2,
@@ -115,7 +130,7 @@ export function createDemoCompanyData() {
         amount: 8500,
         currency: "MAD",
         due: "this_week",
-        expectedPaymentDate: "2026-08-18",
+        expectedPaymentDate: demoDate(0),
         dueStatus: "due_today",
         receivable: true,
         daysLate: 0,
@@ -134,7 +149,7 @@ export function createDemoCompanyData() {
         commercialAttention: true,
         attentionReason: "deposit and material dependency",
         missingMaterialId: "material-aluminum-a",
-        due: "2026-08-16"
+        due: demoDate(3)
       }),
       Object.freeze({
         id: "order-nova-002",
@@ -144,7 +159,7 @@ export function createDemoCompanyData() {
         delayRisk: "medium",
         commercialAttention: true,
         attentionReason: "capacity conflict could affect delivery promise",
-        due: "2026-08-19"
+        due: demoDate(6)
       })
     ]),
     production: Object.freeze([
@@ -154,7 +169,7 @@ export function createDemoCompanyData() {
         classification: "IN_DANGER",
         plannedStep: "material_cutting",
         responsible: "demo-production-lead",
-        plannedDate: "2026-08-14",
+        plannedDate: demoDate(1),
         timing: "en danger",
         delayRisk: "high",
         reason: "Demo missing aluminum material",
@@ -168,7 +183,7 @@ export function createDemoCompanyData() {
         classification: "AT_RISK",
         plannedStep: "assembly",
         responsible: "demo-workshop-lead",
-        plannedDate: "2026-08-18",
+        plannedDate: demoDate(5),
         timing: "a surveiller",
         delayRisk: "medium",
         reason: "Demo capacity conflict"
@@ -179,7 +194,7 @@ export function createDemoCompanyData() {
         classification: "ON_TIME",
         plannedStep: "quality_check",
         responsible: "demo-quality-lead",
-        plannedDate: "2026-08-20",
+        plannedDate: demoDate(7),
         timing: "a l'heure",
         delayRisk: "low",
         reason: "Demo order progressing normally"
@@ -239,7 +254,7 @@ export function createDemoCompanyData() {
         label: "Demo attendance review",
         status: "watch",
         priority: "medium",
-        observedAt: "2026-08-18",
+        observedAt: demoDate(5),
         absentToday: false,
         presentToday: true,
         administrativeTask: "verify_weekly_attendance",
@@ -255,8 +270,8 @@ export function createDemoCompanyData() {
         label: "Demo overlapping leave request",
         status: "attention_required",
         priority: "high",
-        observedAt: "2026-08-18",
-        plannedAt: "2026-08-21",
+        observedAt: demoDate(5),
+        plannedAt: demoDate(8),
         leaveType: "annual_leave",
         absenceType: "planned_leave",
         coverageRisk: "high",
@@ -271,7 +286,7 @@ export function createDemoCompanyData() {
         label: "Demo production staffing need",
         status: "open",
         priority: "medium",
-        observedAt: "2026-08-18",
+        observedAt: demoDate(5),
         linkedDepartment: "production",
         neededRole: "Production operator",
         staffingNeed: true,
@@ -287,8 +302,8 @@ export function createDemoCompanyData() {
         label: "Demo HR contract document follow-up",
         status: "watch",
         priority: "medium",
-        observedAt: "2026-08-18",
-        dueAt: "2026-08-28",
+        observedAt: demoDate(5),
+        dueAt: demoDate(15),
         documentStatus: "draft_review",
         requiresDecision: false
       }),
@@ -301,7 +316,7 @@ export function createDemoCompanyData() {
         label: "Demo HR incident follow-up",
         status: "attention_required",
         priority: "high",
-        observedAt: "2026-08-18",
+        observedAt: demoDate(5),
         incidentType: "workplace_follow_up",
         evaluationRequired: true,
         requiresDecision: true,
@@ -316,10 +331,10 @@ export function createDemoCompanyData() {
         caseType: "quality_claim",
         warrantyStatus: "under_warranty",
         interventionStatus: "waiting_internal",
-        appointmentAt: "2026-08-19",
+        appointmentAt: demoDate(6),
         responsible: "demo-after-sales-lead",
-        openedAt: "2026-08-13",
-        dueAt: "2026-08-17",
+        openedAt: demoDate(-5),
+        dueAt: demoDate(-1),
         daysOpen: 5,
         overdue: true,
         urgency: "high",
@@ -338,10 +353,10 @@ export function createDemoCompanyData() {
         caseType: "warranty_follow_up",
         warrantyStatus: "under_warranty",
         interventionStatus: "waiting_customer",
-        appointmentAt: "2026-08-22",
+        appointmentAt: demoDate(9),
         responsible: "demo-support-agent",
-        openedAt: "2026-08-16",
-        dueAt: "2026-08-23",
+        openedAt: demoDate(-2),
+        dueAt: demoDate(5),
         daysOpen: 2,
         overdue: false,
         urgency: "medium",
@@ -358,10 +373,10 @@ export function createDemoCompanyData() {
         caseType: "intervention",
         warrantyStatus: "out_of_warranty",
         interventionStatus: "in_progress",
-        appointmentAt: "2026-08-18",
+        appointmentAt: demoDate(5),
         responsible: "demo-quality-technician",
-        openedAt: "2026-08-12",
-        dueAt: "2026-08-18",
+        openedAt: demoDate(-6),
+        dueAt: demoDate(1),
         daysOpen: 6,
         overdue: false,
         urgency: "critical",
@@ -409,7 +424,7 @@ export function createDemoCompanyData() {
         channel: "Demo LinkedIn Page",
         contentType: "post",
         publicationStatus: "draft",
-        scheduledFor: "2026-08-19",
+        scheduledFor: demoDate(6),
         captionDraft: "Demo caption draft for Q3 packaging campaign.",
         engagementScore: 78,
         messagesAwaitingReply: 2,
@@ -425,7 +440,7 @@ export function createDemoCompanyData() {
         channel: "Demo Editorial Calendar",
         contentType: "calendar",
         publicationStatus: "scheduled",
-        scheduledFor: "2026-08-21",
+        scheduledFor: demoDate(8),
         captionDraft: "Demo weekly content reminder.",
         engagementScore: 65,
         messagesAwaitingReply: 1,
@@ -442,7 +457,7 @@ export function createDemoCompanyData() {
         documentType: "contract",
         customerId: "customer-atlas",
         contractStatus: "renewal_pending",
-        deadline: "2026-08-25",
+        deadline: demoDate(12),
         clause: "delivery commitment and penalty clause",
         commercialTerms: "deposit required before schedule confirmation",
         legalCaseStatus: "open",
@@ -459,7 +474,7 @@ export function createDemoCompanyData() {
         contractId: "contract-compliance-demo",
         documentType: "compliance_note",
         contractStatus: "review_pending",
-        deadline: "2026-08-30",
+        deadline: demoDate(17),
         clause: "standard compliance review",
         commercialTerms: "no binding commitment prepared",
         legalCaseStatus: "watch",
@@ -514,7 +529,7 @@ export function createDemoCompanyData() {
         quantity: 4,
         unit: "sheets",
         status: "available",
-        countedAt: "2026-08-13"
+        countedAt: demoDate(0)
       }),
       Object.freeze({
         id: "stock-packaging-b",
@@ -523,7 +538,7 @@ export function createDemoCompanyData() {
         quantity: 30,
         unit: "units",
         status: "available",
-        countedAt: "2026-08-13"
+        countedAt: demoDate(0)
       })
     ]),
     // Lines stay inside the record data, matching how the repository already
@@ -534,7 +549,7 @@ export function createDemoCompanyData() {
         productId: "product-atlas-panel",
         orderId: "order-atlas-001",
         status: "active",
-        validFrom: "2026-08-01",
+        validFrom: demoDate(-12),
         lines: Object.freeze([
           Object.freeze({
             lineId: "bom-atlas-001-line-1",
@@ -549,7 +564,7 @@ export function createDemoCompanyData() {
         productId: "product-nova-frame",
         orderId: "order-nova-002",
         status: "active",
-        validFrom: "2026-08-01",
+        validFrom: demoDate(-12),
         lines: Object.freeze([
           Object.freeze({
             lineId: "bom-nova-002-line-1",
@@ -825,10 +840,10 @@ export const PRODUCTION_CLASSIFICATION_LABELS = Object.freeze({
   UNKNOWN: "inconnu"
 });
 
-// The demo data set is anchored on a fixed operating date. Lateness is measured
-// against that date rather than the wall clock: otherwise every demo order
-// silently drifts into LATE as real time passes, and the Director would report
-// that everything is late.
+// The operating date of the demo set, which is the day it is built. It is a
+// convenience for fixtures that want to pin a reference explicitly; it is
+// never a default, because a date belonging to a fixture must not decide
+// whether a real order is late.
 export function demoReferenceDate(data = createDemoCompanyData()) {
   return new Date(data.company.operatingDate);
 }
@@ -863,7 +878,7 @@ export function resolveProductionDueDate(record, orders = []) {
 // LATE is derived, never stored: a deadline passed on work that is not finished.
 // It overrides the stored classification. Without a usable deadline the stored
 // value is kept untouched.
-export function classifyProductionRecord(record, { orders = [], referenceDate = demoReferenceDate() } = {}) {
+export function classifyProductionRecord(record, { orders = [], referenceDate = new Date() } = {}) {
   const { dueDate } = resolveProductionDueDate(record, orders);
   const due = parseIsoDate(dueDate);
 
@@ -878,7 +893,7 @@ export function classifyProductionRecord(record, { orders = [], referenceDate = 
 
 export function createProductionSchedule(
   { production = [], orders = [] } = {},
-  { referenceDate = demoReferenceDate() } = {}
+  { referenceDate = new Date() } = {}
 ) {
   return production.map((record) => {
     const due = resolveProductionDueDate(record, orders);

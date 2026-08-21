@@ -9,6 +9,7 @@ import {
   BusinessSourceContractError,
   FutureRealDataBusinessSource,
   BusinessMemoryError,
+  demoDate,
   InMemoryRepository,
   ToolExecutionService,
   assertBusinessSourceContract,
@@ -118,12 +119,13 @@ test("business memory records keep essential relations and dates explicit", () =
 
   assert.equal(quote.relations.customerId, "customer-atlas");
   assert.equal(invoice.relations.orderId, "order-atlas-001");
-  assert.equal(invoice.dates.dueAt, "2026-08-16");
+  // Two days ago: the payment it belongs to states daysLate 2.
+  assert.equal(invoice.dates.dueAt, demoDate(-2));
   assert.equal(payment.relations.invoiceId, "invoice-atlas-deposit");
   assert.equal(production.relations.orderId, "order-atlas-001");
   assert.equal(purchaseNeed.relations.supplierId, "supplier-metal-one");
   assert.equal(hrSignal.relations.employeeId, "employee-demo-002");
-  assert.equal(hrSignal.dates.observedAt, "2026-08-18");
+  assert.equal(hrSignal.dates.observedAt, demoDate(5));
   assert.equal(ticket.relations.customerId, "customer-atlas");
   assert.equal(ticket.dates.resolvedAt, null);
 });

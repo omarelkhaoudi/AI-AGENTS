@@ -44,10 +44,17 @@ test("PostgreSQL persists Request -> Plan -> PlanStep -> Execution -> AuditEvent
 
     assert.equal(result.status, "orchestrated");
     assert.equal(result.plans.length, 1);
-    assert.equal(result.plans[0].steps.length, 1);
-    assert.equal(result.plans[0].steps[0].agentId, "finance");
-    assert.equal(result.executions.length, 1);
-    assert.equal(result.executions[0].status, "completed");
+    // Finance carries its historical tool and its computing one since Lot 2C
+    // commit 3, so this request is two steps, not one.
+    assert.deepEqual(
+      result.plans[0].steps.map((step) => [step.agentId, step.toolName]),
+      [
+        ["finance", "get_pending_payments"],
+        ["finance", "get_receivables_summary"]
+      ]
+    );
+    assert.equal(result.executions.length, 2);
+    assert.equal(result.executions.every((execution) => execution.status === "completed"), true);
     assert.ok(result.auditEvents.some((event) => event.type === "plan_created"));
     assert.ok(result.auditEvents.some((event) => event.type === "execution_completed"));
   } finally {

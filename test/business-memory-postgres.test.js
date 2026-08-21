@@ -91,9 +91,23 @@ test("PostgreSQL business memory persists MVP domains with explicit sources and 
     assert.equal(payment.relations.invoiceId, "test-bm-invoice-001");
     assert.equal(payment.dates.dueAt, "2026-08-20");
 
-    assert.deepEqual(
-      await memory.listBusinessRecords({ domain: "payments", agentId: "finance", source: BUSINESS_DATA_SOURCES.DEMO_MOCK }),
-      []
+    // Source isolation, stated as the property it is rather than as an empty
+    // table. The database also holds seeded demo_mock records, so asserting an
+    // empty list would only be testing that nobody seeded anything.
+    const demoRecords = await memory.listBusinessRecords({
+      domain: "payments",
+      agentId: "finance",
+      source: BUSINESS_DATA_SOURCES.DEMO_MOCK
+    });
+    assert.equal(
+      demoRecords.every((record) => record.source === BUSINESS_DATA_SOURCES.DEMO_MOCK),
+      true,
+      "asking for one source must never return another"
+    );
+    assert.equal(
+      demoRecords.some((record) => record.id.startsWith("test-bm-")),
+      false,
+      "the records this test wrote under future_real_data must not leak into demo_mock"
     );
     await assert.rejects(
       () => memory.listBusinessRecords({ domain: "payments", agentId: "marketing", source }),

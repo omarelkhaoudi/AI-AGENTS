@@ -66,14 +66,18 @@ export function createMvpAgentSeedRecords() {
   }));
 }
 
+// The seed used to keep whatever permissions a stored agent already had, which
+// meant an agent seeded before a lot never received the permissions that lot
+// introduced. PostgreSQL therefore held pre-Lot-1 permissions while the code had
+// moved on, and the Director could execute only the first step of its plan.
+//
+// createMvpAgentPermissions is the source of truth for the least privilege
+// model, frozen by security-no-permission-drift. Anything else stored on an
+// agent row is drift, not customisation, so the seed restores it.
 export async function seedMvpAgents(repository) {
   const seeded = [];
   for (const agent of createMvpAgentSeedRecords()) {
-    const existing = await repository.getAgent(agent.id);
-    seeded.push(await repository.upsertAgent({
-      ...agent,
-      permissions: existing?.permissions?.length ? existing.permissions : agent.permissions
-    }));
+    seeded.push(await repository.upsertAgent(agent));
   }
   return Object.freeze(seeded);
 }

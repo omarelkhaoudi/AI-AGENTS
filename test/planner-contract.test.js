@@ -368,8 +368,12 @@ test("Planner validation works with PostgreSQL through orchestration", {
 
     assert.equal(result.status, "orchestrated");
     assert.equal(result.plans[0].metadata.planner, "deterministic");
-    assert.equal(result.plans[0].steps.length, 8);
-    assert.equal(result.executions.length, 8);
+    // Thirteen steps for nine distinct agents: finance, commercial, production
+    // and purchasing each carry a historical tool then a computing one.
+    assert.equal(result.plans[0].steps.length, 13);
+    assert.equal(new Set(result.plans[0].steps.map((step) => step.agentId)).size, 9);
+    assert.equal(result.executions.length, 13);
+    assert.equal(result.executions.every((execution) => execution.status === "completed"), true);
   } finally {
     if (requestId) {
       await prisma.request.delete({ where: { id: requestId } }).catch(() => undefined);

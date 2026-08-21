@@ -9,8 +9,11 @@ export function createDemoBusinessMemoryRepository(data = createDemoCompanyData(
   });
 }
 
+// Declaration order is the order a reader expects, so it becomes the rank
+// the record carries. Numbering restarts per domain: the rank orders a
+// domain, it is not a global position.
 export function createDemoBusinessRecords(data = createDemoCompanyData()) {
-  return Object.freeze([
+  return rankByDomain([
     ...data.customers.map((customer) => createBusinessRecord({
       id: customer.id,
       domain: "customers",
@@ -221,6 +224,15 @@ export function createDemoBusinessRecords(data = createDemoCompanyData()) {
       metadata: { companyId: data.company.id, draft: true }
     }))
   ]);
+}
+
+function rankByDomain(records) {
+  const nextRank = new Map();
+  return Object.freeze(records.map((record) => {
+    const rank = nextRank.get(record.domain) ?? 0;
+    nextRank.set(record.domain, rank + 1);
+    return createBusinessRecord({ ...record, sequence: rank });
+  }));
 }
 
 function findOrderDueDate(data, orderId) {

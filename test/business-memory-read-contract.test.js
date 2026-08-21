@@ -55,7 +55,21 @@ test("business record contract keeps provider-specific shapes inside data", () =
   });
 
   assert.equal(assertBusinessRecordContract(record), true);
-  assert.deepEqual(Object.keys(record), ["id", "domain", "recordType", "status", "source", "data", "relations", "dates", "metadata"]);
+  // sequence joins the canonical fields: it is the rank that makes the record
+  // order identical whether it comes from memory or from PostgreSQL.
+  assert.deepEqual(Object.keys(record), [
+    "id",
+    "domain",
+    "recordType",
+    "status",
+    "source",
+    "sequence",
+    "data",
+    "relations",
+    "dates",
+    "metadata"
+  ]);
+  assert.equal(record.sequence, null, "a record built without a rank carries none");
   assert.equal(record.id, "record-contract-001");
   assert.equal(record.domain, "purchase_needs");
   assert.equal(record.source, BUSINESS_DATA_SOURCES.FUTURE_REAL_DATA);

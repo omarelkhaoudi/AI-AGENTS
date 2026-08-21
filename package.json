@@ -16,6 +16,7 @@
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
     "db:seed": "node scripts/db-seed.mjs",
+    "db:seed:business": "node scripts/db-seed-business.mjs",
     "auth:create-token": "node scripts/create-api-token.mjs",
     "data:ingest": "node scripts/ingest-business-data.mjs"
   },

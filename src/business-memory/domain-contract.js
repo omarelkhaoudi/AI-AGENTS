@@ -122,6 +122,7 @@ export const BUSINESS_RECORD_CANONICAL_FIELDS = Object.freeze([
   "recordType",
   "status",
   "source",
+  "sequence",
   "data",
   "relations",
   "dates",
@@ -179,6 +180,7 @@ export function createBusinessRecord({
   recordType,
   status = "draft",
   source = BUSINESS_DATA_SOURCES.DEMO_MOCK,
+  sequence = null,
   data,
   relations = {},
   dates = {},
@@ -209,6 +211,7 @@ export function createBusinessRecord({
     recordType,
     status,
     source: normalizeBusinessDataSource(source),
+    sequence: normalizeRecordSequence(sequence),
     data: freezeClone(data ?? {}),
     relations: freezeClone(normalizeKnownFields(relations, BUSINESS_DOMAIN_RELATION_FIELDS[normalizedDomain])),
     dates: freezeClone(normalizeKnownFields(dates, BUSINESS_DOMAIN_DATE_FIELDS[normalizedDomain])),
@@ -247,13 +250,54 @@ export function assertBusinessRecordContract(record) {
   return true;
 }
 
+// Records reach a tool in a defined order, and the Director keeps the first
+// occurrence when it deduplicates a section. That rule only means something
+// if the order is the same everywhere: the in-memory provider returned
+// declaration order while PostgreSQL returned rows sorted by identifier, so
+// the same company produced two different reports. The rank is carried by the
+// record itself, which is the only thing both providers share.
+export function normalizeRecordSequence(sequence) {
+  if (sequence === null || sequence === undefined) {
+    return null;
+  }
+  if (!Number.isInteger(sequence) || sequence < 0) {
+    throw new BusinessMemoryError("Business record sequence must be a non-negative integer or null.", "INVALID_BUSINESS_RECORD", {
+      field: "sequence",
+      sequence
+    });
+  }
+  return sequence;
+}
+
+// A total order, never a partial one: records without a rank still sort
+// deterministically by identifier, and a tie on the rank is broken the same
+// way. Ranked records always come before unranked ones so that adding a rank
+// to part of a domain cannot interleave it unpredictably.
+export function compareBusinessRecords(left, right) {
+  const leftRank = left?.sequence ?? null;
+  const rightRank = right?.sequence ?? null;
+
+  if (leftRank !== rightRank) {
+    if (leftRank === null) {
+      return 1;
+    }
+    if (rightRank === null) {
+      return -1;
+    }
+    return leftRank - rightRank;
+  }
+  return String(left?.id ?? "").localeCompare(String(right?.id ?? ""));
+}
+
 export function filterBusinessRecords(records, { source = null, filters = null } = {}) {
   const normalizedSource = source === null ? null : normalizeBusinessDataSource(source);
-  return Object.freeze(records.filter((record) => {
-    assertBusinessRecordContract(record);
-    return (normalizedSource === null || record.source === normalizedSource) &&
-      matchesBusinessRecordFilters(record, filters);
-  }));
+  return Object.freeze(records
+    .filter((record) => {
+      assertBusinessRecordContract(record);
+      return (normalizedSource === null || record.source === normalizedSource) &&
+        matchesBusinessRecordFilters(record, filters);
+    })
+    .sort(compareBusinessRecords));
 }
 
 export function validateBusinessDomainAccess({ domain, agentId }) {

@@ -192,7 +192,11 @@ test("POST /api/director/requests returns a clean consolidated demo response", a
     "A ENCAISSER",
     "A COMMANDER",
     "RISQUES / BLOCAGES",
-    "DECISIONS NECESSAIRES"
+    "DECISIONS NECESSAIRES",
+    "CE QUI NECESSITE UNE ACTION COMMERCIALE",
+    "CE QUI NECESSITE UNE ACTION MARKETING OU COMMUNICATION",
+    "CE QUI NECESSITE UNE INTERVENTION SAV",
+    "CE QUI PRESENTE UN RISQUE JURIDIQUE"
   ]);
   assert.deepEqual(
     body.summary.domainSources.map((entry) => [entry.agent, entry.domain, entry.dataSource]),
@@ -241,7 +245,11 @@ test("Director handles point sur mon entreprise today as a multi-agent company o
     "A ENCAISSER",
     "A COMMANDER",
     "RISQUES / BLOCAGES",
-    "DECISIONS NECESSAIRES"
+    "DECISIONS NECESSAIRES",
+    "CE QUI NECESSITE UNE ACTION COMMERCIALE",
+    "CE QUI NECESSITE UNE ACTION MARKETING OU COMMUNICATION",
+    "CE QUI NECESSITE UNE INTERVENTION SAV",
+    "CE QUI PRESENTE UN RISQUE JURIDIQUE"
   ]);
   assert.equal(body.summary.domainSources.every((entry) =>
     entry.domain &&

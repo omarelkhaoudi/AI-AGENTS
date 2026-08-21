@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createMvpAgentHierarchy } from "../agents/default-agents.js";
+import { createDemoCompanyData } from "../demo/company-data.js";
 import { seedMvpAgents } from "../agents/seed.js";
 import { loadFoundationConfig } from "../config.js";
 import { PlannerConfigurationError, createPlannerFromConfig } from "../director/planner-factory.js";
@@ -930,6 +931,162 @@ function summarizeResultPriority(result) {
 // production order reaches a section twice. Returns null when the item carries
 // nothing identifying: an item we cannot recognise is never assumed to be a
 // duplicate, it is kept.
+// A section entry used to carry the raw record, so the Director reported
+// "order-atlas-001" where a manager needs "Demo Client Atlas - 12000 MAD - en
+// retard de 2 jours". Everything below only says out loud what the tools
+// already computed: no fragment is produced unless the field is present, and
+// none of it decides anything about the business.
+
+// Built from the business memory rather than from a routed tool: resolving a
+// name is not worth widening any agent scope. Memoized because the directory
+// is read once per response and never changes within one.
+let businessDirectory = null;
+
+function getBusinessDirectory() {
+  if (businessDirectory === null) {
+    const data = createDemoCompanyData();
+    const customerNames = new Map();
+    for (const customer of data.customers ?? []) {
+      if (customer?.id && typeof customer.name === "string" && customer.name.trim() !== "") {
+        customerNames.set(customer.id, customer.name);
+      }
+    }
+    // A production record names its order, and an order names its customer.
+    // Following that existing key is what lets a production entry say whose
+    // order is at risk instead of only quoting an order identifier.
+    const customerIdByOrder = new Map();
+    for (const order of data.orders ?? []) {
+      if (order?.id && typeof order.customerId === "string") {
+        customerIdByOrder.set(order.id, order.customerId);
+      }
+    }
+    businessDirectory = { customerNames, customerIdByOrder };
+  }
+  return businessDirectory;
+}
+
+// A name is reported only when it is actually known. An unresolved customer
+// keeps its identifier rather than being given an invented name. Both routes
+// below share this one rule, so there is a single place where an unknown
+// customer is handled and a single place to get it wrong.
+function customerNameFor(customerId) {
+  if (typeof customerId !== "string") {
+    return null;
+  }
+  return getBusinessDirectory().customerNames.get(customerId) ?? customerId;
+}
+
+function directCustomerName(item) {
+  if (typeof item?.customerName === "string" && item.customerName.trim() !== "") {
+    return item.customerName;
+  }
+  return customerNameFor(item?.customerId);
+}
+
+// Reached only through the order the record names. A material shortage names
+// an order too, but its subject is the material, not whoever ordered it: this
+// is why the indirect route is the last one tried, never the first.
+function customerNameThroughOrder(item) {
+  if (typeof item?.orderId !== "string") {
+    return null;
+  }
+  return customerNameFor(getBusinessDirectory().customerIdByOrder.get(item.orderId) ?? null);
+}
+
+// The human-readable text a tool already produced, most specific first.
+function ownName(item) {
+  for (const field of ["productName", "item", "label", "subject", "topic", "campaign", "supplierName", "channel"]) {
+    const value = item?.[field];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value;
+    }
+  }
+  return null;
+}
+
+function businessSubject(item) {
+  return directCustomerName(item) ?? ownName(item) ?? customerNameThroughOrder(item);
+}
+
+// An amount is always reported with its currency. Amounts are never added up
+// here: one entry is one amount, and summing across currencies would invent
+// money that does not exist.
+function describeAmount(item) {
+  if (typeof item?.amount !== "number" || typeof item?.currency !== "string") {
+    return null;
+  }
+  return `${item.amount} ${item.currency}`;
+}
+
+function describeQuantity(item) {
+  const missing = item?.shortage ?? item?.missingQuantity;
+  if (typeof missing !== "number") {
+    return null;
+  }
+  const unit = typeof item?.unit === "string" && item.unit.trim() !== "" ? ` ${item.unit}` : "";
+  return `manque ${missing}${unit}`;
+}
+
+// Each of these renders one named numeric field as the phrase that field
+// already means. timing and reason are passed through: the tools produce them
+// as readable text already.
+function describeState(item) {
+  const fragments = [];
+  if (typeof item?.timing === "string" && item.timing.trim() !== "") {
+    fragments.push(item.timing);
+  }
+  if (typeof item?.daysLate === "number" && item.daysLate > 0) {
+    fragments.push(`en retard de ${item.daysLate} jour(s)`);
+  } else if (item?.dueStatus === "due_today") {
+    fragments.push("echeance aujourd'hui");
+  }
+  if (typeof item?.noResponseDays === "number" && item.noResponseDays > 0) {
+    fragments.push(`sans reponse depuis ${item.noResponseDays} jour(s)`);
+  }
+  if (typeof item?.daysOpen === "number" && item.daysOpen > 0) {
+    fragments.push(`ouvert depuis ${item.daysOpen} jour(s)`);
+  }
+  return fragments.length > 0 ? fragments.join(", ") : null;
+}
+
+// Last resort only: an item carrying no business information at all is still
+// reported, by its identifier, rather than silently dropped.
+function itemFallbackLabel(item) {
+  for (const field of ["id", "orderId", "lineId"]) {
+    const value = item?.[field];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value;
+    }
+  }
+  return "Signal sans libelle";
+}
+
+// Exported so a structural test can assert the rendering rules directly
+// instead of only through one demo data set.
+export function describeBusinessItem(item) {
+  const subject = businessSubject(item);
+  // When the subject is the customer, the record still has a title of its own:
+  // a legal file says "Demo Client Atlas" and "Demo Contract Renewal", and a
+  // manager needs both. It is skipped when it is already the subject.
+  const title = ownName(item);
+  const fragments = [
+    subject,
+    title === subject ? null : title,
+    describeAmount(item),
+    describeQuantity(item),
+    describeState(item)
+  ].filter((fragment) => fragment !== null);
+
+  if (fragments.length === 0) {
+    return itemFallbackLabel(item);
+  }
+  const reason = typeof item?.reason === "string" && item.reason.trim() !== "" ? item.reason : null;
+  if (reason) {
+    fragments.push(reason);
+  }
+  return fragments.join(" - ");
+}
+
 export function collectedItemIdentity(domain, item) {
   const identity = item?.id ?? item?.lineId ?? item?.orderId ?? item?.subject ?? item?.label;
   if (identity === null || identity === undefined) {
@@ -965,6 +1122,10 @@ function collectItems(agentResults, predicate) {
         dataSource: result.dataSource,
         sourceProvider: result.sourceProvider,
         sourceId: result.sourceId,
+        // What a manager reads. The raw record stays available under item,
+        // and its identifier under reference, so nothing is lost.
+        label: describeBusinessItem(item),
+        reference: itemFallbackLabel(item),
         item
       }));
     }
@@ -997,6 +1158,8 @@ function createBusinessDecisions(agentResults) {
       type: "business_decision",
       agent: entry.agent,
       tool: entry.tool,
+      // The decision names the signal it is about, not only its identifier.
+      label: entry.label,
       itemId: entry.item.id ?? entry.item.orderId ?? entry.item.subject ?? entry.item.label,
       priority: entry.item.urgency ?? entry.item.priority ?? entry.item.delayRisk ?? entry.item.status ?? "attention",
       reason: entry.item.decision ?? "Review this demo signal before acting."

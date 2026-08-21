@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createMvpAgentHierarchy } from "../agents/default-agents.js";
-import { createDemoCompanyData } from "../demo/company-data.js";
+import { createBusinessMemoryRepository } from "../business-memory/repository-factory.js";
 import { seedMvpAgents } from "../agents/seed.js";
 import { loadFoundationConfig } from "../config.js";
 import { PlannerConfigurationError, createPlannerFromConfig } from "../director/planner-factory.js";
@@ -40,11 +40,15 @@ export function buildApi({
   planner = null,
   config = null,
   toolRegistry = null,
-  security = null
+  security = null,
+  businessMemory = null
 } = {}) {
   assertRepositoryContract(repository);
   const foundationConfig = config ?? loadFoundationConfig();
   const selectedPlanner = planner ?? createPlannerFromConfig(foundationConfig.planner);
+  // Same factory as the tools: BUSINESS_MEMORY_PROVIDER moves the reports and
+  // the customer directory to PostgreSQL together, never one without the other.
+  const directoryMemory = businessMemory ?? createBusinessMemoryRepository();
   const securityConfig = security ?? foundationConfig.security ?? createSecurityConfig();
 
   const app = Fastify({ logger, bodyLimit: securityConfig.bodyLimitBytes });
@@ -308,7 +312,8 @@ export function buildApi({
           }
         });
 
-        return reply.code(201).send(createDirectorDemoResponse(orchestratedRequest));
+        const directory = await createBusinessDirectory(directoryMemory);
+        return reply.code(201).send(createDirectorDemoResponse(orchestratedRequest, directory));
       } catch (error) {
         return sendDomainError(reply, "Director request failed.", error);
       }
@@ -534,11 +539,11 @@ async function runSeedOnce({ repository, getSeedPromise, setSeedPromise }) {
   return seedPromise;
 }
 
-function createDirectorDemoResponse(request) {
+function createDirectorDemoResponse(request, directory = EMPTY_BUSINESS_DIRECTORY) {
   const agentResults = createAgentResults(request);
   const completedCount = agentResults.filter((result) => result.status === "completed").length;
   const expectedCount = request.plans?.[0]?.steps?.length ?? agentResults.length;
-  const decisionsRequired = createDecisionsRequired(request, agentResults);
+  const decisionsRequired = createDecisionsRequired(request, agentResults, directory);
   const status = decisionsRequired.length > 0
     ? decisionsRequired.some((decision) => decision.type === "approval") ? "requires_approval" : null
     : null;
@@ -552,7 +557,8 @@ function createDirectorDemoResponse(request) {
     completedCount,
     expectedCount,
     agentResults,
-    decisionsRequired
+    decisionsRequired,
+    directory
   });
 
   return Object.freeze({
@@ -678,46 +684,46 @@ function createDirectorHierarchy(agentResults) {
     }));
 }
 
-function createDemoSummary({ status, completedCount, expectedCount, agentResults, decisionsRequired }) {
+function createDemoSummary({ status, completedCount, expectedCount, agentResults, decisionsRequired, directory }) {
   const sections = Object.freeze({
     whatIsGoingWell: collectItems(agentResults, ({ item }) =>
       ["ok", "completed"].includes(item.status) || item.performance === "ok"
-    ),
+    , directory),
     urgent: collectItems(agentResults, ({ item }) =>
       item.urgency === "high" ||
       item.priority === "high" ||
       item.status === "blocked" ||
       item.status === "attention_required" ||
       item.delayRisk === "high"
-    ),
+    , directory),
     monitoring: collectItems(agentResults, ({ item }) =>
       item.urgency === "medium" ||
       item.priority === "medium" ||
       item.status === "watch" ||
       item.performance === "watch" ||
       item.delayRisk === "medium"
-    ),
+    , directory),
     delayed: collectItems(agentResults, ({ agent, item }) =>
       agent === "production" || item.delayRisk || item.topic?.toLowerCase().includes("quality")
-    ),
-    receivables: collectItems(agentResults, ({ agent }) => agent === "finance"),
-    purchaseNeeds: collectItems(agentResults, ({ agent }) => agent === "purchasing"),
+    , directory),
+    receivables: collectItems(agentResults, ({ agent }) => agent === "finance", directory),
+    purchaseNeeds: collectItems(agentResults, ({ agent }) => agent === "purchasing", directory),
     marketingSynthesis: createMarketingSynthesis(agentResults),
-    legal: collectItems(agentResults, ({ agent }) => agent === "legal"),
-    hr: collectItems(agentResults, ({ agent }) => agent === "hr"),
-    afterSales: collectItems(agentResults, ({ agent }) => agent === "after_sales"),
+    legal: collectItems(agentResults, ({ agent }) => agent === "legal", directory),
+    hr: collectItems(agentResults, ({ agent }) => agent === "hr", directory),
+    afterSales: collectItems(agentResults, ({ agent }) => agent === "after_sales", directory),
     blockers: collectItems(agentResults, ({ item }) =>
       ["high", "watch", "blocked", "attention_required"].includes(item.urgency) ||
       ["high", "watch", "blocked", "attention_required"].includes(item.status) ||
       item.priority === "high" ||
       item.delayRisk === "high"
-    ),
+    , directory),
     decisionsRequired
   });
   const minimumSections = createMinimumDirectorSections(sections);
 
   return Object.freeze({
-    headline: createSummaryHeadline({ status, completedCount, expectedCount, agentResults, decisionsRequired }),
+    headline: createSummaryHeadline({ status, completedCount, expectedCount, agentResults, decisionsRequired, directory }),
     whatIsGoingWell: sections.whatIsGoingWell,
     urgent: sections.urgent,
     monitoring: sections.monitoring,
@@ -840,7 +846,7 @@ function createMarketingSynthesis(agentResults) {
 
 // An agent can contribute several steps, so the headline counts distinct
 // agents. Counting steps would claim more agents answered than there are.
-function createSummaryHeadline({ status, completedCount, expectedCount, agentResults, decisionsRequired }) {
+function createSummaryHeadline({ status, completedCount, expectedCount, agentResults, decisionsRequired, directory }) {
   const unavailableAgents = [...new Set(agentResults
     .filter((result) => result.status !== "completed")
     .map((result) => result.agent))];
@@ -848,7 +854,7 @@ function createSummaryHeadline({ status, completedCount, expectedCount, agentRes
     .filter((result) => result.status === "completed")
     .map((result) => result.agent)).size;
   const solicitedAgents = new Set(agentResults.map((result) => result.agent)).size;
-  const highPriorityCount = countHighPrioritySignals(agentResults);
+  const highPriorityCount = countHighPrioritySignals(agentResults, directory);
 
   if (status === "requires_approval") {
     return `Action prepared. ${decisionsRequired.length} human approval decision(s) required before execution.`;
@@ -859,14 +865,14 @@ function createSummaryHeadline({ status, completedCount, expectedCount, agentRes
   return `Point complete: ${respondingAgents}/${solicitedAgents} agents responded with ${highPriorityCount} high-priority demo signal(s).`;
 }
 
-function countHighPrioritySignals(agentResults) {
+function countHighPrioritySignals(agentResults, directory) {
   return collectItems(agentResults, ({ item }) =>
     item.urgency === "high" ||
     item.priority === "high" ||
     item.status === "blocked" ||
     item.status === "attention_required" ||
     item.delayRisk === "high"
-  ).length;
+  , directory).length;
 }
 
 function createDemoFindings(agentResults) {
@@ -937,60 +943,73 @@ function summarizeResultPriority(result) {
 // already computed: no fragment is produced unless the field is present, and
 // none of it decides anything about the business.
 
-// Built from the business memory rather than from a routed tool: resolving a
-// name is not worth widening any agent scope. Memoized because the directory
-// is read once per response and never changes within one.
-let businessDirectory = null;
+// The directory used to be built from the demo data set and cached for the
+// life of the process. Reading PostgreSQL then changed nothing: the Director
+// kept naming demo customers next to real amounts, which is worse than naming
+// none. It is now a value the caller reads from the business memory and hands
+// in, and the default is empty on purpose: a caller that supplies no directory
+// gets identifiers, never a name from somewhere else.
+export const EMPTY_BUSINESS_DIRECTORY = Object.freeze({
+  customerNames: new Map(),
+  customerIdByOrder: new Map()
+});
 
-function getBusinessDirectory() {
-  if (businessDirectory === null) {
-    const data = createDemoCompanyData();
-    const customerNames = new Map();
-    for (const customer of data.customers ?? []) {
-      if (customer?.id && typeof customer.name === "string" && customer.name.trim() !== "") {
-        customerNames.set(customer.id, customer.name);
-      }
-    }
-    // A production record names its order, and an order names its customer.
-    // Following that existing key is what lets a production entry say whose
-    // order is at risk instead of only quoting an order identifier.
-    const customerIdByOrder = new Map();
-    for (const order of data.orders ?? []) {
-      if (order?.id && typeof order.customerId === "string") {
-        customerIdByOrder.set(order.id, order.customerId);
-      }
-    }
-    businessDirectory = { customerNames, customerIdByOrder };
+// Reads only what naming a customer needs, as the Director, which already
+// holds both domains. No agent scope is widened to build it.
+export async function createBusinessDirectory(businessMemory) {
+  if (!businessMemory || typeof businessMemory.listBusinessRecords !== "function") {
+    return EMPTY_BUSINESS_DIRECTORY;
   }
-  return businessDirectory;
+
+  const customerNames = new Map();
+  const customerIdByOrder = new Map();
+
+  for (const record of await businessMemory.listBusinessRecords({ domain: "customers", agentId: "director" })) {
+    const name = record?.data?.name;
+    if (record?.id && typeof name === "string" && name.trim() !== "") {
+      customerNames.set(record.id, name);
+    }
+  }
+
+  // A production record names its order, and an order names its customer.
+  // Following that existing key is what lets a production entry say whose
+  // order is at risk instead of only quoting an order identifier.
+  for (const record of await businessMemory.listBusinessRecords({ domain: "orders", agentId: "director" })) {
+    const customerId = record?.data?.customerId ?? record?.relations?.customerId;
+    if (record?.id && typeof customerId === "string") {
+      customerIdByOrder.set(record.id, customerId);
+    }
+  }
+
+  return Object.freeze({ customerNames, customerIdByOrder });
 }
 
 // A name is reported only when it is actually known. An unresolved customer
 // keeps its identifier rather than being given an invented name. Both routes
 // below share this one rule, so there is a single place where an unknown
 // customer is handled and a single place to get it wrong.
-function customerNameFor(customerId) {
+function customerNameFor(customerId, directory) {
   if (typeof customerId !== "string") {
     return null;
   }
-  return getBusinessDirectory().customerNames.get(customerId) ?? customerId;
+  return directory.customerNames.get(customerId) ?? customerId;
 }
 
-function directCustomerName(item) {
+function directCustomerName(item, directory) {
   if (typeof item?.customerName === "string" && item.customerName.trim() !== "") {
     return item.customerName;
   }
-  return customerNameFor(item?.customerId);
+  return customerNameFor(item?.customerId, directory);
 }
 
 // Reached only through the order the record names. A material shortage names
 // an order too, but its subject is the material, not whoever ordered it: this
 // is why the indirect route is the last one tried, never the first.
-function customerNameThroughOrder(item) {
+function customerNameThroughOrder(item, directory) {
   if (typeof item?.orderId !== "string") {
     return null;
   }
-  return customerNameFor(getBusinessDirectory().customerIdByOrder.get(item.orderId) ?? null);
+  return customerNameFor(directory.customerIdByOrder.get(item.orderId) ?? null, directory);
 }
 
 // The human-readable text a tool already produced, most specific first.
@@ -1004,8 +1023,8 @@ function ownName(item) {
   return null;
 }
 
-function businessSubject(item) {
-  return directCustomerName(item) ?? ownName(item) ?? customerNameThroughOrder(item);
+function businessSubject(item, directory) {
+  return directCustomerName(item, directory) ?? ownName(item) ?? customerNameThroughOrder(item, directory);
 }
 
 // An amount is always reported with its currency. Amounts are never added up
@@ -1063,8 +1082,8 @@ function itemFallbackLabel(item) {
 
 // Exported so a structural test can assert the rendering rules directly
 // instead of only through one demo data set.
-export function describeBusinessItem(item) {
-  const subject = businessSubject(item);
+export function describeBusinessItem(item, directory = EMPTY_BUSINESS_DIRECTORY) {
+  const subject = businessSubject(item, directory);
   // When the subject is the customer, the record still has a title of its own:
   // a legal file says "Demo Client Atlas" and "Demo Contract Renewal", and a
   // manager needs both. It is skipped when it is already the subject.
@@ -1099,7 +1118,7 @@ export function collectedItemIdentity(domain, item) {
 
 // The first occurrence wins, and steps run in plan order with the historical
 // tool first: what the Director already reported stays what it reports.
-function collectItems(agentResults, predicate) {
+function collectItems(agentResults, predicate, directory = EMPTY_BUSINESS_DIRECTORY) {
   const collected = [];
   const seen = new Set();
   for (const result of agentResults) {
@@ -1124,7 +1143,7 @@ function collectItems(agentResults, predicate) {
         sourceId: result.sourceId,
         // What a manager reads. The raw record stays available under item,
         // and its identifier under reference, so nothing is lost.
-        label: describeBusinessItem(item),
+        label: describeBusinessItem(item, directory),
         reference: itemFallbackLabel(item),
         item
       }));
@@ -1133,10 +1152,10 @@ function collectItems(agentResults, predicate) {
   return collected;
 }
 
-function createDecisionsRequired(request, agentResults = []) {
+function createDecisionsRequired(request, agentResults = [], directory = EMPTY_BUSINESS_DIRECTORY) {
   return [
     ...createApprovalDecisions(request),
-    ...createBusinessDecisions(agentResults)
+    ...createBusinessDecisions(agentResults, directory)
   ];
 }
 
@@ -1152,8 +1171,8 @@ function createApprovalDecisions(request) {
   }));
 }
 
-function createBusinessDecisions(agentResults) {
-  return collectItems(agentResults, ({ item }) => item.requiresDecision === true)
+function createBusinessDecisions(agentResults, directory) {
+  return collectItems(agentResults, ({ item }) => item.requiresDecision === true, directory)
     .map((entry) => Object.freeze({
       type: "business_decision",
       agent: entry.agent,

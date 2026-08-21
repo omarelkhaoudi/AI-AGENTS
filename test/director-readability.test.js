@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AGENT_SECURITY_DOMAINS,
+  EMPTY_BUSINESS_DIRECTORY,
   InMemoryRepository,
   describeBusinessItem
 } from "../src/index.js";
@@ -25,6 +26,14 @@ const SECTION_COUNTS = Object.freeze({
   "A COMMANDER": 4,
   "RISQUES / BLOCAGES": 13,
   "DECISIONS NECESSAIRES": 11
+});
+
+// The directory a caller hands to describeBusinessItem. These tests are about
+// what the rendering does WITH one, so they state theirs rather than relying on
+// a data set the API layer no longer knows.
+const DIRECTORY = Object.freeze({
+  customerNames: new Map([["customer-atlas", "Demo Client Atlas"]]),
+  customerIdByOrder: new Map([["order-atlas-001", "customer-atlas"]])
 });
 
 // A technical identifier is a slug the demo data uses as a key. None of them
@@ -115,39 +124,57 @@ test("an amount is never rendered without its currency, and never summed", () =>
   assert.equal(first.includes("300"), false, "two currencies are never merged");
 });
 
-test("a customer identifier is resolved to the customer name", () => {
+test("a customer identifier is resolved through the directory it is given", () => {
   assert.equal(
-    describeBusinessItem({ id: "payment-x", customerId: "customer-atlas", amount: 1, currency: "MAD" }),
+    describeBusinessItem({ id: "payment-x", customerId: "customer-atlas", amount: 1, currency: "MAD" }, DIRECTORY),
     "Demo Client Atlas - 1 MAD"
   );
   // A name carried by the record itself wins over the directory.
   assert.equal(
-    describeBusinessItem({ id: "x", customerId: "customer-atlas", customerName: "Nom porte" }),
+    describeBusinessItem({ id: "x", customerId: "customer-atlas", customerName: "Nom porte" }, DIRECTORY),
     "Nom porte"
   );
+});
+
+// The default is empty on purpose. The directory used to be built from the
+// demo data set and cached for the whole process, so reading PostgreSQL
+// changed nothing and the Director named demo customers next to real amounts.
+// A caller that supplies no directory must get identifiers, never a name that
+// came from somewhere else.
+test("no directory means no name, never a name from elsewhere", () => {
+  assert.equal(
+    describeBusinessItem({ id: "payment-x", customerId: "customer-atlas", amount: 1, currency: "MAD" }),
+    "customer-atlas - 1 MAD"
+  );
+  assert.equal(
+    describeBusinessItem({ orderId: "order-atlas-001", timing: "en danger" }),
+    "en danger"
+  );
+  assert.equal(EMPTY_BUSINESS_DIRECTORY.customerNames.size, 0);
+  assert.equal(EMPTY_BUSINESS_DIRECTORY.customerIdByOrder.size, 0);
 });
 
 // A production record names an order, and an order names its customer.
 test("a customer is resolved through the order when the record names no customer", () => {
   assert.equal(
-    describeBusinessItem({ orderId: "order-atlas-001", timing: "en danger" }),
+    describeBusinessItem({ orderId: "order-atlas-001", timing: "en danger" }, DIRECTORY),
     "Demo Client Atlas - en danger"
   );
   // The indirect route never wins over the record's own subject: a material
   // shortage names an order, but its subject is the material.
   assert.equal(
-    describeBusinessItem({ orderId: "order-atlas-001", productName: "Tole", shortage: 20, unit: "sheets" }),
+    describeBusinessItem({ orderId: "order-atlas-001", productName: "Tole", shortage: 20, unit: "sheets" }, DIRECTORY),
     "Tole - manque 20 sheets"
   );
 });
 
 test("an unknown customer keeps its identifier instead of being given a name", () => {
   assert.equal(
-    describeBusinessItem({ id: "payment-x", customerId: "customer-ghost", amount: 5, currency: "MAD" }),
+    describeBusinessItem({ id: "payment-x", customerId: "customer-ghost", amount: 5, currency: "MAD" }, DIRECTORY),
     "customer-ghost - 5 MAD"
   );
   // An order that resolves to nothing invents neither an order nor a customer.
-  assert.equal(describeBusinessItem({ orderId: "order-ghost", timing: "en danger" }), "en danger");
+  assert.equal(describeBusinessItem({ orderId: "order-ghost", timing: "en danger" }, DIRECTORY), "en danger");
 });
 
 test("an item carrying nothing readable falls back to its identifier, never to undefined", () => {

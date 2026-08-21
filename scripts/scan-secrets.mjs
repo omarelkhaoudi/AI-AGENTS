@@ -111,6 +111,9 @@ export const SCANNED_EXTRA_FILES = Object.freeze([
   "package.json",
   "package-lock.json",
   ".env.example",
+  // Carries local database credentials, so it is scanned like any other file
+  // that could grow a real one.
+  "docker-compose.yml",
   "prisma/schema.prisma",
   "docs/AI_AGENTS_FOUNDATION_ARCHITECTURE.md",
   "docs/AGENT-MVP-BOUNDARIES.md",

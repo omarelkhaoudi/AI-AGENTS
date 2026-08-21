@@ -185,18 +185,26 @@ export function getDomainModelConfig(domain) {
 
 function toBusinessRecord(domain, saved) {
   const config = getDomainModelConfig(domain);
+  const { sequence, metadata } = splitStoredMetadata(saved.metadata);
   return createBusinessRecord({
     id: saved.businessId,
     domain,
     recordType: config.recordType,
     status: saved.status,
     source: saved.source,
+    sequence,
     data: saved.data,
     relations: createRelations(domain, saved),
     dates: createDates(domain, saved),
-    metadata: saved.metadata ?? {}
+    metadata
   });
 }
+
+// No column carries the rank, so it travels inside the metadata JSON that
+// every business model already has. toBusinessRecord lifts it back to the
+// canonical field and removes it from metadata, so a record read from
+// PostgreSQL is indistinguishable from the same record held in memory.
+const SEQUENCE_METADATA_KEY = "__sequence";
 
 function baseData(record, extra = {}) {
   return {
@@ -204,9 +212,19 @@ function baseData(record, extra = {}) {
     source: record.source,
     status: record.status,
     data: record.data,
-    metadata: record.metadata,
+    metadata: record.sequence === null
+      ? record.metadata
+      : { ...record.metadata, [SEQUENCE_METADATA_KEY]: record.sequence },
     ...extra
   };
+}
+
+function splitStoredMetadata(stored) {
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
+    return { sequence: null, metadata: {} };
+  }
+  const { [SEQUENCE_METADATA_KEY]: sequence, ...metadata } = stored;
+  return { sequence: Number.isInteger(sequence) ? sequence : null, metadata };
 }
 
 function customerData(record) {

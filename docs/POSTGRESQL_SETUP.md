@@ -5,7 +5,7 @@ Prisma 7 uses the official `@prisma/adapter-pg` driver adapter for runtime datab
 
 PostgreSQL is optional. The application runs fully offline on the in-memory
 business memory, which is the default. You need a database for two things:
-durable persistence, and running the ten integration tests that are skipped
+durable persistence, and running the integration tests that are skipped
 without one.
 
 ## Option A — Docker (recommended)
@@ -122,10 +122,12 @@ external connection is enabled anywhere in this repository.
 
 ## Integration tests
 
-Ten tests are skipped unless PostgreSQL is available. They cover the request
-persistence chain, the approval flow, the planner through orchestration, the
-tool adapter layer, the business memory domains, and three security guarantees
-including the one stating that only the hash of an API token is ever stored.
+Thirteen tests are skipped unless PostgreSQL is available. They cover the
+request persistence chain, the approval flow, the planner through
+orchestration, the tool adapter layer, the business memory domains, the
+equivalence between the in-memory and PostgreSQL reports, and three security
+guarantees including the one stating that only the hash of an API token is
+ever stored.
 
 Set both variables before running the suite:
 
@@ -135,12 +137,18 @@ $env:DATABASE_URL="postgresql://ai_agents:ai_agents_local_dev@localhost:5433/ai_
 npm test
 ```
 
-Without both, the suite still passes and reports those ten as skipped.
+Without both, the suite still passes and reports those thirteen as skipped.
 
 ## Notes
 
 - Docker is not required. Option B remains fully supported.
 - The agent seed is idempotent and can be run multiple times without creating
-  duplicate agents.
+  duplicate agents. It rewrites agent permissions from the model on every run,
+  so a row that has drifted is restored.
+- The demo business records carry dates relative to the day they are built, so
+  that a real order is measured against the real clock rather than against a
+  date belonging to a fixture. A snapshot seeded yesterday therefore ages:
+  re-run `npm run db:seed:business -- --apply` to refresh it, otherwise the
+  PostgreSQL report and the in-memory one drift apart.
 - The `.env` file is git-ignored; `.env.example` is the only committed copy and
   contains no real values.

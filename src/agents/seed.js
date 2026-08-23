@@ -17,7 +17,13 @@ const AGENT_ROLES = Object.freeze({
 
 // Agents allowed to prepare a sensitive action for human approval. Every other
 // agent is read/analyze only: it can never bring a sensitive action into being.
-export const SENSITIVE_PREPARATION_AGENT_IDS = Object.freeze(["finance", "hr", "legal"]);
+// production joins the list for notify_delay_alert. What this actually grants
+// is prepare_action on request:*, which is what lets evaluateActionPolicy return
+// prepare_only instead of denied, so the call reaches the approval mechanism
+// rather than being refused before an approval can exist. The domain scoped
+// prepare_action rows it also produces grant nothing new: the domain check is
+// kind agnostic and read_analyze already covers those same domains.
+export const SENSITIVE_PREPARATION_AGENT_IDS = Object.freeze(["finance", "hr", "legal", "production"]);
 
 // Minimum necessary access: the request scope lets an agent take part in an
 // orchestration, and the domain scopes bound it to its own business perimeter.

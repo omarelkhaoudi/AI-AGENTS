@@ -24,7 +24,12 @@ export const TOOL_SECURITY_DOMAINS = Object.freeze({
   get_material_requirements: Object.freeze(["orders", "bills_of_material", "stock", "products"]),
   execute_invoice_payment: Object.freeze(["payments"]),
   prepare_hr_sensitive_decision: Object.freeze(["hr"]),
-  prepare_legal_sensitive_decision: Object.freeze(["legal"])
+  prepare_legal_sensitive_decision: Object.freeze(["legal"]),
+  // The delay alert carries production and order data out of the company, so it
+  // is scoped to both, plus external_notifications. That third domain exists
+  // only to make "may send data outside" a grant of its own: revoking it stops
+  // every outbound tool for an agent without touching what the agent may read.
+  notify_delay_alert: Object.freeze(["production", "orders", "external_notifications"])
 });
 
 // Least privilege: each of the ten agents is scoped to the domains its own
@@ -34,7 +39,7 @@ export const AGENT_SECURITY_DOMAINS = Object.freeze({
   director: Object.freeze(["company_overview"]),
   commercial: Object.freeze(["quotes", "customers", "orders"]),
   finance: Object.freeze(["company_overview", "payments", "customers", "invoices"]),
-  production: Object.freeze(["production", "orders"]),
+  production: Object.freeze(["production", "orders", "external_notifications"]),
   purchasing: Object.freeze(["purchase_needs", "suppliers", "orders", "bills_of_material", "stock", "products"]),
   hr: Object.freeze(["hr"]),
   after_sales: Object.freeze(["after_sales"]),

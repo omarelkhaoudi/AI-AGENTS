@@ -1,4 +1,5 @@
 import { createMockToolAdapter } from "./adapters/mock-adapter.js";
+import { createN8nToolAdapter } from "./adapters/n8n-adapter.js";
 import { ToolAdapterError } from "./adapters/contract.js";
 import { createToolDefinition, createToolInputSchema } from "./contract.js";
 import { ToolRegistry } from "./registry.js";
@@ -234,7 +235,11 @@ export function createMvpTools({ businessMemory = createBusinessMemoryRepository
   ]);
 }
 
-export function createMvpToolRegistry({ repository = null, businessMemory = createBusinessMemoryRepository() } = {}) {
+export function createMvpToolRegistry({
+  repository = null,
+  businessMemory = createBusinessMemoryRepository(),
+  workflowClient = null
+} = {}) {
   const registry = new ToolRegistry({ repository });
   for (const tool of createMvpTools({ businessMemory })) {
     registry.register(tool);
@@ -242,7 +247,52 @@ export function createMvpToolRegistry({ repository = null, businessMemory = crea
   registry.register(createSensitiveInvoicePaymentTool());
   registry.register(createSensitiveHrDecisionTool());
   registry.register(createSensitiveLegalDecisionTool());
+
+  // The only tool that leaves the company, and the only conditional one. With no
+  // client there is nothing to call, so it is left unregistered rather than
+  // registered and broken: the default registry stays exactly what it was.
+  if (workflowClient) {
+    registry.register(createDelayAlertNotificationTool(workflowClient));
+  }
+
   return registry;
+}
+
+// The delay_alert workflow declares orderId and delayRisk as its inputs, so the
+// tool requires them too. Asking for them here means a missing field is refused
+// by the registry, before the adapter builds anything.
+const delayAlertInputSchema = createToolInputSchema({
+  required: ["requestId", "orderId", "delayRisk"],
+  properties: {
+    requestId: { type: "string" },
+    orderId: { type: "string" },
+    delayRisk: { type: "string" }
+  }
+});
+
+// execute_action, not read_analyze: this sends a message to the outside world.
+// The consequence is deliberate. requiresApproval() in ToolExecutionService
+// treats every non read_analyze tool as needing a human approval, so no alert
+// can leave without one, and an approval cannot be spent twice.
+function createDelayAlertNotificationTool(client) {
+  const id = "notify_delay_alert";
+  return createToolDefinition({
+    id,
+    name: "Notify Delay Alert",
+    description: "Sends a production delay alert to the n8n delay_alert workflow. It leaves the company, so it always requires a human approval.",
+    category: "production",
+    securityDomains: toolSecurityDomains(id),
+    requiredPermission: "execute_action",
+    allowedAgents: ["production"],
+    inputSchema: delayAlertInputSchema,
+    adapter: createN8nToolAdapter({
+      toolId: id,
+      eventType: "delay_alert",
+      inputSchema: delayAlertInputSchema,
+      client,
+      metadata: { category: "production" }
+    })
+  });
 }
 
 function createDemoResult(context, items, descriptor = createBusinessDataSourceDescriptor({

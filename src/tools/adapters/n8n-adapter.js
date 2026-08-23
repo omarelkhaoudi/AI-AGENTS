@@ -1,7 +1,7 @@
 import { validateToolInput } from "../contract.js";
 import { ToolAdapterError, createToolAdapter } from "./contract.js";
 import { WorkflowBoundaryError } from "../../integrations/workflow-boundary.js";
-import { WORKFLOW_EVENT_TYPES, createWorkflowEvent } from "../../workflows/contract.js";
+import { WORKFLOW_EVENT_TYPES, createWorkflowEvent, validateWorkflowEvent } from "../../workflows/contract.js";
 
 // The adapter reimplements no control. It is an ordinary tool adapter, of the
 // same contract as the mock one, so reaching it means having passed everything
@@ -61,6 +61,20 @@ export function createN8nToolAdapter({ toolId, eventType, inputSchema, client, m
         payload: { ...input },
         metadata: { toolId, ...metadata }
       });
+
+      // createWorkflowEvent only checks the envelope. The workflow contract also
+      // says which agents may raise this event and which payload fields it must
+      // carry, and neither is verified anywhere else on this path. Checking it
+      // here means a malformed or unauthorized event never leaves the building.
+      try {
+        validateWorkflowEvent(event);
+      } catch (cause) {
+        throw new ToolAdapterError(
+          "The workflow event does not satisfy its contract.",
+          "N8N_WORKFLOW_EVENT_INVALID",
+          { toolId, eventType, correlationId, contractCode: cause?.code ?? null }
+        );
+      }
 
       let result;
       try {

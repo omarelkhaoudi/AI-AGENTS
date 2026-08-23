@@ -55,6 +55,7 @@ export * from "./sop/in-memory-sop-repository.js";
 export * from "./tools/adapters/contract.js";
 export * from "./tools/adapters/mock-adapter.js";
 export * from "./tools/adapters/n8n-interface.js";
+export * from "./tools/adapters/n8n-adapter.js";
 export * from "./tools/contract.js";
 export * from "./tools/execution-service.js";
 export * from "./tools/mvp-tools.js";

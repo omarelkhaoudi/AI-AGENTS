@@ -96,7 +96,11 @@ test("the application starts with the workflow boundary enabled", () => {
     NODE_ENV: "test",
     WORKFLOW_PROVIDER: "n8n",
     WORKFLOW_BASE_URL: N8N_BASE_URL,
-    WORKFLOW_ENABLED: "true"
+    WORKFLOW_ENABLED: "true",
+    // Enabling n8n also requires its own settings, checked by createN8nConfig.
+    N8N_WEBHOOK_PATH: "delay-alert",
+    N8N_API_KEY_HEADER: "X-AI-Agents-Token",
+    N8N_API_KEY: "token-de-test"
   });
 
   assert.equal(config.workflow.provider, "n8n");

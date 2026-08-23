@@ -177,29 +177,46 @@ test("misconfigured providers and incompatible records are rejected before tool 
   );
 });
 
-test("n8n remains a prepared offline contract and cannot be activated by configuration", () => {
+// The n8n boundary used to refuse every activation, which meant the whole
+// application failed to start with WORKFLOW_ENABLED=true. It can be activated
+// now, deliberately and with somewhere to call. What has not changed is that
+// activating the configuration connects nothing: no adapter exists, and the
+// tool adapter interface stays offline.
+test("the n8n boundary is off by default and activates only deliberately", () => {
   const defaultConfig = createWorkflowConfig();
-  const n8nConfig = createWorkflowConfig({
+  const preparedConfig = createWorkflowConfig({
     provider: "n8n",
     baseUrl: "http://localhost:5678"
   });
 
   assert.equal(defaultConfig.provider, "mock");
+  assert.equal(defaultConfig.enabled, false);
   assert.equal(defaultConfig.externalConnectionsEnabled, false);
-  assert.equal(n8nConfig.status, "contract_prepared_not_connected");
-  assert.equal(n8nConfig.enabled, false);
-  assert.equal(n8nConfig.externalConnectionsEnabled, false);
+  assert.equal(preparedConfig.status, "contract_prepared_not_connected");
+  assert.equal(preparedConfig.enabled, false);
+  assert.equal(preparedConfig.externalConnectionsEnabled, false);
+
+  const enabledConfig = createWorkflowConfig({
+    provider: "n8n",
+    baseUrl: "http://localhost:5678",
+    enabled: true
+  });
+
+  assert.equal(enabledConfig.enabled, true);
+  assert.equal(enabledConfig.externalConnectionsEnabled, true);
+  // Enabled is not connected: nothing has been reached yet.
+  assert.equal(enabledConfig.status, "enabled_not_verified");
+
+  // The adapter is what would actually call n8n, and it does not exist.
   assert.equal(N8N_TOOL_ADAPTER_INTERFACE.externalConnectionsEnabled, false);
   assert.equal(N8N_TOOL_ADAPTER_INTERFACE.webhookEnabled, false);
+
+  // Enabling n8n without somewhere to call is a configuration mistake.
   assert.throws(
-    () => createWorkflowConfig({
-      provider: "n8n",
-      baseUrl: "http://localhost:5678",
-      enabled: true
-    }),
+    () => createWorkflowConfig({ provider: "n8n", enabled: true }),
     (error) =>
       error instanceof WorkflowBoundaryError &&
-      error.code === "WORKFLOW_EXTERNAL_CONNECTION_FORBIDDEN"
+      error.code === "WORKFLOW_BASE_URL_REQUIRED"
   );
 });
 

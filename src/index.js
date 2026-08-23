@@ -29,6 +29,7 @@ export * from "./integrations/ai-provider.js";
 export * from "./integrations/business-integration-contract.js";
 export * from "./integrations/workflow-boundary.js";
 export * from "./integrations/n8n-config.js";
+export * from "./integrations/n8n-client.js";
 export * from "./llm/mock-provider.js";
 export * from "./llm/openai-provider.js";
 export * from "./llm/provider-contract.js";

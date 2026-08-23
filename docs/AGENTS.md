@@ -69,7 +69,8 @@ does not route: it orchestrates, it does not execute.
 - **Authorized** — read_analyze, prepare_action · **Needs approval** — execute_action
 - **Sensitivity** — medium
 - **Tools (3)** — `get_delayed_production_orders`, `get_customer_orders`, `get_production_schedule`
-- **Security domains** — production, orders
+- **Conditional tool** — `notify_delay_alert` is registered only when an n8n workflow client is injected. It is the one tool that leaves the company, it is not routed by the planner, and it requires a human approval on every call.
+- **Security domains** — production, orders, external_notifications
 
 ### purchasing — Achats
 - **Mission** — Identify purchase needs and prepare procurement recommendations.

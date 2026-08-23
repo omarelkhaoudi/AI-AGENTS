@@ -225,7 +225,9 @@ test("no agent scope moved to make the sections readable", () => {
     "customers",
     "invoices"
   ]);
-  assert.deepEqual([...AGENT_SECURITY_DOMAINS.production], ["production", "orders"]);
+  // Lot 5 adds external_notifications for notify_delay_alert. It grants no new
+  // read: it is the separate, revocable right to send data out of the company.
+  assert.deepEqual([...AGENT_SECURITY_DOMAINS.production], ["production", "orders", "external_notifications"]);
   assert.deepEqual([...AGENT_SECURITY_DOMAINS.hr], ["hr"]);
 });
 

@@ -32,11 +32,17 @@ import {
 //          bills_of_material, stock and products, the four domains the CDC
 //          section 7 chain needs. All four are within the business memory
 //          ceilings already declared for purchasing. No other agent moves.
+// Lot 5  commit 5 adds notify_delay_alert, the first tool that leaves the
+//          company, and with it the external_notifications domain on production
+//          alone. The domain carries no business memory records: it exists to
+//          make "may send data outside" revocable on its own. The tool is
+//          registered only when an n8n client is injected, so the registry below
+//          is built with a stub that performs no network call.
 const EXPECTED_AGENT_SECURITY_DOMAINS = Object.freeze({
   director: ["company_overview"],
   commercial: ["quotes", "customers", "orders"],
   finance: ["company_overview", "payments", "customers", "invoices"],
-  production: ["production", "orders"],
+  production: ["production", "orders", "external_notifications"],
   purchasing: ["purchase_needs", "suppliers", "orders", "bills_of_material", "stock", "products"],
   hr: ["hr"],
   after_sales: ["after_sales"],
@@ -66,8 +72,21 @@ const EXPECTED_TOOL_SECURITY_DOMAINS = Object.freeze({
   get_material_requirements: ["orders", "bills_of_material", "stock", "products"],
   execute_invoice_payment: ["payments"],
   prepare_hr_sensitive_decision: ["hr"],
-  prepare_legal_sensitive_decision: ["legal"]
+  prepare_legal_sensitive_decision: ["legal"],
+  notify_delay_alert: ["production", "orders", "external_notifications"]
 });
+
+// Nothing here reaches the network. The stub only has to exist for the tool to
+// be registered; no test below executes it.
+const STUB_WORKFLOW_CLIENT = Object.freeze({
+  postWorkflowEvent: async () => {
+    throw new Error("this stub must never be called");
+  }
+});
+
+function fullRegistry() {
+  return createMvpToolRegistry({ workflowClient: STUB_WORKFLOW_CLIENT });
+}
 
 test("the ten CDC agents are all still present", () => {
   assert.equal(MVP_AGENT_IDS.length, 10);
@@ -95,16 +114,38 @@ test("tool security domains match the reviewed snapshot exactly", () => {
 });
 
 test("no tool was removed", () => {
-  const registry = createMvpToolRegistry();
-  const registered = registry.list().map((tool) => tool.id).sort();
+  const registered = fullRegistry().list().map((tool) => tool.id).sort();
 
   assert.deepEqual(registered, Object.keys(EXPECTED_TOOL_SECURITY_DOMAINS).sort());
+});
+
+// The outbound tool must never appear by default: reaching n8n has to be a
+// deliberate injection, never something a caller gets for free.
+test("the default registry still holds twenty one tools and none of them is outbound", () => {
+  const tools = createMvpToolRegistry().list();
+
+  assert.equal(tools.length, 21);
+  assert.equal(tools.some((tool) => tool.id === "notify_delay_alert"), false);
+  assert.equal(fullRegistry().list().length, 22);
+});
+
+// Widening production to prepare_action is what lets the delay alert reach the
+// approval mechanism. It must not open any other sensitive tool: allowedAgents
+// is what keeps that true, so the suite states it rather than assuming it.
+test("production reaches no sensitive tool other than the delay alert", () => {
+  const reachable = fullRegistry()
+    .list()
+    .filter((tool) => tool.requiredPermission !== "read_analyze")
+    .filter((tool) => tool.allowedAgents.includes("production"))
+    .map((tool) => tool.id);
+
+  assert.deepEqual(reachable, ["notify_delay_alert"]);
 });
 
 // The Lot 1 invariant: an agent holds exactly the security domains its own
 // tools need. New business domains must not appear on any agent.
 test("each agent still holds exactly the domains its tools require", () => {
-  const registry = createMvpToolRegistry();
+  const registry = fullRegistry();
   const needed = new Map(MVP_AGENT_IDS.map((agentId) => [agentId, new Set()]));
 
   for (const tool of registry.list()) {

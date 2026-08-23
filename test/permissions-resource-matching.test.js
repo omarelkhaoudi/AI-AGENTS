@@ -152,7 +152,11 @@ test("every MVP tool declares a security domain, and every allowed agent is scop
 test("the ten CDC agents are all present and none holds a domain it has no tool for", () => {
   assert.equal(MVP_AGENT_IDS.length, 10);
 
-  const registry = createMvpToolRegistry();
+  // notify_delay_alert is registered only when a client is injected, so the
+  // invariant is checked against the full registry. The stub performs no call.
+  const registry = createMvpToolRegistry({
+    workflowClient: { postWorkflowEvent: async () => { throw new Error("never called"); } }
+  });
   const neededByAgent = new Map(MVP_AGENT_IDS.map((agentId) => [agentId, new Set()]));
   for (const tool of registry.list()) {
     for (const agentId of tool.allowedAgents) {

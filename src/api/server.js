@@ -19,11 +19,16 @@ import {
   executeApprovedApproval,
   rejectApprovalRequest
 } from "../security/approval-flow.js";
-import { ToolExecutionServiceError } from "../tools/execution-service.js";
+import { ToolExecutionService, ToolExecutionServiceError } from "../tools/execution-service.js";
 import { authenticatePrincipal, extractBearerToken } from "../security/authentication.js";
 import { assertCapability } from "../security/authorization.js";
 import { createSecurityConfig } from "../security/security-config.js";
 import { createApiTokenMaterial, hashApiTokenSecret } from "../security/api-token.js";
+
+// The one outbound tool. It is never routed by a planner, so the only way to
+// raise it is the dedicated endpoint below, and the only way to send it is a
+// human approval.
+const DELAY_ALERT_TOOL_ID = "notify_delay_alert";
 
 const FRONTEND_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "frontend");
 const FRONTEND_ASSETS = Object.freeze({
@@ -319,6 +324,56 @@ export function buildApi({
       }
     });
 
+    // Raising a delay alert is not a planning decision, so it does not go through
+    // a planner: this endpoint writes the request, the plan and the one step
+    // itself, then lets ToolExecutionService open the approval. Nothing is sent
+    // here. The alert leaves only when a human approves it, through the existing
+    // POST /api/approvals/:id/approve, which is untouched by this commit.
+    app.post("/api/production/delay-alerts", writeRouteOptions(), async (request, reply) => {
+      const validation = normalizeDelayAlertBody(request.body);
+      if (!validation.ok) {
+        return reply.code(400).send({ error: validation.error, details: { code: "INVALID_INPUT" } });
+      }
+
+      // The bridge is judged by what is actually reachable, not by a flag. The
+      // tool exists only when a client was injected at startup, so its absence is
+      // the honest answer to "can this application send anything at all".
+      if (!toolRegistry?.get(DELAY_ALERT_TOOL_ID)) {
+        return reply.code(409).send({
+          error: "The workflow bridge is not enabled.",
+          details: {
+            code: "WORKFLOW_NOT_ENABLED",
+            provider: foundationConfig.workflow?.provider ?? null,
+            enabled: foundationConfig.workflow?.enabled ?? false
+          }
+        });
+      }
+
+      try {
+        if (seedAgents) {
+          await runSeedOnce({
+            repository,
+            getSeedPromise: () => seedPromise,
+            setSeedPromise: (promise) => {
+              seedPromise = promise;
+            }
+          });
+        }
+
+        const prepared = await prepareDelayAlertApproval({
+          repository,
+          toolRegistry,
+          createdById: request.principal.userId,
+          orderId: validation.value.orderId,
+          delayRisk: validation.value.delayRisk
+        });
+
+        return reply.code(202).send(prepared);
+      } catch (error) {
+        return sendDomainError(reply, "Delay alert preparation failed.", error);
+      }
+    });
+
     app.get("/api/requests/:id", readRouteOptions(), async (request, reply) => {
       try {
         const savedRequest = await repository.getRequest(request.params.id);
@@ -522,6 +577,113 @@ async function createAndOrchestrateRequest({
 
 // The seed promise is shared while it is pending so concurrent requests seed
 // only once, and it is discarded when it fails so the next request can retry.
+// Builds the minimum an approval needs to be executable later: a request, a
+// plan, and one step carrying the workflow inputs. executeApprovedApproval reads
+// its input from the plan step, so orderId and delayRisk have to live there or
+// they never reach n8n.
+async function prepareDelayAlertApproval({
+  repository,
+  toolRegistry,
+  createdById,
+  orderId,
+  delayRisk
+}) {
+  const savedRequest = await repository.createRequest({
+    title: `Delay alert for order ${orderId}`,
+    source: "delay_alert",
+    status: "received",
+    payload: { orderId, delayRisk },
+    createdById
+  });
+
+  await repository.createAuditEvent(
+    createAuditEvent({
+      type: "request_created",
+      actorUserId: createdById,
+      requestId: savedRequest.id,
+      resourceType: "request",
+      resourceId: savedRequest.id,
+      metadata: { source: savedRequest.source, orderId, delayRisk }
+    })
+  );
+
+  const plan = await repository.createPlan({
+    requestId: savedRequest.id,
+    createdByAgentId: "production",
+    status: "created",
+    summary: "Raise a production delay alert for human approval.",
+    metadata: { planner: "none", trigger: "delay_alert_endpoint" }
+  });
+
+  const planStep = await repository.createPlanStep({
+    planId: plan.id,
+    agentId: "production",
+    sequence: 1,
+    status: "created",
+    actionType: DELAY_ALERT_TOOL_ID,
+    toolName: DELAY_ALERT_TOOL_ID,
+    input: { requestId: savedRequest.id, orderId, delayRisk },
+    requiresApproval: true
+  });
+
+  const agent = await repository.getAgent("production");
+  const service = new ToolExecutionService({ repository, toolRegistry });
+
+  try {
+    await service.execute({
+      agentId: "production",
+      agentPermissions: agent?.permissions ?? [],
+      toolId: DELAY_ALERT_TOOL_ID,
+      input: planStep.input,
+      requestId: savedRequest.id,
+      planId: plan.id,
+      planStepId: planStep.id,
+      metadata: { trigger: "delay_alert_endpoint", toolName: DELAY_ALERT_TOOL_ID }
+    });
+  } catch (cause) {
+    if (cause instanceof ToolExecutionServiceError && cause.code === "APPROVAL_REQUIRED") {
+      return {
+        status: "approval_required",
+        request: { id: savedRequest.id },
+        planStep: { id: planStep.id },
+        approval: cause.details.approval
+      };
+    }
+    throw cause;
+  }
+
+  // Unreachable by design: the tool requires execute_action, and requiresApproval
+  // in ToolExecutionService opens an approval for every non read_analyze tool. If
+  // that ever stops holding, an alert has already been sent without a human, and
+  // saying so loudly is better than reporting success.
+  throw new ToolExecutionServiceError(
+    "The delay alert ran without a human approval.",
+    "APPROVAL_NOT_ENFORCED",
+    { toolId: DELAY_ALERT_TOOL_ID, requestId: savedRequest.id }
+  );
+}
+
+function normalizeDelayAlertBody(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, error: "Request body must be an object." };
+  }
+
+  if (body.createdById !== undefined) {
+    return { ok: false, error: "createdById is not accepted: the authenticated principal is the author." };
+  }
+
+  const orderId = normalizeText(body.orderId);
+  const delayRisk = normalizeText(body.delayRisk);
+  if (!orderId) {
+    return { ok: false, error: "orderId is required." };
+  }
+  if (!delayRisk) {
+    return { ok: false, error: "delayRisk is required." };
+  }
+
+  return { ok: true, value: { orderId, delayRisk } };
+}
+
 async function runSeedOnce({ repository, getSeedPromise, setSeedPromise }) {
   const existingSeed = getSeedPromise();
   if (existingSeed) {

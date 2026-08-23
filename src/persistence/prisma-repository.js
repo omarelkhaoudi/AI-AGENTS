@@ -289,43 +289,121 @@ export class PrismaRepository extends AgentPlatformRepository {
     });
   }
 
+  // Deciding an approval is one statement, for the same reason spending one is.
+  // The old shape read the row, called assertApprovalCanTransition, then wrote:
+  // under PostgreSQL eight concurrent callers all read a pending row and all
+  // eight succeeded, each overwriting the previous approver.
+  //
+  // The condition is "pending or requested" rather than "not approved and not
+  // rejected", because that is the exact set assertApprovalCanTransition allows.
+  // Any other status has always been refused as APPROVAL_ALREADY_PROCESSED, and
+  // widening the match here would quietly start accepting it.
+  //
+  // jsonb || jsonb is a shallow merge, which is what the object spread it
+  // replaces did. updatedAt is set by hand: @updatedAt is a Prisma client
+  // behaviour and does not apply to a raw statement.
   async approveApproval(approvalId, { approverId = null, decisionReason = null, metadata = {} } = {}) {
+    const rows = await this.prisma.$queryRaw`
+      UPDATE "Approval"
+      SET "status" = 'approved',
+          "approverId" = ${approverId}::text,
+          "decisionReason" = ${decisionReason}::text,
+          "metadata" = COALESCE("metadata", '{}'::jsonb) || ${JSON.stringify(metadata ?? {})}::jsonb,
+          "decidedAt" = NOW(),
+          "updatedAt" = NOW()
+      WHERE "id" = ${approvalId}
+        AND "status" IN ('pending', 'requested')
+      RETURNING *`;
+
+    if (rows.length > 0) {
+      return rows[0];
+    }
+
+    // Nothing was written. The read below only names the failure.
     const approval = await requirePrismaApproval(this.prisma, approvalId);
     assertApprovalCanTransition(approval);
-    return this.prisma.approval.update({
-      where: { id: approvalId },
-      data: {
-        status: "approved",
-        approverId,
-        decisionReason,
-        metadata: {
-          ...(approval.metadata ?? {}),
-          ...metadata
-        },
-        decidedAt: new Date()
-      }
+
+    // Unreachable by design: the statement matched nothing, so the row was not
+    // pending, yet the read says it is. No code path moves an approval back to
+    // pending. Failing loudly beats returning undefined.
+    throw new ApprovalStateError("Approval could not be decided.", "APPROVAL_ALREADY_PROCESSED", {
+      approvalId,
+      status: approval.status
     });
   }
 
+  // The mirror of approveApproval, and the last of the three read then write
+  // pairs. It mattered more than it looks: rejection used to write its status
+  // unconditionally, so a concurrent rejection could overwrite an approval that
+  // the conditional statement above had just won. Both sides have to be
+  // conditional for either guarantee to hold.
+  //
+  // Same match as approveApproval, for the same reason: pending and requested
+  // are exactly what assertApprovalCanTransition allows.
   async rejectApproval(approvalId, { approverId = null, decisionReason = null, metadata = {} } = {}) {
+    const rows = await this.prisma.$queryRaw`
+      UPDATE "Approval"
+      SET "status" = 'rejected',
+          "approverId" = ${approverId}::text,
+          "decisionReason" = ${decisionReason}::text,
+          "metadata" = COALESCE("metadata", '{}'::jsonb) || ${JSON.stringify(metadata ?? {})}::jsonb,
+          "decidedAt" = NOW(),
+          "updatedAt" = NOW()
+      WHERE "id" = ${approvalId}
+        AND "status" IN ('pending', 'requested')
+      RETURNING *`;
+
+    if (rows.length > 0) {
+      return rows[0];
+    }
+
+    // Nothing was written. The read below only names the failure, and names it
+    // from the status actually stored: a rejection that lost to an approval
+    // reports APPROVAL_ALREADY_APPROVED, which is what the caller needs to know.
     const approval = await requirePrismaApproval(this.prisma, approvalId);
     assertApprovalCanTransition(approval);
-    return this.prisma.approval.update({
-      where: { id: approvalId },
-      data: {
-        status: "rejected",
-        approverId,
-        decisionReason,
-        metadata: {
-          ...(approval.metadata ?? {}),
-          ...metadata
-        },
-        decidedAt: new Date()
-      }
+
+    // Unreachable by design, as in approveApproval: the statement matched
+    // nothing, yet the read says the row is still pending. Nothing moves an
+    // approval back to pending.
+    throw new ApprovalStateError("Approval could not be decided.", "APPROVAL_ALREADY_PROCESSED", {
+      approvalId,
+      status: approval.status
     });
   }
 
+  // Spending an approval is one statement, because it used to be three. The old
+  // shape read the row, decided, then wrote, with an await in between: under
+  // PostgreSQL two concurrent callers could both read a row that had not been
+  // spent yet and both go on to run the tool. For notify_delay_alert that meant
+  // two real alerts leaving the company for one human decision.
+  //
+  // The condition now lives in the UPDATE itself. PostgreSQL serialises updates
+  // to the same row, so the second caller waits, then re-evaluates against the
+  // value the first committed, no longer matches, and writes nothing. Zero rows
+  // back is the refusal.
+  //
+  // this.prisma is the transaction client when the repository is transactional,
+  // so the same statement is correct inside and outside a transaction.
   async markApprovalExecuted(approvalId, { executionId, executedAt = new Date().toISOString() } = {}) {
+    const rows = await this.prisma.$queryRaw`
+      UPDATE "Approval"
+      SET "metadata" = jsonb_set(
+            jsonb_set(COALESCE("metadata", '{}'::jsonb), '{executionId}', to_jsonb(${executionId}::text), true),
+            '{executedAt}', to_jsonb(${executedAt}::text), true),
+          "updatedAt" = NOW()
+      WHERE "id" = ${approvalId}
+        AND "status" = 'approved'
+        AND "metadata"->'executionId' IS NULL
+        AND "metadata"->'executedAt' IS NULL
+      RETURNING *`;
+
+    if (rows.length > 0) {
+      return rows[0];
+    }
+
+    // Nothing was written. The read below only names the failure; it can no
+    // longer let a second write through, because it no longer guards one.
     const approval = await requirePrismaApproval(this.prisma, approvalId);
     if (approval.status !== "approved") {
       throw new ApprovalStateError("Approval must be approved before execution.", statusToExecutionCode(approval.status), {
@@ -333,22 +411,10 @@ export class PrismaRepository extends AgentPlatformRepository {
         status: approval.status
       });
     }
-    if (approval.metadata?.executedAt || approval.metadata?.executionId) {
-      throw new ApprovalStateError("Approval has already been executed.", "APPROVAL_ALREADY_EXECUTED", {
-        approvalId,
-        executionId: approval.metadata.executionId
-      });
-    }
 
-    return this.prisma.approval.update({
-      where: { id: approvalId },
-      data: {
-        metadata: {
-          ...(approval.metadata ?? {}),
-          executionId,
-          executedAt
-        }
-      }
+    throw new ApprovalStateError("Approval has already been executed.", "APPROVAL_ALREADY_EXECUTED", {
+      approvalId,
+      executionId: approval.metadata?.executionId
     });
   }
 

@@ -282,6 +282,20 @@ Trois familles méritent d'être signalées :
 
 ---
 
+## 📦 V1 MVP
+
+La V1 MVP fonctionnelle et testable est figée au commit **`c2c1d89`** :
+**723 tests, 723 réussis, 0 échec, 0 ignoré**.
+
+| Document | Contenu |
+| --- | --- |
+| [`docs/DELIVERY_V1_MVP.md`](docs/DELIVERY_V1_MVP.md) | Périmètre livré, limites assumées, prochaines étapes |
+| [`docs/V1_INSTALLATION_GUIDE.md`](docs/V1_INSTALLATION_GUIDE.md) | Prérequis, installation, configuration, démarrage |
+| [`docs/V1_DEMO_GUIDE.md`](docs/V1_DEMO_GUIDE.md) | Dix scénarios de démonstration reproductibles |
+| [`docs/V1_TEST_REPORT.md`](docs/V1_TEST_REPORT.md) | Rapport de tests détaillé |
+
+---
+
 ## 📚 Documentation
 
 | Document | Contenu |

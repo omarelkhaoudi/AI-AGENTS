@@ -39,6 +39,18 @@ export class RepositoryContractError extends Error {
   }
 }
 
+// Raised when a request carries an idempotency key that a stored request
+// already holds. It carries the winning request, fully loaded, so a caller can
+// report the real state of the original rather than guess at it.
+export class IdempotencyConflictError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = "IdempotencyConflictError";
+    this.code = "IDEMPOTENCY_KEY_TAKEN";
+    this.details = details;
+  }
+}
+
 export class AgentPlatformRepository {
   upsertUser() {
     throw new RepositoryContractError("upsertUser is not implemented.");

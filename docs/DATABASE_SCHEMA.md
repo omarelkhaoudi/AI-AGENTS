@@ -24,17 +24,26 @@ tables, and orchestration never carries business content.
 | `User` | The people the system acts for. Requests and approvals name one. |
 | `ApiToken` | Bearer credentials. Only the hash is stored, never the secret. |
 | `Agent` | The ten agent rows, with their permissions. Written by `npm run db:seed`. |
-| `Request` | One leader request, its payload and its final status. |
+| `Request` | One leader request, its payload and its final status. Carries the optional `idempotencyKey`. |
 | `Plan` | The plan a planner produced for a request. |
 | `PlanStep` | One step of a plan: an agent, a tool, a sequence number. |
 | `Execution` | What running a step produced, or why it stopped. |
 | `Approval` | A sensitive action waiting for a human decision. |
 | `AuditEvent` | The trail. Twenty one event types, defined in `src/observability/audit.js`. |
+
 | `Document` | Documents attached to a request. |
 
 `Agent.permissions` is written from `createMvpAgentPermissions`, the source of
 truth for the least privilege model. The seed overwrites it on every run: a row
 that has drifted from the model is restored, never preserved.
+
+`Request.idempotencyKey` is nullable and carries a unique index,
+`Request_idempotencyKey_key`. It is what makes one business event produce one
+request: the insert is the reservation, so a duplicate is refused by the
+database rather than by a lookup that another writer could slip past. PostgreSQL
+allows many NULLs in a unique index, so requests that carry no business identity
+are unaffected. Delay alerts derive theirs as
+`delay_alert:{orderId}:{delayRisk}:{UTC day}`.
 
 ## Business memory tables (16)
 
@@ -106,6 +115,7 @@ become a column.
 | `20260818000000_add_hr_business_memory` | `hr_demo_overview` |
 | `20260819000000_add_api_tokens` | `ApiToken` |
 | `20260820000000_add_business_reference_models` | Products, prices, stock, bills of material, payment terms |
+| `20260824000000_add_request_idempotency_key` | `Request.idempotencyKey` and its unique index |
 
 Apply them with `npm run db:migrate`. Never edit a committed migration: add a
 new one. See `docs/POSTGRESQL_SETUP.md` for the full install path and

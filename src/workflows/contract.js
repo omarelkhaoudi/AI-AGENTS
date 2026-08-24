@@ -10,14 +10,17 @@ export const WORKFLOW_EVENT_TYPES = Object.freeze([
   "after_sales_claim"
 ]);
 
-// DEBT, deliberately left open. duplicate_skipped is produced by MockWorkflowAdapter
-// alone, from an in-process Map keyed by correlationId and event type. That map is
-// per instance and dies with the process, so it is NOT idempotency for a real
-// outbound call and must not be presented as such. notify_delay_alert therefore
-// claims no deduplication: what protects it is the approval, which is persisted and
-// can only be spent once. Real deduplication needs a stored key, and the same commit
-// should replace the read-then-write in markApprovalExecuted with a conditional
-// update, since two concurrent callers can both pass that check today.
+// duplicate_skipped now means two different things, and the difference matters.
+//
+// Inside this file it is what MockWorkflowAdapter reports from an in-process Map
+// keyed by correlationId and event type. That map is per instance and dies with
+// the process: it demonstrates the contract, it guarantees nothing.
+//
+// The real guarantee lives one layer up and is held by the database.
+// Request.idempotencyKey carries a unique index, the insert of the request is the
+// reservation, and a duplicate business event is refused before a plan, a step, an
+// approval or an execution exists. The delay alert endpoint reports that refusal
+// with this same status, which is why no second status was introduced.
 export const WORKFLOW_STATUSES = Object.freeze([
   "prepared",
   "completed",

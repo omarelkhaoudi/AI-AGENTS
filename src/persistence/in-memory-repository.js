@@ -1,13 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { createAuditEvent as createAuditEventRecord } from "../observability/audit.js";
 import { ApprovalStateError } from "../security/approval.js";
-import { AgentPlatformRepository, RepositoryContractError } from "./repository-contract.js";
+import { AgentPlatformRepository, IdempotencyConflictError, RepositoryContractError } from "./repository-contract.js";
 
 export class InMemoryRepository extends AgentPlatformRepository {
   #users = new Map();
   #apiTokens = new Map();
   #agents = new Map();
   #requests = new Map();
+  // The index PostgreSQL gets from a unique constraint. Checking it and writing
+  // it happen in the same tick, with no await in between, which is what makes
+  // this atomic here for the same reason the constraint is atomic there.
+  #requestIdempotencyKeys = new Map();
   #plans = new Map();
   #planSteps = new Map();
   #executions = new Map();
@@ -129,9 +133,19 @@ export class InMemoryRepository extends AgentPlatformRepository {
     metadata = {},
     result = null,
     createdById = null,
+    idempotencyKey = null,
     createdAt = new Date().toISOString(),
     updatedAt = createdAt
   } = {}) {
+    // Refused before anything is stored: a duplicate must leave no request
+    // behind, not even one created so the refusal can be reported.
+    if (idempotencyKey !== null && this.#requestIdempotencyKeys.has(idempotencyKey)) {
+      throw new IdempotencyConflictError("A request already holds this idempotency key.", {
+        idempotencyKey,
+        request: this.getRequest(this.#requestIdempotencyKeys.get(idempotencyKey))
+      });
+    }
+
     const record = freezeRecord({
       id,
       title,
@@ -141,10 +155,14 @@ export class InMemoryRepository extends AgentPlatformRepository {
       metadata: cloneValue(metadata),
       result: cloneValue(result),
       createdById,
+      idempotencyKey,
       createdAt,
       updatedAt
     });
     this.#requests.set(record.id, record);
+    if (idempotencyKey !== null) {
+      this.#requestIdempotencyKeys.set(idempotencyKey, record.id);
+    }
     return record;
   }
 

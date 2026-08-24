@@ -63,6 +63,10 @@ model Request {
   id          String       @id @default(uuid())
   title       String?
   source      String       @default("api")
+  // One business event, one request. Nullable on purpose: PostgreSQL allows
+  // many NULLs in a unique index, so requests that carry no business identity
+  // are untouched by the constraint.
+  idempotencyKey String?   @unique
   status      String       @default("received")
   payload     Json
   metadata    Json?

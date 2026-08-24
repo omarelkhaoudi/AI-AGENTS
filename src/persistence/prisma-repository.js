@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createAuditEvent as createAuditEventRecord } from "../observability/audit.js";
 import { ApprovalStateError } from "../security/approval.js";
-import { AgentPlatformRepository } from "./repository-contract.js";
+import { AgentPlatformRepository, IdempotencyConflictError } from "./repository-contract.js";
 
 export class PrismaRepository extends AgentPlatformRepository {
   constructor({ prisma, transactional = false }) {
@@ -111,19 +111,43 @@ export class PrismaRepository extends AgentPlatformRepository {
     return this.prisma.agent.findMany({ orderBy: { id: "asc" } });
   }
 
+  // The insert IS the reservation. There is deliberately no lookup before it:
+  // reading to decide whether a key is free, then inserting, is the race this
+  // constraint exists to close. The database refuses the second writer.
   async createRequest(input = {}) {
-    return this.prisma.request.create({
-      data: stripUndefined({
-        id: input.id,
-        title: input.title ?? null,
-        source: input.source ?? "api",
-        status: input.status ?? "received",
-        payload: input.payload ?? {},
-        metadata: input.metadata ?? {},
-        result: input.result ?? null,
-        createdById: input.createdById ?? null
-      })
-    });
+    try {
+      return await this.prisma.request.create({
+        data: stripUndefined({
+          id: input.id,
+          title: input.title ?? null,
+          source: input.source ?? "api",
+          status: input.status ?? "received",
+          payload: input.payload ?? {},
+          metadata: input.metadata ?? {},
+          result: input.result ?? null,
+          createdById: input.createdById ?? null,
+          idempotencyKey: input.idempotencyKey ?? null
+        })
+      });
+    } catch (cause) {
+      // Only this one conflict is translated. Any other unique violation is a
+      // different bug and must keep its own error rather than be reported as a
+      // duplicate business event.
+      if (!isIdempotencyKeyConflict(cause)) {
+        throw cause;
+      }
+      throw new IdempotencyConflictError(
+        "A request already holds this idempotency key.",
+        { idempotencyKey: input.idempotencyKey, request: await this.#findRequestByIdempotencyKey(input.idempotencyKey) }
+      );
+    }
+  }
+
+  // Read after a failed write, never before one. The winner has committed by
+  // the time the index rejected us, so this sees it.
+  async #findRequestByIdempotencyKey(idempotencyKey) {
+    const row = await this.prisma.request.findUnique({ where: { idempotencyKey } });
+    return row ? this.getRequest(row.id) : null;
   }
 
   async getRequest(requestId) {
@@ -495,6 +519,33 @@ export async function createPrismaClient({ databaseUrl = process.env.DATABASE_UR
   const { PrismaPg } = await import("@prisma/adapter-pg");
   const adapter = new PrismaPg({ connectionString: databaseUrl });
   return new PrismaClient({ adapter });
+}
+
+// The unique index behind Request.idempotencyKey, named here because it is the
+// only locale independent way to recognise which constraint was violated.
+export const REQUEST_IDEMPOTENCY_INDEX = "Request_idempotencyKey_key";
+
+// Prisma reports a unique violation as P2002, but it does not always say which
+// constraint failed the same way. With the pg driver adapter meta.target is
+// absent and the constraint appears only inside the driver message, which the
+// database localises: the text here comes back in the server language. The index
+// NAME is quoted verbatim in it whatever that language is, so that is what this
+// matches on, with meta.target still honoured where it exists.
+//
+// Every other P2002 falls through untouched. A duplicate business event and a
+// different unique violation must not be reported as the same thing.
+function isIdempotencyKeyConflict(cause) {
+  if (cause?.code !== "P2002") {
+    return false;
+  }
+
+  const target = cause.meta?.target;
+  if (Array.isArray(target) ? target.includes("idempotencyKey") : typeof target === "string" && target.includes("idempotencyKey")) {
+    return true;
+  }
+
+  const driverMessage = cause.meta?.driverAdapterError?.cause?.originalMessage;
+  return typeof driverMessage === "string" && driverMessage.includes(REQUEST_IDEMPOTENCY_INDEX);
 }
 
 function approvalData(approval) {

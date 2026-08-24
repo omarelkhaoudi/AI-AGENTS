@@ -3,6 +3,10 @@ import { redact } from "./logger.js";
 
 export const AUDIT_EVENT_TYPES = Object.freeze([
   "request_created",
+  // A request that was refused because its business event already exists. It
+  // names the original request, never a second one: no row is created to be
+  // able to audit the absence of a row.
+  "request_duplicate_skipped",
   "plan_created",
   "plan_step_created",
   "agent_selected",

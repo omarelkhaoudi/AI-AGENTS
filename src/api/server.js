@@ -12,7 +12,7 @@ import { PlannerContractError, PlanningError } from "../director/planner-contrac
 import { orchestrateRequest } from "../director/request-orchestration.js";
 import { createAuditEvent } from "../observability/audit.js";
 import { InMemoryRepository } from "../persistence/in-memory-repository.js";
-import { assertRepositoryContract } from "../persistence/repository-contract.js";
+import { IdempotencyConflictError, assertRepositoryContract } from "../persistence/repository-contract.js";
 import { ApprovalStateError } from "../security/approval.js";
 import {
   approveApprovalRequest,
@@ -46,7 +46,10 @@ export function buildApi({
   config = null,
   toolRegistry = null,
   security = null,
-  businessMemory = null
+  businessMemory = null,
+  // A seam, not a feature: the derived idempotency key names a day, and a test
+  // cannot cross a day boundary by waiting for one.
+  clock = () => new Date()
 } = {}) {
   assertRepositoryContract(repository);
   const foundationConfig = config ?? loadFoundationConfig();
@@ -360,16 +363,34 @@ export function buildApi({
           });
         }
 
+        const idempotencyKey = derivedDelayAlertKey({
+          orderId: validation.value.orderId,
+          delayRisk: validation.value.delayRisk,
+          now: clock()
+        });
+
         const prepared = await prepareDelayAlertApproval({
           repository,
           toolRegistry,
           createdById: request.principal.userId,
           orderId: validation.value.orderId,
-          delayRisk: validation.value.delayRisk
+          delayRisk: validation.value.delayRisk,
+          idempotencyKey
         });
 
         return reply.code(202).send(prepared);
       } catch (error) {
+        // The business event already exists. Answering 200 is what makes a retry
+        // safe; what the body must never do is claim that anything new happened.
+        if (error instanceof IdempotencyConflictError) {
+          return reply.code(200).send(await reportDuplicateDelayAlert({
+            repository,
+            error,
+            actorUserId: request.principal.userId,
+            orderId: validation.value.orderId,
+            delayRisk: validation.value.delayRisk
+          }));
+        }
         return sendDomainError(reply, "Delay alert preparation failed.", error);
       }
     });
@@ -577,6 +598,69 @@ async function createAndOrchestrateRequest({
 
 // The seed promise is shared while it is pending so concurrent requests seed
 // only once, and it is discarded when it fails so the next request can retry.
+// The business identity of a delay alert, as decided with the client: the same
+// order, at the same risk level, on the same day is the same event. A risk that
+// moves is a new event, because a leader who was told "at risk" has not been
+// told "critical".
+//
+// The day is the UTC day, which is the business day this application already
+// uses everywhere: demoDate anchors on setUTCHours(0, 0, 0, 0) and the whole
+// lateness model is measured against it. Using a local day here would silently
+// introduce a second calendar.
+export function derivedDelayAlertKey({ orderId, delayRisk, now = new Date() }) {
+  const day = new Date(now.getTime());
+  day.setUTCHours(0, 0, 0, 0);
+  return `delay_alert:${orderId}:${delayRisk}:${day.toISOString().slice(0, 10)}`;
+}
+
+// What a duplicate is told. Every field describes the ORIGINAL request: the
+// approval it is still waiting on, or the execution it already produced. No
+// approval and no execution are created here, and nothing is sent.
+async function reportDuplicateDelayAlert({ repository, error, actorUserId, orderId, delayRisk }) {
+  const original = error.details?.request ?? null;
+  const approval = original?.approvals?.[0] ?? null;
+  const execution = original?.executions?.find((entry) => entry.status === "completed")
+    ?? original?.executions?.[0]
+    ?? null;
+
+  // Audited against the original request, because that is the only request
+  // there is. A duplicate leaves no row, so a row must not be invented to
+  // carry its audit.
+  if (original) {
+    await repository.createAuditEvent(createAuditEvent({
+      type: "request_duplicate_skipped",
+      actorUserId,
+      agentId: "production",
+      requestId: original.id,
+      resourceType: "request",
+      resourceId: original.id,
+      metadata: {
+        idempotencyKey: error.details?.idempotencyKey ?? null,
+        eventType: "delay_alert",
+        orderId,
+        delayRisk,
+        originalRequestId: original.id,
+        originalRequestStatus: original.status,
+        approvalId: approval?.id ?? null,
+        approvalStatus: approval?.status ?? null,
+        executionId: execution?.id ?? null,
+        executionStatus: execution?.status ?? null
+      }
+    }));
+  }
+
+  return {
+    status: "duplicate_skipped",
+    idempotencyKey: error.details?.idempotencyKey ?? null,
+    duplicateOf: original?.id ?? null,
+    request: original ? { id: original.id, status: original.status } : null,
+    approval: approval
+      ? { id: approval.id, status: approval.status, decisionReason: approval.decisionReason ?? null }
+      : null,
+    execution: execution ? { id: execution.id, status: execution.status } : null
+  };
+}
+
 // Builds the minimum an approval needs to be executable later: a request, a
 // plan, and one step carrying the workflow inputs. executeApprovedApproval reads
 // its input from the plan step, so orderId and delayRisk have to live there or
@@ -586,14 +670,19 @@ async function prepareDelayAlertApproval({
   toolRegistry,
   createdById,
   orderId,
-  delayRisk
+  delayRisk,
+  idempotencyKey = null
 }) {
+  // This insert is the reservation, and it is the first thing that happens. A
+  // duplicate therefore throws here, before a plan, a step, an approval or an
+  // execution exists, and leaves none of them behind.
   const savedRequest = await repository.createRequest({
     title: `Delay alert for order ${orderId}`,
     source: "delay_alert",
     status: "received",
     payload: { orderId, delayRisk },
-    createdById
+    createdById,
+    idempotencyKey
   });
 
   await repository.createAuditEvent(

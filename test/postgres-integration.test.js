@@ -50,10 +50,11 @@ test("PostgreSQL persists Request -> Plan -> PlanStep -> Execution -> AuditEvent
       result.plans[0].steps.map((step) => [step.agentId, step.toolName]),
       [
         ["finance", "get_pending_payments"],
-        ["finance", "get_receivables_summary"]
+        ["finance", "get_receivables_summary"],
+        ["finance", "get_revenue_summary"]
       ]
     );
-    assert.equal(result.executions.length, 2);
+    assert.equal(result.executions.length, 3);
     assert.equal(result.executions.every((execution) => execution.status === "completed"), true);
     assert.ok(result.auditEvents.some((event) => event.type === "plan_created"));
     assert.ok(result.auditEvents.some((event) => event.type === "execution_completed"));
@@ -95,18 +96,18 @@ test("API with PostgreSQL persists POST /api/requests and returns full GET detai
     assert.equal(postBody.request.title, "Fais-moi le point sur mon entreprise aujourd'hui");
     assert.equal(postBody.request.payload.message, "Fais-moi le point sur mon entreprise aujourd'hui");
     assert.equal(postBody.request.plans.length, 1);
-    assert.equal(postBody.request.plans[0].steps.length, 13);
-    assert.equal(postBody.request.executions.length, 13);
-    assert.equal(postBody.request.result.summary.completedExecutions, 13);
+    assert.equal(postBody.request.plans[0].steps.length, 15);
+    assert.equal(postBody.request.executions.length, 15);
+    assert.equal(postBody.request.result.summary.completedExecutions, 15);
 
     const persistedCounts = await countPersistedRequestGraph(prisma, requestId);
     assert.deepEqual(persistedCounts, {
       requests: 1,
       plans: 1,
-      planSteps: 13,
-      executions: 13,
+      planSteps: 15,
+      executions: 15,
       // Eight audit events per step plus two for the request itself.
-      auditEvents: 106
+      auditEvents: 122
     });
 
     const getResponse = await inject({
@@ -123,6 +124,8 @@ test("API with PostgreSQL persists POST /api/requests and returns full GET detai
       [
         "finance",
         "finance",
+        "finance",
+        "commercial",
         "commercial",
         "commercial",
         "production",
@@ -136,7 +139,7 @@ test("API with PostgreSQL persists POST /api/requests and returns full GET detai
         "legal"
       ]
     );
-    assert.equal(getBody.request.executions.length, 13);
+    assert.equal(getBody.request.executions.length, 15);
     assert.ok(getBody.request.auditEvents.some((event) => event.type === "request_created"));
     assert.ok(getBody.request.auditEvents.some((event) => event.type === "execution_completed"));
     assert.deepEqual(getBody.request.approvals, []);

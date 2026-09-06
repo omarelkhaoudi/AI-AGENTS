@@ -27,6 +27,12 @@ import {
 //          held by commercial. Only the tool table below grows.
 // Lot 2B.2 commit 4 adds get_production_schedule, reading production and
 //          orders, both already held by production. Again no agent scope moves.
+// The datasheet lot adds get_product_datasheet and prepare_quote_from_datasheet,
+//          reading products and prices. Commercial gains both: the business
+//          memory contract already allowed it on each, and a quote cannot be
+//          prepared from a datasheet without reading the datasheet.
+// Lot 14 adds get_order_book_summary, reading orders, a domain commercial
+//          already holds for get_customer_orders. No agent scope moves.
 // Lot 2B.2 commit 5 adds get_material_requirements and IS the one commit of the
 //          lot that widens an agent: purchasing gains orders,
 //          bills_of_material, stock and products, the four domains the CDC
@@ -40,7 +46,7 @@ import {
 //          is built with a stub that performs no network call.
 const EXPECTED_AGENT_SECURITY_DOMAINS = Object.freeze({
   director: ["company_overview"],
-  commercial: ["quotes", "customers", "orders"],
+  commercial: ["quotes", "customers", "orders", "products", "prices"],
   finance: ["company_overview", "payments", "customers", "invoices"],
   production: ["production", "orders", "external_notifications"],
   purchasing: ["purchase_needs", "suppliers", "orders", "bills_of_material", "stock", "products"],
@@ -72,6 +78,10 @@ const EXPECTED_TOOL_SECURITY_DOMAINS = Object.freeze({
   get_material_requirements: ["orders", "bills_of_material", "stock", "products"],
   execute_invoice_payment: ["payments"],
   prepare_hr_sensitive_decision: ["hr"],
+  get_revenue_summary: ["invoices"],
+  get_order_book_summary: ["orders"],
+  get_product_datasheet: ["products", "prices"],
+  prepare_quote_from_datasheet: ["products", "prices"],
   prepare_legal_sensitive_decision: ["legal"],
   notify_delay_alert: ["production", "orders", "external_notifications"]
 });
@@ -121,12 +131,12 @@ test("no tool was removed", () => {
 
 // The outbound tool must never appear by default: reaching n8n has to be a
 // deliberate injection, never something a caller gets for free.
-test("the default registry still holds twenty one tools and none of them is outbound", () => {
+test("the default registry still holds twenty five tools and none of them is outbound", () => {
   const tools = createMvpToolRegistry().list();
 
-  assert.equal(tools.length, 21);
+  assert.equal(tools.length, 25);
   assert.equal(tools.some((tool) => tool.id === "notify_delay_alert"), false);
-  assert.equal(fullRegistry().list().length, 22);
+  assert.equal(fullRegistry().list().length, 26);
 });
 
 // Widening production to prepare_action is what lets the delay alert reach the
@@ -165,23 +175,30 @@ test("each agent still holds exactly the domains its tools require", () => {
   }
 });
 
-// Reference domains still unreachable by every agent. Lot 2B.2 commit 5 gives
-// purchasing products, stock and bills_of_material for the CDC section 7 chain,
-// so only prices and payment_terms remain out of reach for all ten agents.
-test("the remaining business reference domains grant no agent any access", () => {
-  const referenceDomains = ["prices", "payment_terms"];
+// payment_terms is the last reference domain no agent reaches. prices left that
+// list with the datasheet lot: a quote prepared from a product sheet has to read
+// the price in force, and commercial is the agent that prepares it. The business
+// memory contract already allowed commercial there, so nothing was forced open;
+// what changed is that an agent finally has a tool that needs it.
+//
+// The reserve is lifted for prices ALONE. This test now says two things: nobody
+// reaches payment_terms, and nobody but commercial reaches prices.
+test("payment_terms reaches no agent, and prices reaches commercial alone", () => {
+  assert.ok(BUSINESS_DOMAINS.includes("payment_terms"));
+  assert.ok(BUSINESS_DOMAINS.includes("prices"));
 
-  for (const domain of referenceDomains) {
-    assert.ok(BUSINESS_DOMAINS.includes(domain), `${domain} must be a declared business domain`);
+  for (const agentId of MVP_AGENT_IDS) {
+    const permissions = createMvpAgentPermissions(agentId);
+    const reaches = (domain) => permissions.some(
+      (permission) => matchesResource(permission.resource, `domain:${domain}`)
+    );
 
-    for (const agentId of MVP_AGENT_IDS) {
-      const permissions = createMvpAgentPermissions(agentId);
-      assert.equal(
-        permissions.some((permission) => matchesResource(permission.resource, `domain:${domain}`)),
-        false,
-        `${agentId} must not reach the ${domain} security scope`
-      );
-    }
+    assert.equal(reaches("payment_terms"), false, `${agentId} must not reach payment_terms`);
+    assert.equal(
+      reaches("prices"),
+      agentId === "commercial",
+      `only commercial may reach the prices security scope, not ${agentId}`
+    );
   }
 });
 

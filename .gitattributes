@@ -1,0 +1,20 @@
+# Line endings. Git stores every text file with LF in the index and leaves the
+# working copy to core.autocrlf, so a Windows checkout keeps CRLF on disk and
+# adding this file rewrites nothing. The index is already entirely LF, which is
+# what makes this safe to introduce at this point.
+* text=auto
+
+# CRLF breaks a shebang, so these keep LF everywhere.
+*.sh text eol=lf
+
+# Never converted, never diffed. An end-of-line conversion inside a binary file
+# corrupts it silently, and nothing in a diff would say so.
+*.pdf binary
+*.docx binary
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.ico binary
+*.ttf binary
+*.woff binary
+*.woff2 binary

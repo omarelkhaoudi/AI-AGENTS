@@ -8,19 +8,30 @@ export const DEMO_NOTICE = "Demonstration data only. This is not real company da
 // Dates are now offsets from the day the set is built: the demo keeps the
 // same shape whenever it runs, and real data is measured against the real
 // clock instead of inheriting a date that belongs to a fixture.
-export function demoDate(offsetDays) {
-  const day = new Date();
+// referenceDate is the day the offsets are counted from. It defaults to the
+// clock, so every existing caller keeps the behaviour it had. It exists so a
+// fixture can build the set on a chosen day without waiting for the calendar:
+// a test asserting that no date is frozen to a fixture cannot itself depend on
+// which day it runs. The reference is copied rather than read in place, because
+// a caller's Date must not come back with its hours cleared.
+export function demoDate(offsetDays, referenceDate = new Date()) {
+  const day = new Date(referenceDate);
   day.setUTCHours(0, 0, 0, 0);
   day.setUTCDate(day.getUTCDate() + offsetDays);
   return day.toISOString().slice(0, 10);
 }
 
-export function createDemoCompanyData() {
+// The reference reaches the whole set through demoDay, so the offsets below stay
+// readable as the business facts they are. It builds the demo set and nothing
+// else: no business computation takes its reference from here.
+export function createDemoCompanyData({ referenceDate = new Date() } = {}) {
+  const demoDay = (offsetDays) => demoDate(offsetDays, referenceDate);
+
   return Object.freeze({
     company: Object.freeze({
       id: "demo-company",
       name: "Demo Manufacturing Company",
-      operatingDate: demoDate(0),
+      operatingDate: demoDay(0),
       currency: "MAD"
     }),
     customers: Object.freeze([
@@ -29,7 +40,7 @@ export function createDemoCompanyData() {
         name: "Demo Client Atlas",
         segment: "manufacturing",
         pipelineStage: "deposit_follow_up",
-        lastContactAt: demoDate(-6),
+        lastContactAt: demoDay(-6),
         history: ["quote accepted", "deposit invoice issued", "production started"],
         outstandingBalance: 12000,
         currency: "MAD"
@@ -39,7 +50,7 @@ export function createDemoCompanyData() {
         name: "Demo Client Nova",
         segment: "retail",
         pipelineStage: "balance_collection",
-        lastContactAt: demoDate(-1),
+        lastContactAt: demoDay(-1),
         history: ["order scheduled", "balance invoice issued"],
         outstandingBalance: 8500,
         currency: "MAD"
@@ -86,8 +97,8 @@ export function createDemoCompanyData() {
         status: "issued",
         amount: 12000,
         currency: "MAD",
-        issuedAt: demoDate(-3),
-        dueAt: demoDate(-2),
+        issuedAt: demoDay(-3),
+        dueAt: demoDay(-2),
         linkedPaymentId: "payment-atlas-deposit"
       }),
       Object.freeze({
@@ -97,8 +108,8 @@ export function createDemoCompanyData() {
         status: "issued",
         amount: 8500,
         currency: "MAD",
-        issuedAt: demoDate(-1),
-        dueAt: demoDate(0),
+        issuedAt: demoDay(-1),
+        dueAt: demoDay(0),
         linkedPaymentId: "payment-nova-balance"
       })
     ]),
@@ -113,7 +124,7 @@ export function createDemoCompanyData() {
         amount: 12000,
         currency: "MAD",
         due: "this_week",
-        expectedPaymentDate: demoDate(-2),
+        expectedPaymentDate: demoDay(-2),
         dueStatus: "overdue",
         receivable: true,
         daysLate: 2,
@@ -130,7 +141,7 @@ export function createDemoCompanyData() {
         amount: 8500,
         currency: "MAD",
         due: "this_week",
-        expectedPaymentDate: demoDate(0),
+        expectedPaymentDate: demoDay(0),
         dueStatus: "due_today",
         receivable: true,
         daysLate: 0,
@@ -149,7 +160,7 @@ export function createDemoCompanyData() {
         commercialAttention: true,
         attentionReason: "deposit and material dependency",
         missingMaterialId: "material-aluminum-a",
-        due: demoDate(3)
+        due: demoDay(3)
       }),
       Object.freeze({
         id: "order-nova-002",
@@ -159,7 +170,7 @@ export function createDemoCompanyData() {
         delayRisk: "medium",
         commercialAttention: true,
         attentionReason: "capacity conflict could affect delivery promise",
-        due: demoDate(6)
+        due: demoDay(6)
       })
     ]),
     production: Object.freeze([
@@ -169,7 +180,7 @@ export function createDemoCompanyData() {
         classification: "IN_DANGER",
         plannedStep: "material_cutting",
         responsible: "demo-production-lead",
-        plannedDate: demoDate(1),
+        plannedDate: demoDay(1),
         timing: "en danger",
         delayRisk: "high",
         reason: "Demo missing aluminum material",
@@ -183,7 +194,7 @@ export function createDemoCompanyData() {
         classification: "AT_RISK",
         plannedStep: "assembly",
         responsible: "demo-workshop-lead",
-        plannedDate: demoDate(5),
+        plannedDate: demoDay(5),
         timing: "a surveiller",
         delayRisk: "medium",
         reason: "Demo capacity conflict"
@@ -194,7 +205,7 @@ export function createDemoCompanyData() {
         classification: "ON_TIME",
         plannedStep: "quality_check",
         responsible: "demo-quality-lead",
-        plannedDate: demoDate(7),
+        plannedDate: demoDay(7),
         timing: "a l'heure",
         delayRisk: "low",
         reason: "Demo order progressing normally"
@@ -254,7 +265,7 @@ export function createDemoCompanyData() {
         label: "Demo attendance review",
         status: "watch",
         priority: "medium",
-        observedAt: demoDate(5),
+        observedAt: demoDay(5),
         absentToday: false,
         presentToday: true,
         administrativeTask: "verify_weekly_attendance",
@@ -270,8 +281,8 @@ export function createDemoCompanyData() {
         label: "Demo overlapping leave request",
         status: "attention_required",
         priority: "high",
-        observedAt: demoDate(5),
-        plannedAt: demoDate(8),
+        observedAt: demoDay(5),
+        plannedAt: demoDay(8),
         leaveType: "annual_leave",
         absenceType: "planned_leave",
         coverageRisk: "high",
@@ -286,7 +297,7 @@ export function createDemoCompanyData() {
         label: "Demo production staffing need",
         status: "open",
         priority: "medium",
-        observedAt: demoDate(5),
+        observedAt: demoDay(5),
         linkedDepartment: "production",
         neededRole: "Production operator",
         staffingNeed: true,
@@ -302,8 +313,8 @@ export function createDemoCompanyData() {
         label: "Demo HR contract document follow-up",
         status: "watch",
         priority: "medium",
-        observedAt: demoDate(5),
-        dueAt: demoDate(15),
+        observedAt: demoDay(5),
+        dueAt: demoDay(15),
         documentStatus: "draft_review",
         requiresDecision: false
       }),
@@ -316,7 +327,7 @@ export function createDemoCompanyData() {
         label: "Demo HR incident follow-up",
         status: "attention_required",
         priority: "high",
-        observedAt: demoDate(5),
+        observedAt: demoDay(5),
         incidentType: "workplace_follow_up",
         evaluationRequired: true,
         requiresDecision: true,
@@ -331,10 +342,10 @@ export function createDemoCompanyData() {
         caseType: "quality_claim",
         warrantyStatus: "under_warranty",
         interventionStatus: "waiting_internal",
-        appointmentAt: demoDate(6),
+        appointmentAt: demoDay(6),
         responsible: "demo-after-sales-lead",
-        openedAt: demoDate(-5),
-        dueAt: demoDate(-1),
+        openedAt: demoDay(-5),
+        dueAt: demoDay(-1),
         daysOpen: 5,
         overdue: true,
         urgency: "high",
@@ -353,10 +364,10 @@ export function createDemoCompanyData() {
         caseType: "warranty_follow_up",
         warrantyStatus: "under_warranty",
         interventionStatus: "waiting_customer",
-        appointmentAt: demoDate(9),
+        appointmentAt: demoDay(9),
         responsible: "demo-support-agent",
-        openedAt: demoDate(-2),
-        dueAt: demoDate(5),
+        openedAt: demoDay(-2),
+        dueAt: demoDay(5),
         daysOpen: 2,
         overdue: false,
         urgency: "medium",
@@ -373,10 +384,10 @@ export function createDemoCompanyData() {
         caseType: "intervention",
         warrantyStatus: "out_of_warranty",
         interventionStatus: "in_progress",
-        appointmentAt: demoDate(5),
+        appointmentAt: demoDay(5),
         responsible: "demo-quality-technician",
-        openedAt: demoDate(-6),
-        dueAt: demoDate(1),
+        openedAt: demoDay(-6),
+        dueAt: demoDay(1),
         daysOpen: 6,
         overdue: false,
         urgency: "critical",
@@ -424,7 +435,7 @@ export function createDemoCompanyData() {
         channel: "Demo LinkedIn Page",
         contentType: "post",
         publicationStatus: "draft",
-        scheduledFor: demoDate(6),
+        scheduledFor: demoDay(6),
         captionDraft: "Demo caption draft for Q3 packaging campaign.",
         engagementScore: 78,
         messagesAwaitingReply: 2,
@@ -440,7 +451,7 @@ export function createDemoCompanyData() {
         channel: "Demo Editorial Calendar",
         contentType: "calendar",
         publicationStatus: "scheduled",
-        scheduledFor: demoDate(8),
+        scheduledFor: demoDay(8),
         captionDraft: "Demo weekly content reminder.",
         engagementScore: 65,
         messagesAwaitingReply: 1,
@@ -457,7 +468,7 @@ export function createDemoCompanyData() {
         documentType: "contract",
         customerId: "customer-atlas",
         contractStatus: "renewal_pending",
-        deadline: demoDate(12),
+        deadline: demoDay(12),
         clause: "delivery commitment and penalty clause",
         commercialTerms: "deposit required before schedule confirmation",
         legalCaseStatus: "open",
@@ -474,7 +485,7 @@ export function createDemoCompanyData() {
         contractId: "contract-compliance-demo",
         documentType: "compliance_note",
         contractStatus: "review_pending",
-        deadline: demoDate(17),
+        deadline: demoDay(17),
         clause: "standard compliance review",
         commercialTerms: "no binding commitment prepared",
         legalCaseStatus: "watch",
@@ -487,12 +498,61 @@ export function createDemoCompanyData() {
     // Lot 2B.2 synthetic reference data. Quantities are chosen so the material
     // shortage derived from a bill of material minus stock reproduces exactly
     // the pre-existing purchaseNeeds figures: 24 - 4 = 20 and 120 - 30 = 90.
+    // The price list the datasheet reads. Four entries chosen so the demo set
+    // carries the three ways a quote must refuse to be prepared rather than one
+    // happy path: MAT-ALU-A has no price at all, and MAT-PACK-B has two that are
+    // both in force, a standard tariff and a revision nobody closed.
+    prices: Object.freeze([
+      Object.freeze({
+        id: "price-atlas-panel",
+        productId: "product-atlas-panel",
+        productReference: "PRD-ATLAS-PANEL",
+        amount: 4200,
+        currency: "MAD",
+        unit: "unit",
+        status: "active",
+        validFrom: demoDay(-30)
+      }),
+      Object.freeze({
+        id: "price-nova-frame",
+        productId: "product-nova-frame",
+        productReference: "PRD-NOVA-FRAME",
+        amount: 2750,
+        currency: "MAD",
+        unit: "unit",
+        status: "active",
+        validFrom: demoDay(-30)
+      }),
+      Object.freeze({
+        id: "price-packaging-b-standard",
+        productId: "material-packaging-b",
+        productReference: "MAT-PACK-B",
+        amount: 18,
+        currency: "MAD",
+        unit: "units",
+        status: "active",
+        validFrom: demoDay(-60)
+      }),
+      Object.freeze({
+        id: "price-packaging-b-revised",
+        productId: "material-packaging-b",
+        productReference: "MAT-PACK-B",
+        amount: 21,
+        currency: "MAD",
+        unit: "units",
+        status: "active",
+        validFrom: demoDay(-10)
+      })
+    ]),
     products: Object.freeze([
       Object.freeze({
         id: "product-atlas-panel",
         name: "Demo Atlas Panel",
         reference: "PRD-ATLAS-PANEL",
         category: "finished_good",
+        // A file reference, never a byte. The picture lives outside the business
+        // memory; what is stored is where to find it.
+        imageRef: "demo/products/prd-atlas-panel.jpg",
         unit: "unit",
         status: "active"
       }),
@@ -501,6 +561,7 @@ export function createDemoCompanyData() {
         name: "Demo Nova Frame",
         reference: "PRD-NOVA-FRAME",
         category: "finished_good",
+        imageRef: "demo/products/prd-nova-frame.jpg",
         unit: "unit",
         status: "active"
       }),
@@ -529,7 +590,7 @@ export function createDemoCompanyData() {
         quantity: 4,
         unit: "sheets",
         status: "available",
-        countedAt: demoDate(0)
+        countedAt: demoDay(0)
       }),
       Object.freeze({
         id: "stock-packaging-b",
@@ -538,7 +599,7 @@ export function createDemoCompanyData() {
         quantity: 30,
         unit: "units",
         status: "available",
-        countedAt: demoDate(0)
+        countedAt: demoDay(0)
       })
     ]),
     // Lines stay inside the record data, matching how the repository already
@@ -549,7 +610,7 @@ export function createDemoCompanyData() {
         productId: "product-atlas-panel",
         orderId: "order-atlas-001",
         status: "active",
-        validFrom: demoDate(-12),
+        validFrom: demoDay(-12),
         lines: Object.freeze([
           Object.freeze({
             lineId: "bom-atlas-001-line-1",
@@ -564,7 +625,7 @@ export function createDemoCompanyData() {
         productId: "product-nova-frame",
         orderId: "order-nova-002",
         status: "active",
-        validFrom: demoDate(-12),
+        validFrom: demoDay(-12),
         lines: Object.freeze([
           Object.freeze({
             lineId: "bom-nova-002-line-1",
@@ -634,6 +695,135 @@ export function getLegalOverview(data = createDemoCompanyData()) {
 
 export function getCustomerOverview(data = createDemoCompanyData()) {
   return data.customers;
+}
+
+// CDC section 29 lists orders among the fifteen things its question must answer,
+// beside revenue and beside sales. The figure is the order book and nothing else:
+// how many orders are registered, and in which state.
+//
+// No amount, no currency, no total. An order carries none, in the schema, in the
+// ingestion or in the demo set, so any valued figure here would be invented.
+//
+// It counts data.orders, never the production records. The workshop holds one
+// file more than the book, and calling that a third order would report a
+// commitment nobody registered. That gap is named by the schedule below.
+//
+// It returns no item, and that is the point. Section A ENCAISSER taught this at
+// Lot 6: a tool that feeds a heading with records another tool already reports
+// lists the same signal twice, and the deduplication cannot see it because the
+// identity of a signal includes its domain. A figure belongs beside the ten
+// headings, never inside one. get_customer_orders keeps listing the orders for
+// whoever asks for them directly.
+export function createOrderBookSummary(data = createDemoCompanyData()) {
+  const orders = data.orders ?? [];
+  const countsByStatus = {};
+  for (const order of orders) {
+    const status = order.status ?? "unknown";
+    countsByStatus[status] = (countsByStatus[status] ?? 0) + 1;
+  }
+
+  return {
+    items: [],
+    summary: Object.freeze({
+      countsByStatus: Object.freeze(countsByStatus),
+      counts: Object.freeze({
+        orders: orders.length,
+        fromQuote: orders.filter((order) => order.quoteId).length
+      })
+    })
+  };
+}
+
+// Finds a product by the reference a person reads on a datasheet, and reports
+// the prices in force for it. It knows products and prices and nothing about
+// where they are stored, so it can be exercised without a repository.
+//
+// It never completes what it does not find. A quote built on an invented price
+// is worse than no quote: it looks finished. So the three ways the data can
+// fail to answer are reported as issues rather than filled in.
+export function createProductDatasheet({ products = [], prices = [] } = {}, input = {}) {
+  const reference = typeof input.productReference === "string" ? input.productReference.trim() : "";
+  if (reference === "") {
+    return createDatasheetResult({ reference: null, issues: ["missing_product_reference"] });
+  }
+
+  const product = products.find((candidate) => candidate.reference === reference);
+  if (!product) {
+    return createDatasheetResult({ reference, issues: ["unknown_product_reference"] });
+  }
+
+  const inForce = prices.filter((price) => price.productId === product.id && price.status === "active");
+  const issues = [];
+  if (inForce.length === 0) {
+    issues.push("no_price_for_product");
+  }
+  // Two tariffs in force is not a choice to make on the reader's behalf. Both
+  // are reported and the quote refuses, because picking one would state a
+  // decision nobody took.
+  if (inForce.length > 1) {
+    issues.push("several_prices_in_force");
+  }
+
+  return createDatasheetResult({
+    reference,
+    datasheet: product,
+    prices: inForce,
+    issues
+  });
+}
+
+function createDatasheetResult({ reference = null, datasheet = null, prices = [], issues = [] }) {
+  return Object.freeze({
+    reference,
+    datasheet: datasheet ? Object.freeze({ ...datasheet }) : null,
+    prices: Object.freeze(prices.map((price) => Object.freeze({ ...price }))),
+    issues: Object.freeze([...issues])
+  });
+}
+
+// Prepares a quote from what the datasheet actually says. The three blocks are
+// kept apart on purpose: what came from the product, what came from the price
+// list, and what the caller asked for. A reader can tell where every value came
+// from, and nothing is merged into a figure whose origin is lost.
+//
+// No total. Quantity times price belongs to none of the three sources, and this
+// lot adds only what was explicitly asked for: the customer and the quantity.
+//
+// The result is a proposal, never a stored quote: status is pending_approval and
+// nothing is written to the quotes domain. The tool requires prepare_action, so
+// ToolExecutionService will not run it without a human decision either way.
+export function prepareQuoteFromDatasheet(data = {}, input = {}) {
+  const sheet = createProductDatasheet(data, input);
+  const quantity = Number(input.quantity);
+  const customerId = typeof input.customerId === "string" ? input.customerId.trim() : "";
+
+  const issues = [...sheet.issues];
+  // Number(null) is 0 and Number("") is 0, so absence is checked before the
+  // conversion is trusted. A quantity of zero is not a quantity either.
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    issues.push("missing_quantity");
+  }
+  if (customerId === "") {
+    issues.push("missing_customer");
+  }
+
+  if (issues.length > 0) {
+    // A refusal carries no amount at all. Reporting a price beside a refusal
+    // would let it be read as the price of the quote that was refused.
+    return Object.freeze({
+      status: "refused",
+      reference: sheet.reference,
+      issues: Object.freeze([...issues])
+    });
+  }
+
+  return Object.freeze({
+    status: "pending_approval",
+    fromDatasheet: Object.freeze({ ...sheet.datasheet }),
+    fromPriceList: Object.freeze({ ...sheet.prices[0] }),
+    fromRequest: Object.freeze({ customerId, quantity }),
+    issues: Object.freeze([])
+  });
 }
 
 export function getCustomerOrders(data = createDemoCompanyData()) {
@@ -770,6 +960,99 @@ export function createReceivablesSummary(
   };
 }
 
+// CDC section 29 lists revenue, collections and receivables as three separate
+// figures. Revenue therefore cannot be what was collected, or it would repeat
+// the other two: it is what was invoiced, settled or not.
+//
+// isInvoiceSettled groups paid, settled and cancelled together, which is right
+// for a receivable and wrong here: a paid invoice IS revenue, a cancelled one
+// never was. Hence a predicate of its own rather than a reuse that would have
+// silently understated the total.
+const CANCELLED_INVOICE_STATUSES = Object.freeze(["cancelled", "void", "voided"]);
+
+export function isInvoiceCancelled(invoice) {
+  return CANCELLED_INVOICE_STATUSES.includes(invoice?.status);
+}
+
+// No period filter. No other tool in this project filters by period, and the
+// CDC states none, so inventing one would be inventing a business rule. The
+// window is instead REPORTED: periodStart and periodEnd are the earliest and
+// latest issue dates actually present, so a reader knows exactly what the total
+// covers without a threshold anyone had to choose.
+export function createRevenueSummary({ invoices = [] } = {}) {
+  const items = invoices
+    .filter((invoice) => !isInvoiceCancelled(invoice))
+    .map((invoice) => Object.freeze({ ...invoice }));
+  const cancelledCount = invoices.length - items.length;
+
+  const totalsByCurrency = {};
+  const countsByStatus = {};
+  const issuedDates = [];
+  let itemsWithoutAmount = 0;
+  let negativeAmountCount = 0;
+  let undatedCount = 0;
+
+  for (const invoice of items) {
+    const status = typeof invoice.status === "string" ? invoice.status : "unknown";
+    countsByStatus[status] = (countsByStatus[status] ?? 0) + 1;
+
+    const issuedAt = Date.parse(invoice.issuedAt);
+    if (Number.isNaN(issuedAt)) {
+      undatedCount += 1;
+    } else {
+      issuedDates.push(issuedAt);
+    }
+
+    // Number(null) is 0, so a null amount would have passed for a real zero and
+    // been counted as usable data. Absence is checked before conversion.
+    const brut = invoice.amount;
+    const amount = brut === null || brut === undefined || brut === "" ? Number.NaN : Number(brut);
+    if (!Number.isFinite(amount)) {
+      // Counted, never guessed: a missing amount is a gap in the data, and a
+      // total that quietly skipped it would look complete when it is not.
+      itemsWithoutAmount += 1;
+      continue;
+    }
+    if (amount < 0) {
+      negativeAmountCount += 1;
+    }
+
+    const key = currencyKey(invoice);
+    totalsByCurrency[key] = (totalsByCurrency[key] ?? 0) + amount;
+  }
+
+  // No items. Section A ENCAISSER collects the items of EVERY finance tool, so
+  // returning the invoices here listed the same two business signals twice: once
+  // as the payment expected, once as the invoice behind it, with different ids so
+  // the existing deduplication could not see they were the same reality.
+  //
+  // Revenue is a figure, not a list of things to act on. It belongs in the
+  // aggregate, which is exactly where CDC section 29 puts it, and nowhere in the
+  // ten action headings of section 31.
+  return {
+    items: [],
+    summary: Object.freeze({
+      // Currencies are never merged into a single figure: two amounts in two
+      // currencies are two amounts, and adding them would invent money.
+      totalsByCurrency: Object.freeze({ ...totalsByCurrency }),
+      countsByStatus: Object.freeze({ ...countsByStatus }),
+      counts: Object.freeze({
+        invoices: items.length,
+        itemsWithoutAmount,
+        negativeAmountCount,
+        undatedCount,
+        cancelledCount
+      }),
+      periodStart: issuedDates.length > 0
+        ? new Date(Math.min(...issuedDates)).toISOString().slice(0, 10)
+        : null,
+      periodEnd: issuedDates.length > 0
+        ? new Date(Math.max(...issuedDates)).toISOString().slice(0, 10)
+        : null
+    })
+  };
+}
+
 export const DEFAULT_QUOTE_FOLLOW_UP_DAYS = 5;
 
 const CLOSED_QUOTE_STATUSES = Object.freeze([
@@ -889,6 +1172,33 @@ export function classifyProductionRecord(record, { orders = [], referenceDate = 
   return STORED_PRODUCTION_CLASSIFICATIONS.includes(record?.classification)
     ? record.classification
     : "UNKNOWN";
+}
+
+// The schedule already knows which of its records name an order that does not
+// exist: every item carries orderFound. That flag reached the response and no
+// heading, because deduplication keeps the first entry for a signal and the
+// historical tool reports the same record without the flag. The gap between the
+// workshop and the order book was in the payload and invisible in the report.
+//
+// It is reported as a figure of its own, and the file is named rather than
+// counted: a production file with no registered order is something to look at,
+// not an order to add. This is the only tool that sees both sides.
+export function createProductionScheduleSummary(data = createDemoCompanyData(), options = {}) {
+  const items = createProductionSchedule(data, options);
+  const withoutOrder = items
+    .filter((item) => item.orderFound === false)
+    .map((item) => item.orderId);
+
+  return {
+    items,
+    summary: Object.freeze({
+      counts: Object.freeze({
+        records: items.length,
+        withoutOrder: withoutOrder.length
+      }),
+      productionWithoutOrder: Object.freeze([...withoutOrder])
+    })
+  };
 }
 
 export function createProductionSchedule(

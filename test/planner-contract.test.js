@@ -368,11 +368,12 @@ test("Planner validation works with PostgreSQL through orchestration", {
 
     assert.equal(result.status, "orchestrated");
     assert.equal(result.plans[0].metadata.planner, "deterministic");
-    // Thirteen steps for nine distinct agents: finance, commercial, production
-    // and purchasing each carry a historical tool then a computing one.
-    assert.equal(result.plans[0].steps.length, 13);
+    // Fifteen steps for nine distinct agents: production and purchasing each
+    // carry a historical tool then a computing one, while finance and commercial
+    // carry a third, the figures CDC section 29 asks for.
+    assert.equal(result.plans[0].steps.length, 15);
     assert.equal(new Set(result.plans[0].steps.map((step) => step.agentId)).size, 9);
-    assert.equal(result.executions.length, 13);
+    assert.equal(result.executions.length, 15);
     assert.equal(result.executions.every((execution) => execution.status === "completed"), true);
   } finally {
     if (requestId) {

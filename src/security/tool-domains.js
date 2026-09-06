@@ -15,10 +15,20 @@ export const TOOL_SECURITY_DOMAINS = Object.freeze({
   get_community_overview: Object.freeze(["community"]),
   get_legal_overview: Object.freeze(["legal"]),
   get_customer_overview: Object.freeze(["customers"]),
+  // The order book figure reads the orders the commercial agent already holds.
+  // No domain is added to that agent: this widens nothing.
+  get_order_book_summary: Object.freeze(["orders"]),
+  // A datasheet is a product and the price in force for it. Nothing else:
+  // preparing the quote reads the same two domains and writes none.
+  get_product_datasheet: Object.freeze(["products", "prices"]),
+  prepare_quote_from_datasheet: Object.freeze(["products", "prices"]),
   get_customer_orders: Object.freeze(["orders"]),
   get_overdue_invoices: Object.freeze(["invoices"]),
   get_supplier_catalog: Object.freeze(["suppliers"]),
   get_receivables_summary: Object.freeze(["payments", "invoices"]),
+  // finance already holds invoices for get_overdue_invoices, so this widens no
+  // agent scope: the least privilege snapshot for finance is unchanged.
+  get_revenue_summary: Object.freeze(["invoices"]),
   get_quote_follow_ups: Object.freeze(["quotes"]),
   get_production_schedule: Object.freeze(["production", "orders"]),
   get_material_requirements: Object.freeze(["orders", "bills_of_material", "stock", "products"]),
@@ -37,7 +47,7 @@ export const TOOL_SECURITY_DOMAINS = Object.freeze({
 // present; none is granted a domain it has no tool for.
 export const AGENT_SECURITY_DOMAINS = Object.freeze({
   director: Object.freeze(["company_overview"]),
-  commercial: Object.freeze(["quotes", "customers", "orders"]),
+  commercial: Object.freeze(["quotes", "customers", "orders", "products", "prices"]),
   finance: Object.freeze(["company_overview", "payments", "customers", "invoices"]),
   production: Object.freeze(["production", "orders", "external_notifications"]),
   purchasing: Object.freeze(["purchase_needs", "suppliers", "orders", "bills_of_material", "stock", "products"]),

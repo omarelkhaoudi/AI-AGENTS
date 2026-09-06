@@ -1,5 +1,11 @@
 # Guide de démonstration — V1 MVP
 
+> ⚠️ **Instantané historique.** Ces scénarios ont été vérifiés contre le
+> planificateur au commit `c2c1d89`. Ils restent globalement valides, mais des
+> outils ont été ajoutés depuis et le rapport peut contenir davantage de
+> lignes. Pour démarrer une démonstration aujourd'hui, voir le
+> [README](../README.md), section « Démarrage rapide — Demo ».
+
 **Commit de référence : `c2c1d89`**
 
 Dix scénarios reproductibles, du plus simple au plus complet. Chaque demande

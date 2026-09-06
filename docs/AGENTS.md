@@ -52,15 +52,15 @@ does not route: it orchestrates, it does not execute.
 - **Accessible information** — customers, quotes, orders, commercial_pipeline
 - **Authorized** — read_analyze, prepare_action · **Needs approval** — execute_action
 - **Sensitivity** — medium
-- **Tools (4)** — `get_pending_quotes`, `get_customer_overview`, `get_customer_orders`, `get_quote_follow_ups`
-- **Security domains** — quotes, customers, orders
+- **Tools (7)** — `get_pending_quotes`, `get_customer_overview`, `get_customer_orders`, `get_quote_follow_ups`, `get_order_book_summary`, `get_product_datasheet`, `prepare_quote_from_datasheet`
+- **Security domains** — quotes, customers, orders, products, prices
 
 ### finance — Administration / Finance
 - **Mission** — Analyze receivables, payment priorities, and finance administration signals.
 - **Accessible information** — payments, receivables, invoices, customers, finance_overview
 - **Authorized** — read_analyze, prepare_action · **Needs approval** — execute_action, human_approval_required
 - **Sensitivity** — high
-- **Tools (6)** — `get_company_overview`, `get_pending_payments`, `get_customer_overview`, `get_overdue_invoices`, `get_receivables_summary`, `execute_invoice_payment`
+- **Tools (7)** — `get_company_overview`, `get_pending_payments`, `get_customer_overview`, `get_overdue_invoices`, `get_receivables_summary`, `get_revenue_summary`, `execute_invoice_payment`
 - **Security domains** — company_overview, payments, customers, invoices
 
 ### production — Production

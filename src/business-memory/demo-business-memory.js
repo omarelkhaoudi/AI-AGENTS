@@ -178,6 +178,22 @@ export function createDemoBusinessRecords(data = createDemoCompanyData()) {
       },
       metadata: { companyId: data.company.id, draft: true }
     })),
+    // The price list a datasheet reads. Declared before the products it prices,
+    // so a reader meets the tariff beside the article it belongs to.
+    ...(data.prices ?? []).map((price) => createBusinessRecord({
+      id: price.id,
+      domain: "prices",
+      recordType: "price_entry",
+      status: price.status ?? "active",
+      source: BUSINESS_DATA_SOURCES.DEMO_MOCK,
+      data: price,
+      relations: { productId: price.productId ?? null },
+      dates: {
+        validFrom: price.validFrom ?? null,
+        validUntil: price.validUntil ?? null
+      },
+      metadata: { companyId: data.company.id, draft: true }
+    })),
     ...data.products.map((product) => createBusinessRecord({
       id: product.id,
       domain: "products",

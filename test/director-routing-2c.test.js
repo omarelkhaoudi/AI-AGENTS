@@ -23,6 +23,57 @@ function toolsOf(body, agentId) {
   return body.results.filter((result) => result.agent === agentId).map((result) => result.tool);
 }
 
+// CDC section 1 names nine agents for "Fais-moi le point complet", and section 3
+// names the same nine for "Qu'est-ce qui est urgent aujourd'hui ?". Both used to
+// reach the five of the MVP core, which left two of the ten headings section 31
+// asks for empty in the very report those sections describe.
+test("the literal CDC questions reach the nine agents they name", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const questions = [
+    "Fais-moi le point complet de l'entreprise aujourd'hui.",
+    "Qu'est-ce qui est urgent aujourd'hui ?",
+    "Quelle est la situation aujourd'hui ?"
+  ];
+
+  for (const question of questions) {
+    const body = await ask(inject, question);
+    const agents = [...new Set(body.results.map((result) => result.agent))];
+
+    assert.equal(agents.length, 9, question);
+    for (const [heading, entries] of Object.entries(body.summary.minimumSections)) {
+      assert.ok(entries.length > 0, `${heading} is empty for: ${question}`);
+    }
+  }
+});
+
+// Patterns are matched as substrings, so a word that names the question must not
+// be a word that qualifies a noun. "urgent" alone captured "sujets juridiques
+// urgents" and sent a legal request to all nine agents, the same collision
+// "recommandes" had with "commandes". The pattern is "est urgent".
+test("urgent used as an adjective never diverts a targeted request", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const legal = await ask(inject, "y a-t-il des sujets juridiques urgents");
+  assert.deepEqual([...new Set(legal.results.map((result) => result.agent))], ["legal"]);
+
+  const social = await ask(inject, "quelles publications reseaux sociaux sont urgentes");
+  assert.deepEqual(
+    [...new Set(social.results.map((result) => result.agent))],
+    ["marketing", "community_manager"]
+  );
+
+  // And the staging CDC section 23 asks for is untouched: a request that matches
+  // no pattern still goes to the MVP core, never to all nine.
+  const unknown = await ask(inject, "Peux-tu regarder ce dossier stp ?");
+  assert.deepEqual(
+    [...new Set(unknown.results.map((result) => result.agent))],
+    ["finance", "commercial", "production", "purchasing", "after_sales"]
+  );
+});
+
 // CDC section 5: "Qu'est-ce qu'on doit encaisser cette semaine ?" must reach the
 // receivables computation, not only the raw payment list.
 test("the cash collection question reaches both finance tools, historical one first", async (t) => {
@@ -31,7 +82,7 @@ test("the cash collection question reaches both finance tools, historical one fi
 
   const body = await ask(inject, "Qu'est-ce qu'on doit encaisser cette semaine ?");
 
-  assert.deepEqual(toolsOf(body, "finance"), ["get_pending_payments", "get_receivables_summary"]);
+  assert.deepEqual(toolsOf(body, "finance"), ["get_pending_payments", "get_receivables_summary", "get_revenue_summary"]);
   assert.equal(body.status, "completed");
 });
 
@@ -57,7 +108,12 @@ test("the follow-up question reaches both commercial tools, historical one first
 
   const body = await ask(inject, "Quels clients dois-je relancer ?");
 
-  assert.deepEqual(toolsOf(body, "commercial"), ["get_pending_quotes", "get_quote_follow_ups"]);
+  // Lot 14 appends the order book figure, which section 29 asks for. The two
+  // historical tools keep their order and their place ahead of it.
+  assert.deepEqual(
+    toolsOf(body, "commercial"),
+    ["get_pending_quotes", "get_quote_follow_ups", "get_order_book_summary"]
+  );
 });
 
 test("the follow-up tool applies the five day rule and excludes closed quotes", async (t) => {
@@ -76,16 +132,19 @@ test("the follow-up tool applies the five day rule and excludes closed quotes", 
   );
 });
 
-test("the company overview runs thirteen steps for nine distinct agents", async (t) => {
+test("the company overview runs fifteen steps for nine distinct agents", async (t) => {
   const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
   t.after(() => app.close());
 
   const body = await ask(inject, "Fais-moi le point sur mon entreprise aujourd'hui.");
 
-  assert.equal(body.results.length, 13);
+  assert.equal(body.results.length, 15);
   assert.equal(new Set(body.results.map((result) => result.agent)).size, 9);
-  assert.deepEqual(toolsOf(body, "finance"), ["get_pending_payments", "get_receivables_summary"]);
-  assert.deepEqual(toolsOf(body, "commercial"), ["get_pending_quotes", "get_quote_follow_ups"]);
+  assert.deepEqual(toolsOf(body, "finance"), ["get_pending_payments", "get_receivables_summary", "get_revenue_summary"]);
+  assert.deepEqual(
+    toolsOf(body, "commercial"),
+    ["get_pending_quotes", "get_quote_follow_ups", "get_order_book_summary"]
+  );
   assert.deepEqual(toolsOf(body, "production"), ["get_delayed_production_orders", "get_production_schedule"]);
   assert.deepEqual(toolsOf(body, "purchasing"), ["get_purchase_needs", "get_material_requirements"]);
 });
@@ -124,7 +183,7 @@ test("no historical tool was dropped from the company overview", async (t) => {
   }
 });
 
-test("no agent outside the four routed ones gained a step", async (t) => {
+test("no agent outside the routed ones gained a step", async (t) => {
   const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
   t.after(() => app.close());
 
@@ -136,7 +195,13 @@ test("no agent outside the four routed ones gained a step", async (t) => {
   }
 
   for (const [agentId, count] of stepsByAgent) {
-    assert.equal(count, ["finance", "commercial", "production", "purchasing"].includes(agentId) ? 2 : 1, agentId);
+    // Lot 6 gives finance a third step, the revenue figure of CDC section 29.
+    // Lot 14 gives commercial a third, the order book figure the same section
+    // asks for. No other agent moved.
+    const expected = ["finance", "commercial"].includes(agentId)
+      ? 3
+      : ["production", "purchasing"].includes(agentId) ? 2 : 1;
+    assert.equal(count, expected, agentId);
   }
 });
 
@@ -157,8 +222,11 @@ test("a sensitive payment still runs a single step and still needs approval", as
 });
 
 test("the routing table keeps the historical tool ahead of the computing one", () => {
-  assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.finance], ["get_pending_payments", "get_receivables_summary"]);
-  assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.commercial], ["get_pending_quotes", "get_quote_follow_ups"]);
+  assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.finance], ["get_pending_payments", "get_receivables_summary", "get_revenue_summary"]);
+  assert.deepEqual(
+    [...DEFAULT_TOOLS_BY_AGENT.commercial],
+    ["get_pending_quotes", "get_quote_follow_ups", "get_order_book_summary"]
+  );
   assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.production], ["get_delayed_production_orders", "get_production_schedule"]);
   assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.purchasing], ["get_purchase_needs", "get_material_requirements"]);
 });
@@ -196,21 +264,68 @@ test("no aggregate ever merges currencies into one figure", async (t) => {
   assert.equal(Object.keys(body.summary.aggregates.payments.totalsByCurrency).length, 1);
 });
 
-// The wall-clock derived figures stay out until the date convention is decided
-// on its own: production lateness is anchored on the demo operating date while
-// receivables overdue is not, and surfacing both would report two conventions.
-test("the wall clock derived receivable figures are deliberately not surfaced", async (t) => {
+// These two figures used to be held back. They are derived from the wall clock,
+// and production lateness was anchored on the demo operating date, so reporting
+// both would have shown two conventions in one answer. Lot 7 made the two
+// references the same one, which is what lets CDC section 29 have its
+// receivables rubric beside its collections rubric rather than folded into it.
+test("the director reports receivables beside collections", async (t) => {
   const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
   t.after(() => app.close());
 
   const body = await ask(inject, "Fais-moi le point sur mon entreprise aujourd'hui.");
   const aggregate = body.summary.aggregates.payments;
 
-  assert.equal("overdueTotalsByCurrency" in aggregate, false);
-  assert.equal("overdue" in aggregate.counts, false);
-  // The tool still computes them: only the Director declines to report them.
+  assert.equal("overdueTotalsByCurrency" in aggregate, true);
+  assert.equal("overdue" in aggregate.counts, true);
+  assert.deepEqual(aggregate.overdueTotalsByCurrency, { MAD: 20500 });
+  assert.equal(aggregate.counts.overdue, 2);
+  // The tool computed them all along: what changed is that the Director reports
+  // them. This assertion is unchanged, and still says where the figures come
+  // from rather than letting the projection invent one.
   const tool = body.results.find((result) => result.tool === "get_receivables_summary");
   assert.ok("overdueTotalsByCurrency" in tool.result.summary);
+});
+
+// On the demo set every receivable is overdue, so the two figures read the same
+// and a check against that set would pass just as well if both keys pointed at
+// one value. The separation is therefore proven where they diverge.
+test("collections and receivables are two figures, never one", () => {
+  const aggregates = createSummaryAggregates([
+    {
+      agent: "finance",
+      tool: "get_receivables_summary",
+      domain: "payments",
+      status: "completed",
+      result: {
+        summary: {
+          totalsByCurrency: { MAD: 1000, EUR: 500 },
+          overdueTotalsByCurrency: { MAD: 300 },
+          counts: { receivables: 3, overdue: 1, deduplicatedInvoices: 0 }
+        }
+      }
+    }
+  ]);
+  const aggregate = aggregates.payments;
+
+  assert.deepEqual(aggregate.totalsByCurrency, { MAD: 1000, EUR: 500 });
+  assert.deepEqual(aggregate.overdueTotalsByCurrency, { MAD: 300 });
+  assert.notDeepEqual(aggregate.totalsByCurrency, aggregate.overdueTotalsByCurrency);
+
+  // A currency owed but not late must not appear as a zero among the overdue:
+  // nothing is late in euros, and reporting EUR 0 would say something else.
+  assert.equal("EUR" in aggregate.overdueTotalsByCurrency, false);
+
+  assert.equal(aggregate.counts.receivables, 3);
+  assert.equal(aggregate.counts.overdue, 1);
+  assert.ok(aggregate.counts.overdue <= aggregate.counts.receivables, "overdue is a subset");
+
+  // Never added into one figure, and never merged across currencies.
+  for (const key of ["total", "totalAmount", "amount", "overdueTotal"]) {
+    assert.equal(key in aggregate, false, key);
+  }
+  const summed = 1000 + 500 + 300;
+  assert.equal(JSON.stringify(aggregate).includes(String(summed)), false, "no merged total");
 });
 
 test("the material requirements aggregate carries the shortages and the anomalies", async (t) => {

@@ -1,6 +1,13 @@
 import { createApiTokenMaterial } from "../src/security/api-token.js";
 import { USER_ROLES, normalizeUserRole } from "../src/security/authorization.js";
+import { loadDotEnvIfPresent } from "../src/load-dotenv.js";
 import { createRepository } from "../src/persistence/repository-factory.js";
+
+// Before createRepository reads DATABASE_URL. Without this, a URL living only in
+// .env was invisible here: the token was written to an in-memory repository,
+// printed, and lost when the process exited. The seed scripts already did this;
+// this one did not.
+loadDotEnvIfPresent();
 
 function readOption(name, fallback = null) {
   const prefix = `--${name}=`;

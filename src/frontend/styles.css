@@ -130,10 +130,25 @@ textarea {
   line-height: 1.45;
 }
 
+select:focus,
 textarea:focus,
 button:focus {
   outline: 3px solid rgba(17, 100, 102, 0.22);
   outline-offset: 2px;
+}
+
+select,
+textarea {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px 12px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
 }
 
 .actions {
@@ -170,6 +185,21 @@ button.secondary:hover {
 button.danger {
   border-color: var(--danger);
   background: var(--danger);
+}
+
+button.link-button {
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  padding: 0;
+  text-align: left;
+  text-decoration: underline;
+}
+
+button.link-button:hover {
+  background: transparent;
+  color: var(--accent-strong);
 }
 
 .status-pill,
@@ -369,6 +399,25 @@ button.danger {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.document-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 13px;
+}
+
+.document-table th,
+.document-table td {
+  border: 1px solid var(--line);
+  padding: 8px;
+  text-align: left;
+}
+
+.document-table th {
+  background: #eef5f2;
+  font-weight: 700;
 }
 
 .source-line {

@@ -24,12 +24,16 @@ import {
   getPendingQuotes,
   getPurchaseNeeds,
   getCustomerOverview,
+  createOrderBookSummary,
   getCustomerOrders,
   getOverdueInvoices,
   getSupplierCatalog,
   createReceivablesSummary,
+  createRevenueSummary,
   createQuoteFollowUps,
-  createProductionSchedule,
+  createProductionScheduleSummary,
+  createProductDatasheet,
+  prepareQuoteFromDatasheet,
   createMaterialRequirements
 } from "../demo/company-data.js";
 
@@ -156,6 +160,33 @@ export function createMvpTools({ businessMemory = createBusinessMemoryRepository
       resolveItems: getCustomerOverview
     }),
     createMvpMockTool({
+      id: "get_order_book_summary",
+      name: "Get Order Book Summary",
+      description: "Returns how many demo orders are registered and in which state. It reports no item, because a figure belongs beside the Director headings rather than inside one, and no amount, because an order carries none.",
+      category: "orders",
+      requiredPermission: "read_analyze",
+      allowedAgents: ["commercial"],
+      businessMemory,
+      domain: "orders",
+      resolveItems: createOrderBookSummary
+    }),
+    createDatasheetTool({
+      id: "get_product_datasheet",
+      name: "Get Product Datasheet",
+      description: "Finds a demo product by the reference printed on its datasheet and reports the prices in force for it. It never completes what it does not find: an unknown reference, a product with no price, and a product with several prices in force are each reported as an issue.",
+      requiredPermission: "read_analyze",
+      resolveSummary: createProductDatasheet,
+      businessMemory
+    }),
+    createDatasheetTool({
+      id: "prepare_quote_from_datasheet",
+      name: "Prepare Quote From Datasheet",
+      description: "Prepares a quote proposal from a product datasheet and the price in force, keeping what came from the product, from the price list and from the request apart. It stores nothing and requires a human approval. Without a price, or with several in force, it refuses rather than choosing one.",
+      requiredPermission: "prepare_action",
+      resolveSummary: prepareQuoteFromDatasheet,
+      businessMemory
+    }),
+    createMvpMockTool({
       id: "get_customer_orders",
       name: "Get Customer Orders",
       description: "Returns demo customer orders with status and risk for commercial follow-up and production planning.",
@@ -200,6 +231,17 @@ export function createMvpTools({ businessMemory = createBusinessMemoryRepository
       resolveItems: createReceivablesSummary
     }),
     createMvpMockTool({
+      id: "get_revenue_summary",
+      name: "Get Revenue Summary",
+      description: "Returns demo invoiced revenue with totals per currency. Cancelled invoices are excluded and paid ones are kept, because revenue is what was invoiced rather than what was collected. Totals are never merged across currencies, and the period reported is derived from the issue dates actually present.",
+      category: "finance",
+      requiredPermission: "read_analyze",
+      allowedAgents: ["finance"],
+      businessMemory,
+      domain: "invoices",
+      resolveItems: createRevenueSummary
+    }),
+    createMvpMockTool({
       id: "get_quote_follow_ups",
       name: "Get Quote Follow Ups",
       description: "Returns demo quotes left without a reply for at least five days and not closed, so commercial follow-up can be prepared.",
@@ -219,7 +261,7 @@ export function createMvpTools({ businessMemory = createBusinessMemoryRepository
       allowedAgents: ["production"],
       businessMemory,
       domains: ["production", "orders"],
-      resolveItems: createProductionSchedule
+      resolveItems: createProductionScheduleSummary
     }),
     createMvpMockTool({
       id: "get_material_requirements",
@@ -369,6 +411,66 @@ function createSensitiveLegalDecisionTool() {
         decision: "Human approval is required before any signature, legal validation, or contractual commitment."
       })
     ]
+  });
+}
+
+// The only tools that take a business input. createMvpMockTool passes none to
+// its resolvers, and widening that signature would reach the four resolvers
+// that already use their second parameter for a reference date or options:
+// receivables and overdue invoices would then measure lateness against a
+// request identifier. So these two are built the way notify_delay_alert is,
+// with their own schema and their own resolve.
+//
+// Nothing else is duplicated. The memory read goes through
+// readBusinessRecordsForTool, the domains through toolSecurityDomains, and
+// ToolExecutionService checks them exactly as it checks the other tools.
+const datasheetInputSchema = createToolInputSchema({
+  required: ["requestId"],
+  properties: {
+    requestId: { type: "string" },
+    productReference: { type: "string" },
+    customerId: { type: "string" },
+    quantity: { type: "number" }
+  }
+});
+
+function createDatasheetTool({ id, name, description, requiredPermission, resolveSummary, businessMemory }) {
+  return createToolDefinition({
+    id,
+    name,
+    description,
+    category: "orders",
+    securityDomains: toolSecurityDomains(id),
+    requiredPermission,
+    allowedAgents: ["commercial"],
+    inputSchema: datasheetInputSchema,
+    adapter: createMockToolAdapter({
+      toolId: id,
+      inputSchema: datasheetInputSchema,
+      metadata: {
+        category: "orders",
+        dataSource: getBusinessDataSourceDescriptor(businessMemory).recordSource
+      },
+      resolve: async (context, input) => {
+        const descriptor = getBusinessDataSourceDescriptor(businessMemory);
+        const read = async (domain) => {
+          if (!businessMemory) {
+            return [];
+          }
+          const records = await readBusinessRecordsForTool({
+            businessMemory,
+            domain,
+            agentId: context.agentId,
+            source: descriptor.recordSource
+          });
+          return records.map((record) => record.data);
+        };
+        const data = { products: await read("products"), prices: await read("prices") };
+        // No item: a datasheet and a quote proposal are answers to a question,
+        // not business signals a Director heading should list.
+        return createDemoResult(context, [], descriptor, resolveSummary(data, input));
+      }
+    })
   });
 }
 

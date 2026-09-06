@@ -24,11 +24,14 @@ import { authenticatePrincipal, extractBearerToken } from "../security/authentic
 import { assertCapability } from "../security/authorization.js";
 import { createSecurityConfig } from "../security/security-config.js";
 import { createApiTokenMaterial, hashApiTokenSecret } from "../security/api-token.js";
+import { HkidsDocumentService, normalizeDocumentError } from "../documents/document-service.js";
 
 // The one outbound tool. It is never routed by a planner, so the only way to
 // raise it is the dedicated endpoint below, and the only way to send it is a
 // human approval.
 const DELAY_ALERT_TOOL_ID = "notify_delay_alert";
+const PRODUCT_DATASHEET_TOOL_ID = "get_product_datasheet";
+const DATASHEET_QUOTE_TOOL_ID = "prepare_quote_from_datasheet";
 
 const FRONTEND_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "frontend");
 const FRONTEND_ASSETS = Object.freeze({
@@ -47,6 +50,8 @@ export function buildApi({
   toolRegistry = null,
   security = null,
   businessMemory = null,
+  documentService = null,
+  documentOutputDir = null,
   // A seam, not a feature: the derived idempotency key names a day, and a test
   // cannot cross a day boundary by waiting for one.
   clock = () => new Date()
@@ -58,6 +63,7 @@ export function buildApi({
   // the customer directory to PostgreSQL together, never one without the other.
   const directoryMemory = businessMemory ?? createBusinessMemoryRepository();
   const securityConfig = security ?? foundationConfig.security ?? createSecurityConfig();
+  const hkidsDocuments = documentService ?? new HkidsDocumentService({ repository, outputDir: documentOutputDir });
 
   const app = Fastify({ logger, bodyLimit: securityConfig.bodyLimitBytes });
   let seedPromise = null;
@@ -332,6 +338,48 @@ export function buildApi({
     // itself, then lets ToolExecutionService open the approval. Nothing is sent
     // here. The alert leaves only when a human approves it, through the existing
     // POST /api/approvals/:id/approve, which is untouched by this commit.
+    // The quote a person asks for from a datasheet. It takes a business input,
+    // which is why it is a route of its own: the Director builds a fixed input
+    // for every step it plans, so a reference, a customer and a quantity have no
+    // way through it. Same shape as the delay alert route below, and the same
+    // service, permissions and approval underneath.
+    //
+    // No idempotency key, unlike the delay alert. Two identical quote requests
+    // are two real commercial requests; two identical delay alerts are a repeat.
+    app.post("/api/quotes/datasheet", writeRouteOptions(), async (request, reply) => {
+      const validation = normalizeDatasheetQuoteBody(request.body);
+      if (!validation.ok) {
+        return reply.code(400).send({ error: validation.error, details: { code: "INVALID_INPUT" } });
+      }
+
+      try {
+        if (seedAgents) {
+          await runSeedOnce({
+            repository,
+            getSeedPromise: () => seedPromise,
+            setSeedPromise: (promise) => {
+              seedPromise = promise;
+            }
+          });
+        }
+
+        const prepared = await prepareDatasheetQuoteApproval({
+          repository,
+          toolRegistry,
+          createdById: request.principal.userId,
+          input: validation.value
+        });
+
+        // 202 when a person now has something to decide, 200 when the data could
+        // not answer and nothing was opened for anyone.
+        return reply
+          .code(prepared.status === "approval_required" ? 202 : 200)
+          .send(prepared);
+      } catch (error) {
+        return sendDomainError(reply, "Quote preparation failed.", error);
+      }
+    });
+
     app.post("/api/production/delay-alerts", writeRouteOptions(), async (request, reply) => {
       const validation = normalizeDelayAlertBody(request.body);
       if (!validation.ok) {
@@ -392,6 +440,49 @@ export function buildApi({
           }));
         }
         return sendDomainError(reply, "Delay alert preparation failed.", error);
+      }
+    });
+
+    app.post("/api/documents/preview", writeRouteOptions(), async (request, reply) => {
+      try {
+        return reply.code(200).send(await hkidsDocuments.preview(request.body));
+      } catch (error) {
+        const normalized = normalizeDocumentError(error);
+        if (normalized) {
+          return reply.code(normalized.statusCode).send(normalized.body);
+        }
+        return sendDomainError(reply, "Document preview failed.", error);
+      }
+    });
+
+    app.post("/api/documents/generate", writeRouteOptions(), async (request, reply) => {
+      try {
+        return reply.code(201).send(await hkidsDocuments.generate(request.body, {
+          createdById: request.principal.userId
+        }));
+      } catch (error) {
+        const normalized = normalizeDocumentError(error);
+        if (normalized) {
+          return reply.code(normalized.statusCode).send(normalized.body);
+        }
+        return sendDomainError(reply, "Document generation failed.", error);
+      }
+    });
+
+    app.get("/api/documents/:id/download", readRouteOptions(), async (request, reply) => {
+      try {
+        const download = await hkidsDocuments.download(request.params.id);
+        const name = download.metadata.name ?? "document";
+        return reply
+          .type(download.metadata.mimeType ?? "application/octet-stream")
+          .header("Content-Disposition", `attachment; filename="${basenameForHeader(name)}"`)
+          .send(download.bytes);
+      } catch (error) {
+        const normalized = normalizeDocumentError(error);
+        if (normalized) {
+          return reply.code(normalized.statusCode).send(normalized.body);
+        }
+        return sendDomainError(reply, "Document download failed.", error);
       }
     });
 
@@ -752,6 +843,144 @@ async function prepareDelayAlertApproval({
   );
 }
 
+function normalizeDatasheetQuoteBody(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, error: "Request body must be an object." };
+  }
+
+  // Identity is never taken from the request body.
+  if (body.createdById !== undefined) {
+    return { ok: false, error: "createdById is not accepted: the authenticated principal is the author." };
+  }
+
+  const productReference = normalizeText(body.productReference);
+  const customerId = normalizeText(body.customerId);
+  // Number(null) and Number("") are both 0, so the value is judged after the
+  // conversion, not before it: a quantity of zero is not a quantity.
+  const quantity = Number(body.quantity);
+
+  if (!productReference) {
+    return { ok: false, error: "productReference is required." };
+  }
+  if (!customerId) {
+    return { ok: false, error: "customerId is required." };
+  }
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    return { ok: false, error: "quantity must be a positive number." };
+  }
+
+  return { ok: true, value: { productReference, customerId, quantity } };
+}
+
+// Same sequence as prepareDelayAlertApproval below, for the same reason: the
+// request, the audit event, the plan and the step exist before anything runs, so
+// what a person is asked to approve is traceable to what was asked for.
+//
+// The datasheet is read first, with read_analyze. That is what lets the answer
+// carry the product, the picture reference and the price even when the quote
+// refuses: a reader sees why it refused, not only that it did.
+async function prepareDatasheetQuoteApproval({ repository, toolRegistry, createdById, input }) {
+  const savedRequest = await repository.createRequest({
+    title: `Quote for ${input.productReference}`,
+    source: "datasheet_quote",
+    status: "received",
+    payload: { ...input },
+    createdById
+  });
+
+  await repository.createAuditEvent(
+    createAuditEvent({
+      type: "request_created",
+      actorUserId: createdById,
+      requestId: savedRequest.id,
+      resourceType: "request",
+      resourceId: savedRequest.id,
+      metadata: { source: savedRequest.source, productReference: input.productReference }
+    })
+  );
+
+  const plan = await repository.createPlan({
+    requestId: savedRequest.id,
+    createdByAgentId: "commercial",
+    status: "created",
+    summary: "Prepare a quote from a product datasheet for human approval.",
+    metadata: { planner: "none", trigger: "datasheet_quote_endpoint" }
+  });
+
+  const toolInput = { requestId: savedRequest.id, ...input };
+
+  const planStep = await repository.createPlanStep({
+    planId: plan.id,
+    agentId: "commercial",
+    sequence: 1,
+    status: "created",
+    actionType: DATASHEET_QUOTE_TOOL_ID,
+    toolName: DATASHEET_QUOTE_TOOL_ID,
+    input: toolInput,
+    requiresApproval: true
+  });
+
+  const agent = await repository.getAgent("commercial");
+  const agentPermissions = agent?.permissions ?? [];
+  const service = new ToolExecutionService({ repository, toolRegistry });
+
+  const read = await service.execute({
+    agentId: "commercial",
+    agentPermissions,
+    toolId: PRODUCT_DATASHEET_TOOL_ID,
+    input: toolInput,
+    requestId: savedRequest.id,
+    planId: plan.id,
+    metadata: { trigger: "datasheet_quote_endpoint", toolName: PRODUCT_DATASHEET_TOOL_ID }
+  });
+  const datasheet = read.output.result.summary;
+
+  // A datasheet that cannot answer stops here. Opening an approval for a quote
+  // that could never be built would ask a person to decide on nothing.
+  if (datasheet.issues.length > 0) {
+    return {
+      status: "refused",
+      request: { id: savedRequest.id },
+      planStep: { id: planStep.id },
+      datasheet
+    };
+  }
+
+  try {
+    await service.execute({
+      agentId: "commercial",
+      agentPermissions,
+      toolId: DATASHEET_QUOTE_TOOL_ID,
+      input: toolInput,
+      requestId: savedRequest.id,
+      planId: plan.id,
+      planStepId: planStep.id,
+      metadata: { trigger: "datasheet_quote_endpoint", toolName: DATASHEET_QUOTE_TOOL_ID }
+    });
+  } catch (cause) {
+    if (cause instanceof ToolExecutionServiceError && cause.code === "APPROVAL_REQUIRED") {
+      return {
+        status: "approval_required",
+        request: { id: savedRequest.id },
+        planStep: { id: planStep.id },
+        datasheet,
+        approval: cause.details.approval
+      };
+    }
+    throw cause;
+  }
+
+  // Unreachable by design: the tool requires prepare_action, and requiresApproval
+  // in ToolExecutionService opens an approval for every non read_analyze tool. If
+  // that ever stops holding, a quote has been prepared without a human, and
+  // saying so loudly is better than reporting success.
+  throw new ToolExecutionServiceError(
+    "The quote was prepared without a human approval.",
+    "APPROVAL_NOT_ENFORCED",
+    { toolId: DATASHEET_QUOTE_TOOL_ID, requestId: savedRequest.id }
+  );
+}
+
 function normalizeDelayAlertBody(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return { ok: false, error: "Request body must be an object." };
@@ -883,12 +1112,24 @@ export const BUSINESS_DOMAIN_BY_TOOL = Object.freeze({
   get_company_overview: "company_overview",
   get_customer_overview: "customers",
   get_customer_orders: "orders",
+  // Neither is routed by the Director, so neither ever reaches a heading.
+  // The presentation domain is declared all the same: a tool without one is
+  // reported as a drift by the registry.
+  get_product_datasheet: "products",
+  prepare_quote_from_datasheet: "products",
+  // Same presentation domain as the list tool it stands beside. Only one of
+  // the two is routed, so the aggregate can only come from this one.
+  get_order_book_summary: "orders",
   get_overdue_invoices: "invoices",
   get_supplier_catalog: "suppliers",
   // Lot 2B.2 computing tools. A tool reading several business domains reports
   // the presentation domain of the section it feeds, so receivables land in
   // A ENCAISSER and material requirements in A COMMANDER.
   get_receivables_summary: "payments",
+  // CDC section 29 counts revenue, collections and receivables separately, so
+  // this reports the invoices domain rather than payments: the figure belongs
+  // beside what was invoiced, not beside what is expected in cash.
+  get_revenue_summary: "invoices",
   get_quote_follow_ups: "quotes",
   get_production_schedule: "production",
   get_material_requirements: "purchase_needs",
@@ -936,6 +1177,16 @@ function createDirectorHierarchy(agentResults) {
 }
 
 function createDemoSummary({ status, completedCount, expectedCount, agentResults, decisionsRequired, directory }) {
+  // The same collection the decisions are built from, keyed the way the Director
+  // already decides two entries are the same signal. An item carrying no
+  // identity yields null and is never added, so it is kept under both headings
+  // rather than dropped on a resemblance nothing can prove.
+  const awaitingDecision = new Set(
+    collectItems(agentResults, requiresBusinessDecision, directory)
+      .map((entry) => collectedItemIdentity(entry.domain, entry.item))
+      .filter((identity) => identity !== null)
+  );
+
   const sections = Object.freeze({
     whatIsGoingWell: collectItems(agentResults, ({ item }) =>
       ["ok", "completed"].includes(item.status) ||
@@ -975,12 +1226,19 @@ function createDemoSummary({ status, completedCount, expectedCount, agentResults
     legal: collectItems(agentResults, ({ agent }) => agent === "legal", directory),
     hr: collectItems(agentResults, ({ agent }) => agent === "hr", directory),
     afterSales: collectItems(agentResults, ({ agent }) => agent === "after_sales", directory),
-    blockers: collectItems(agentResults, ({ item }) =>
-      ["high", "watch", "blocked", "attention_required"].includes(item.urgency) ||
-      ["high", "watch", "blocked", "attention_required"].includes(item.status) ||
-      item.priority === "high" ||
-      item.delayRisk === "high"
-    , directory),
+    // A signal can be both a risk and a decision, and reported under both it was
+    // the same line twice: nine of the eleven decisions repeated a risk, in a
+    // different shape, with nothing saying they were the same reality. The two
+    // headings now answer different questions. What awaits an arbitration is
+    // reported where the arbitration is asked for; this heading keeps what
+    // deserves watching while nothing is being asked yet.
+    //
+    // Filtered after collection rather than inside the predicate, because the
+    // identity of a signal includes its domain and a predicate is not given one.
+    // A tool is not part of that identity: the same order reaches the Director
+    // through more than one tool, and it is one order either way.
+    blockers: collectItems(agentResults, ({ item }) => isBlockingSignal(item), directory)
+      .filter((entry) => !awaitingDecision.has(collectedItemIdentity(entry.domain, entry.item))),
     decisionsRequired
   });
   const minimumSections = createMinimumDirectorSections(sections);
@@ -1030,19 +1288,60 @@ function createMinimumDirectorSections(sections) {
 // than inside them: a section entry is always one business item, so an
 // aggregate placed there would read as one more item to act on.
 //
-// The projection is explicit, never a copy of the whole summary. Two figures
-// are deliberately left out until they are decided on their own:
-// overdueTotalsByCurrency and counts.overdue, both derived from the wall clock
-// while production lateness is anchored on the demo operating date.
+// The projection is explicit, never a copy of the whole summary. The two
+// overdue figures were held back while they were derived from the wall clock
+// and production lateness was anchored on the demo operating date: reporting
+// both would have shown two conventions in one answer. Lot 7 made the two
+// references the same one, so that reason is gone and the figures are reported.
 const SUMMARY_AGGREGATE_BY_TOOL = Object.freeze({
   get_receivables_summary: (summary) => ({
+    // CDC section 29 lists collections and receivables among the fifteen things
+    // its question must answer, as two of them. totalsByCurrency is what is
+    // expected in; overdueTotalsByCurrency is the share of it already past due.
+    // Reported side by side and never added: the second is a subset of the
+    // first, so one figure would hide how much of the money owed is late.
+    //
     // Currencies are never merged into a single figure: two amounts in two
     // currencies are two amounts, and adding them would invent money.
     totalsByCurrency: Object.freeze({ ...summary.totalsByCurrency }),
+    overdueTotalsByCurrency: Object.freeze({ ...summary.overdueTotalsByCurrency }),
     counts: Object.freeze({
       receivables: summary.counts?.receivables ?? 0,
+      overdue: summary.counts?.overdue ?? 0,
       deduplicatedInvoices: summary.counts?.deduplicatedInvoices ?? 0
     })
+  }),
+  get_revenue_summary: (summary) => ({
+    // Currencies are never merged, exactly as for receivables. periodStart and
+    // periodEnd are derived from the issue dates present, so the reader knows
+    // what window the total covers without a threshold anyone had to choose.
+    totalsByCurrency: Object.freeze({ ...summary.totalsByCurrency }),
+    counts: Object.freeze({
+      invoices: summary.counts?.invoices ?? 0,
+      itemsWithoutAmount: summary.counts?.itemsWithoutAmount ?? 0,
+      cancelledCount: summary.counts?.cancelledCount ?? 0
+    }),
+    periodStart: summary.periodStart ?? null,
+    periodEnd: summary.periodEnd ?? null
+  }),
+  // CDC section 29 lists orders as a rubric of its own. The figure is the order
+  // book: how many are registered and in which state. No amount, no currency and
+  // no total, because an order carries none anywhere in this system.
+  get_order_book_summary: (summary) => ({
+    countsByStatus: Object.freeze({ ...summary.countsByStatus }),
+    counts: Object.freeze({
+      orders: summary.counts?.orders ?? 0,
+      fromQuote: summary.counts?.fromQuote ?? 0
+    })
+  }),
+  // The workshop holds one file more than the book. Naming which one keeps the
+  // order count honest: the gap is reported rather than folded into the figure.
+  get_production_schedule: (summary) => ({
+    counts: Object.freeze({
+      records: summary.counts?.records ?? 0,
+      withoutOrder: summary.counts?.withoutOrder ?? 0
+    }),
+    productionWithoutOrder: Object.freeze([...(summary.productionWithoutOrder ?? [])])
   }),
   get_material_requirements: (summary) => ({
     counts: Object.freeze({
@@ -1450,8 +1749,35 @@ function createApprovalDecisions(request) {
   }));
 }
 
+// What makes a signal a risk. Severity is read without its case because the
+// records do not agree on one: urgency and status are lower case, priority is
+// upper case on some records and lower on others. Compared as written,
+// "critical" matched nothing, and the single most severe signal of the set
+// never reached the risks heading at all.
+const BLOCKING_STATES = Object.freeze(["critical", "high", "watch", "blocked", "attention_required"]);
+const BLOCKING_SEVERITIES = Object.freeze(["critical", "high"]);
+
+function lowerCased(value) {
+  return typeof value === "string" ? value.toLowerCase() : null;
+}
+
+export function isBlockingSignal(item) {
+  return (
+    BLOCKING_STATES.includes(lowerCased(item?.urgency)) ||
+    BLOCKING_STATES.includes(lowerCased(item?.status)) ||
+    BLOCKING_SEVERITIES.includes(lowerCased(item?.priority)) ||
+    BLOCKING_SEVERITIES.includes(lowerCased(item?.delayRisk))
+  );
+}
+
+// One predicate, used to build the decisions and to know which signals are
+// already awaiting one. Two copies would drift.
+function requiresBusinessDecision({ item }) {
+  return item.requiresDecision === true;
+}
+
 function createBusinessDecisions(agentResults, directory) {
-  return collectItems(agentResults, ({ item }) => item.requiresDecision === true, directory)
+  return collectItems(agentResults, requiresBusinessDecision, directory)
     .map((entry) => Object.freeze({
       type: "business_decision",
       agent: entry.agent,
@@ -1556,6 +1882,10 @@ function createErrorResponse(message, error) {
 
 function sendDomainError(reply, message, error) {
   return reply.code(statusCodeForError(error)).send(createErrorResponse(message, error));
+}
+
+function basenameForHeader(name) {
+  return String(name).replace(/["\r\n\\/]/g, "_");
 }
 
 function statusCodeForError(error) {

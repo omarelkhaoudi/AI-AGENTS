@@ -17,6 +17,20 @@ const DIRECTOR_SECTIONS = Object.freeze([
   ["CE QUI PRESENTE UN RISQUE JURIDIQUE", "RISQUE JURIDIQUE"]
 ]);
 
+// CDC section 29 asks the situation question to answer with, among other things,
+// revenue, collections and receivables as three separate figures, and purchase
+// needs as a fourth. The Director already computes them; the cockpit read the
+// ten headings and the provenance and dropped the figures on the floor.
+//
+// Each row names the aggregate it reads, the totals it shows and the count that
+// goes beside them. Collections and receivables share one aggregate and differ
+// by which totals they read: the second is the overdue share of the first.
+const DIRECTOR_FIGURES = Object.freeze([
+  ["CHIFFRE D'AFFAIRES", "invoices", "totalsByCurrency", "invoices", "facture(s)"],
+  ["ENCAISSEMENTS", "payments", "totalsByCurrency", "receivables", "creance(s)"],
+  ["CREANCES EN RETARD", "payments", "overdueTotalsByCurrency", "overdue", "en retard"]
+]);
+
 const AGENT_ROSTER = Object.freeze([
   ["director", "🧠 Direction"],
   ["commercial", "💼 Commercial"],
@@ -65,9 +79,6 @@ document.querySelectorAll("[data-scenario]").forEach((button) => {
 });
 
 document.querySelector("#refresh-approvals").addEventListener("click", () => refreshApprovals());
-
-await refreshApprovals();
-renderAgentRoster([]);
 
 // The cockpit authenticates like any other client. In demo mode the server
 // hands out a real token; otherwise the token is supplied by the operator.
@@ -182,6 +193,7 @@ function renderSummary(response) {
   summaryContent.className = "";
   summaryContent.innerHTML = `
     <p>${escapeHtml(response.summary?.headline ?? "Synthese indisponible.")}</p>
+    ${renderFigures(response.summary?.aggregates)}
     ${renderDirectorSections(minimumSections)}
     ${renderProvenance(domainSources)}
   `;
@@ -327,6 +339,81 @@ function describeItem(item) {
     "Signal demo";
 }
 
+// One label per currency, never a sum. Two amounts in two currencies are two
+// amounts, and adding them would invent money. A currency that is owed but has
+// nothing late in it is simply absent from the overdue row rather than shown at
+// zero, because zero late would say something the data does not say.
+function renderAmounts(totals) {
+  const entries = Object.entries(totals ?? {});
+  if (entries.length === 0) {
+    return '<span class="muted">aucun montant</span>';
+  }
+  return entries
+    .map(([currency, amount]) => `<span class="tag">${escapeHtml(currency)} ${escapeHtml(String(amount))}</span>`)
+    .join(" ");
+}
+
+// Amounts are rendered as the Director computed them. No locale formatting: the
+// separator would depend on the machine, and a figure a reader has to reconcile
+// with another screen is worth less than a figure that is simply the same one.
+function renderFigures(aggregates) {
+  const figures = aggregates ?? {};
+  const rows = DIRECTOR_FIGURES
+    .filter(([, domain]) => figures[domain])
+    .map(([label, domain, totalsKey, countKey, countLabel]) => {
+      const aggregate = figures[domain];
+      const count = aggregate.counts?.[countKey] ?? 0;
+      return `
+        <li>
+          <strong>${escapeHtml(label)}</strong>
+          ${renderAmounts(aggregate[totalsKey])}
+          <span class="muted">${escapeHtml(String(count))} ${escapeHtml(countLabel)}</span>
+        </li>
+      `;
+    });
+
+  // The order book carries no amount either, and must never be shown one: CDC
+  // section 29 asks how many orders there are, not what they are worth. The
+  // workshop file with no registered order is named on the same row, so the count
+  // and the gap are read together instead of one hiding the other.
+  const orders = figures.orders;
+  if (orders) {
+    const byStatus = Object.entries(orders.countsByStatus ?? {})
+      .map(([status, count]) => `${escapeHtml(status)} ${escapeHtml(String(count))}`)
+      .join(", ");
+    const withoutOrder = figures.production?.productionWithoutOrder ?? [];
+    rows.push(`
+      <li>
+        <strong>COMMANDES</strong>
+        <span class="tag">${escapeHtml(String(orders.counts?.orders ?? 0))} au carnet</span>
+        <span class="muted">${byStatus || "aucun statut"}</span>
+        ${withoutOrder.length > 0
+          ? `<span class="muted">anomalie: ${escapeHtml(String(withoutOrder.length))} production(s) sans commande enregistree (${withoutOrder.map((id) => escapeHtml(id)).join(", ")})</span>`
+          : ""}
+      </li>
+    `);
+  }
+
+  // Purchase needs carry no amount at all: the demo set prices nothing, so this
+  // row counts what is missing instead of valuing it.
+  const materials = figures.purchase_needs;
+  if (materials) {
+    const counts = materials.counts ?? {};
+    rows.push(`
+      <li>
+        <strong>BESOINS MATIERES</strong>
+        <span class="tag">${escapeHtml(String(counts.shortages ?? 0))} rupture(s)</span>
+        <span class="muted">${escapeHtml(String(counts.lines ?? 0))} ligne(s), ${escapeHtml(String(counts.orders ?? 0))} commande(s)</span>
+      </li>
+    `);
+  }
+
+  if (rows.length === 0) {
+    return '<p class="muted">Aucun chiffre disponible.</p>';
+  }
+  return `<ul class="summary-list director-figures">${rows.join("")}</ul>`;
+}
+
 function renderDirectorSections(minimumSections) {
   return `
     <div class="director-sections">
@@ -436,3 +523,336 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 }
+
+// The datasheet panel. It calls one route of its own, POST /api/quotes/datasheet,
+// because the Director builds a fixed input for every step it plans and a product
+// reference has no way through it. Everything else is the cockpit as it was:
+// postJson carries the token, and the approval card comes from refreshApprovals.
+const datasheetForm = document.querySelector("#datasheet-form");
+const datasheetReference = document.querySelector("#datasheet-reference");
+const datasheetCustomer = document.querySelector("#datasheet-customer");
+const datasheetQuantity = document.querySelector("#datasheet-quantity");
+const datasheetState = document.querySelector("#datasheet-state");
+const datasheetResult = document.querySelector("#datasheet-result");
+const documentForm = document.querySelector("#document-form");
+const documentType = document.querySelector("#document-type");
+const documentNumber = document.querySelector("#document-number");
+const documentDate = document.querySelector("#document-date");
+const documentReference = document.querySelector("#document-reference");
+const documentObject = document.querySelector("#document-object");
+const documentClient = document.querySelector("#document-client");
+const documentAddress = document.querySelector("#document-address");
+const documentPaymentMethod = document.querySelector("#document-payment-method");
+const documentPaymentTermsRule = document.querySelector("#document-payment-terms");
+const documentPaymentTermsManual = document.querySelector("#document-payment-terms-manual");
+const documentNote = document.querySelector("#document-note");
+const documentItems = document.querySelector("#document-items");
+const documentState = document.querySelector("#document-state");
+const documentPreview = document.querySelector("#document-preview");
+let lastDocumentPreview = null;
+
+datasheetForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await submitDatasheetQuote();
+});
+
+document.querySelectorAll("[data-datasheet]").forEach((button) => {
+  button.addEventListener("click", () => {
+    datasheetReference.value = button.dataset.datasheet;
+    datasheetReference.focus();
+  });
+});
+
+async function submitDatasheetQuote() {
+  datasheetState.textContent = "Preparation en cours...";
+  try {
+    const payload = await postJson("/api/quotes/datasheet", {
+      productReference: datasheetReference.value,
+      customerId: datasheetCustomer.value,
+      quantity: Number(datasheetQuantity.value)
+    });
+
+    renderDatasheetQuote(payload);
+    datasheetState.textContent = payload.status === "approval_required"
+      ? "Devis prepare: votre validation est requise."
+      : "Preparation refusee: la base ne permet pas de repondre.";
+
+    // The approval card comes from the panel that already exists. No second
+    // approval mechanism is created here, and none is needed.
+    await refreshApprovals();
+  } catch (error) {
+    datasheetResult.className = "";
+    datasheetResult.innerHTML = card("Erreur preparation", escapeHtml(error.message), "warning");
+    datasheetState.textContent = error.message;
+  }
+}
+
+// The three provenances are rendered as three separate rows, in the order a
+// reader follows them: what the product says, what the price list says, what was
+// asked for. No fourth row: quantity times price belongs to none of the three,
+// and a figure with no origin is exactly what this panel exists to avoid.
+function renderDatasheetQuote(payload) {
+  const sheet = payload.datasheet ?? {};
+  datasheetResult.className = "";
+  datasheetResult.innerHTML = `
+    <p><strong>${escapeHtml(payload.status ?? "inconnu")}</strong></p>
+    ${renderDatasheetIssues(sheet.issues ?? [])}
+    ${renderDatasheetProduct(sheet.datasheet)}
+    ${renderDatasheetPrices(sheet.prices ?? [])}
+    ${renderDatasheetRequest(payload)}
+  `;
+}
+
+function renderDatasheetIssues(issues) {
+  if (issues.length === 0) {
+    return "";
+  }
+  return `
+    <ul class="summary-list">
+      ${issues.map((issue) => `<li><strong>${escapeHtml(issue)}</strong></li>`).join("")}
+    </ul>
+  `;
+}
+
+function renderDatasheetProduct(product) {
+  if (!product) {
+    return '<p class="muted">Aucune fiche produit: la reference est introuvable.</p>';
+  }
+  return `
+    <ul class="summary-list">
+      <li>
+        <strong>fromDatasheet</strong>
+        <span>${escapeHtml(product.reference ?? "")}</span>
+        <span>${escapeHtml(product.name ?? "")}</span>
+        <span class="muted">${escapeHtml(product.category ?? "")} · ${escapeHtml(product.unit ?? "")} · ${escapeHtml(product.status ?? "")}</span>
+        <span class="muted">${escapeHtml(product.imageRef ?? "aucune image")}</span>
+      </li>
+    </ul>
+  `;
+}
+
+// Every price in force is shown and none is marked as chosen. Two tariffs is an
+// ambiguity for a person to settle, not a choice this panel may make.
+function renderDatasheetPrices(prices) {
+  if (prices.length === 0) {
+    return '<p class="muted">Aucun prix en vigueur, donc aucun montant propose.</p>';
+  }
+  return `
+    <ul class="summary-list">
+      ${prices.map((price) => `
+        <li>
+          <strong>fromPriceList</strong>
+          <span class="tag">${escapeHtml(price.currency ?? "")} ${escapeHtml(String(price.amount))}</span>
+          <span class="muted">${escapeHtml(price.unit ?? "")} · depuis ${escapeHtml(price.validFrom ?? "")}</span>
+        </li>
+      `).join("")}
+    </ul>
+  `;
+}
+
+function renderDatasheetRequest(payload) {
+  const approval = payload.approval;
+  return `
+    <ul class="summary-list">
+      <li>
+        <strong>fromRequest</strong>
+        <span>${escapeHtml(datasheetCustomer.value)}</span>
+        <span class="muted">${escapeHtml(datasheetQuantity.value)}</span>
+      </li>
+      <li>
+        <strong>Approbation</strong>
+        ${approval
+          ? `<span class="tag warning">${escapeHtml(approval.status)}</span><span class="muted">${escapeHtml(approval.requestedAction)}</span>`
+          : '<span class="muted">aucune approbation ouverte</span>'}
+      </li>
+    </ul>
+  `;
+}
+
+documentForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await previewHkidsDocument();
+});
+
+async function previewHkidsDocument() {
+  documentState.textContent = "Validation de l'aperçu...";
+  try {
+    const payload = await postJson("/api/documents/preview", collectDocumentInput());
+    lastDocumentPreview = payload;
+    renderDocumentPreview(payload);
+    documentState.textContent = "Aperçu validé. Vérifiez puis générez.";
+  } catch (error) {
+    lastDocumentPreview = null;
+    documentPreview.className = "";
+    documentPreview.innerHTML = card("Erreur de validation", escapeHtml(error.message), "warning");
+    documentState.textContent = error.message;
+  }
+}
+
+function collectDocumentInput() {
+  const items = JSON.parse(documentItems.value);
+  const totalHt = items.reduce((sum, item) => sum + Number(item.amountHt), 0);
+  const tva = Math.round(totalHt * 0.2 * 100) / 100;
+  const totalTtc = Math.round((totalHt + tva) * 100) / 100;
+  return {
+    documentType: documentType.value,
+    documentNumber: documentNumber.value,
+    date: documentDate.value,
+    object: documentObject.value,
+    deliveryNoteReference: documentReference.value,
+    client: {
+      name: documentClient.value,
+      address: documentAddress.value
+    },
+    items,
+      totals: {
+        totalHt,
+        tva,
+        totalTtc
+      },
+    payment: {
+      method: documentPaymentMethod.value,
+      termsRule: documentPaymentTermsRule.value,
+      terms: documentPaymentTermsManual.value
+    },
+    note: documentNote.value
+  };
+}
+
+function renderDocumentPreview(payload) {
+  const document = payload.document;
+  const invoice = document.documentType === "invoice";
+  documentPreview.className = "";
+  documentPreview.innerHTML = `
+    <article class="approval-card">
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">Vérification H-KIDS</p>
+          <h3>${escapeHtml(document.documentType === "invoice" ? "Facture" : "Bon de livraison")} ${escapeHtml(document.documentNumber)}</h3>
+        </div>
+        <span class="tag">${escapeHtml(payload.status)}</span>
+      </div>
+      <ul class="summary-list">
+        <li><strong>Type de document</strong><span>${escapeHtml(document.documentType)}</span></li>
+        <li><strong>Numéro</strong><span>${escapeHtml(document.documentNumber)}</span></li>
+        <li><strong>Date</strong><span>${escapeHtml(document.date)}</span></li>
+        ${document.deliveryNoteReference ? `<li><strong>Référence BL</strong><span>${escapeHtml(document.deliveryNoteReference)}</span></li>` : ""}
+        ${document.object ? `<li><strong>Objet</strong><span>${escapeHtml(document.object)}</span></li>` : ""}
+        <li><strong>Client</strong><span>${escapeHtml(document.client.name)}</span></li>
+        <li><strong>Adresse</strong><span>${escapeHtml(document.client.address)}</span></li>
+      </ul>
+      <table class="document-table">
+        <thead><tr>${
+          invoice
+            ? "<th>Désignation</th><th>Qté</th><th>Unité</th><th>Pu Brut</th><th>TVA</th><th>Pu TTC</th><th>Total HT</th><th>Total TTC</th>"
+            : "<th>Désignation</th><th>Qté</th><th>Prix unitaire HT</th><th>Montant HT</th>"
+        }</tr></thead>
+        <tbody>${document.items.map((item) => `
+          ${invoice ? `
+            <tr>
+              <td>${escapeHtml(item.designation)}</td>
+              <td>${escapeHtml(String(item.quantity))}</td>
+              <td>${escapeHtml(item.unit)}</td>
+              <td>${escapeHtml(formatDh(item.unitPriceHt))}</td>
+              <td>${escapeHtml(formatDh(item.tva))}</td>
+              <td>${escapeHtml(formatDh(item.unitPriceTtc))}</td>
+              <td>${escapeHtml(formatDh(item.amountHt))}</td>
+              <td>${escapeHtml(formatDh(item.totalTtc))}</td>
+            </tr>
+          ` : `
+            <tr>
+              <td>${escapeHtml(item.designation)}</td>
+              <td>${escapeHtml(String(item.quantity))}</td>
+              <td>${escapeHtml(formatDh(item.unitPriceHt))}</td>
+              <td>${escapeHtml(formatDh(item.amountHt))}</td>
+            </tr>
+          `}
+        `).join("")}</tbody>
+      </table>
+      <ul class="summary-list">
+        <li><strong>Total HT</strong><span>${escapeHtml(formatDh(document.totals.totalHt))}</span></li>
+        <li><strong>TVA</strong><span>${escapeHtml(formatDh(document.totals.tva))}</span></li>
+        <li><strong>Total TTC</strong><span>${escapeHtml(formatDh(document.totals.totalTtc))}</span></li>
+        <li><strong>Conditions de paiement</strong><span>${escapeHtml(document.payment.terms)}</span></li>
+        <li><strong>Moyen de paiement</strong><span>${escapeHtml(document.payment.method)}</span></li>
+        ${document.note ? `<li><strong>Note</strong><span>${escapeHtml(document.note)}</span></li>` : ""}
+      </ul>
+      <div class="actions">
+        <button type="button" id="document-generate">Valider et générer</button>
+      </div>
+      <div id="document-files"></div>
+    </article>
+  `;
+  documentPreview.querySelector("#document-generate").addEventListener("click", generateHkidsDocument);
+}
+
+async function generateHkidsDocument() {
+  if (!lastDocumentPreview) {
+    return;
+  }
+  documentState.textContent = "Génération en cours...";
+  const filesTarget = documentPreview.querySelector("#document-files");
+  try {
+    const payload = await postJson("/api/documents/generate", {
+      ...collectDocumentInput(),
+      previewToken: lastDocumentPreview.previewToken,
+      userConfirmation: true
+    });
+    filesTarget.innerHTML = `
+      <ul class="summary-list">
+        <li><strong>PDF</strong><button type="button" class="link-button" data-download-url="${escapeHtml(payload.files.pdf.downloadUrl)}" data-download-name="${escapeHtml(payload.files.pdf.name)}">${escapeHtml(payload.files.pdf.name)}</button></li>
+        <li><strong>Word</strong><button type="button" class="link-button" data-download-url="${escapeHtml(payload.files.docx.downloadUrl)}" data-download-name="${escapeHtml(payload.files.docx.name)}">${escapeHtml(payload.files.docx.name)}</button></li>
+      </ul>
+    `;
+    filesTarget.querySelectorAll("[data-download-url]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        try {
+          await downloadGeneratedDocument(button.dataset.downloadUrl, button.dataset.downloadName);
+        } catch (error) {
+          documentState.textContent = error.message;
+        }
+      });
+    });
+    documentState.textContent = "Document généré.";
+  } catch (error) {
+    filesTarget.innerHTML = card("Erreur génération", escapeHtml(error.message), "warning");
+    documentState.textContent = error.message;
+  }
+}
+
+// A download link cannot carry the bearer token, so a plain <a href> answered
+// 401. The button fetches with the header, then hands the blob to the browser.
+async function downloadGeneratedDocument(url, name) {
+  const response = await fetch(url, { headers: await authHeaders() });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error ?? "Le telechargement a echoue.");
+  }
+
+  const objectUrl = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+function formatDh(value) {
+  return `${new Intl.NumberFormat("fr-FR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(Number(value)).replace(/\u202f/g, " ")} DH`;
+}
+
+// Last, because it is the only part that runs rather than declares. It used to
+// sit above the declarations, where the top level await suspended evaluation
+// before let apiToken was reached: refreshApprovals then read a binding still in
+// its temporal dead zone and the approvals panel showed
+// "Cannot access 'apiToken' before initialization" on every page load.
+//
+// Function declarations hoist, so the call looked fine; let bindings do not.
+// Anything that runs must therefore come after everything it depends on.
+renderAgentRoster([]);
+await refreshApprovals();

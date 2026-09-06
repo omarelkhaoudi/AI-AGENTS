@@ -66,9 +66,9 @@ test("the tool exists only when a client is injected", () => {
   const withoutClient = createMvpToolRegistry();
   const withClient = createMvpToolRegistry({ workflowClient: stubClient() });
 
-  assert.equal(withoutClient.list().length, 21);
+  assert.equal(withoutClient.list().length, 25);
   assert.equal(withoutClient.get(TOOL_ID), null);
-  assert.equal(withClient.list().length, 22);
+  assert.equal(withClient.list().length, 26);
   assert.ok(withClient.get(TOOL_ID));
 });
 

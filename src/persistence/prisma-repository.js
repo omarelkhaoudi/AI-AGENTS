@@ -333,8 +333,8 @@ export class PrismaRepository extends AgentPlatformRepository {
           "approverId" = ${approverId}::text,
           "decisionReason" = ${decisionReason}::text,
           "metadata" = COALESCE("metadata", '{}'::jsonb) || ${JSON.stringify(metadata ?? {})}::jsonb,
-          "decidedAt" = NOW(),
-          "updatedAt" = NOW()
+          "decidedAt" = (NOW() AT TIME ZONE 'UTC'),
+          "updatedAt" = (NOW() AT TIME ZONE 'UTC')
       WHERE "id" = ${approvalId}
         AND "status" IN ('pending', 'requested')
       RETURNING *`;
@@ -371,8 +371,8 @@ export class PrismaRepository extends AgentPlatformRepository {
           "approverId" = ${approverId}::text,
           "decisionReason" = ${decisionReason}::text,
           "metadata" = COALESCE("metadata", '{}'::jsonb) || ${JSON.stringify(metadata ?? {})}::jsonb,
-          "decidedAt" = NOW(),
-          "updatedAt" = NOW()
+          "decidedAt" = (NOW() AT TIME ZONE 'UTC'),
+          "updatedAt" = (NOW() AT TIME ZONE 'UTC')
       WHERE "id" = ${approvalId}
         AND "status" IN ('pending', 'requested')
       RETURNING *`;
@@ -409,13 +409,18 @@ export class PrismaRepository extends AgentPlatformRepository {
   //
   // this.prisma is the transaction client when the repository is transactional,
   // so the same statement is correct inside and outside a transaction.
+  //
+  // Timestamps are written through AT TIME ZONE 'UTC'. A bare NOW() is a
+  // timestamptz, and assigning it to these TIMESTAMP(3) columns casts it through
+  // the session time zone, storing the local wall clock as if it were UTC. On a
+  // session outside UTC that shifts decidedAt and updatedAt by the offset.
   async markApprovalExecuted(approvalId, { executionId, executedAt = new Date().toISOString() } = {}) {
     const rows = await this.prisma.$queryRaw`
       UPDATE "Approval"
       SET "metadata" = jsonb_set(
             jsonb_set(COALESCE("metadata", '{}'::jsonb), '{executionId}', to_jsonb(${executionId}::text), true),
             '{executedAt}', to_jsonb(${executedAt}::text), true),
-          "updatedAt" = NOW()
+          "updatedAt" = (NOW() AT TIME ZONE 'UTC')
       WHERE "id" = ${approvalId}
         AND "status" = 'approved'
         AND "metadata"->'executionId' IS NULL

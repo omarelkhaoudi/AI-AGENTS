@@ -22,18 +22,24 @@ const REFERENCE_PLANS = Object.freeze([
       // and gain a computing one, in that order.
       ["finance", 1, "get_pending_payments", "read_analyze", false],
       ["finance", 2, "get_receivables_summary", "read_analyze", false],
-      ["commercial", 3, "get_pending_quotes", "read_analyze", false],
-      ["commercial", 4, "get_quote_follow_ups", "read_analyze", false],
+      // Lot 6: finance gains the revenue figure CDC section 29 asks for, after
+      // its two historical tools.
+      ["finance", 3, "get_revenue_summary", "read_analyze", false],
+      ["commercial", 4, "get_pending_quotes", "read_analyze", false],
+      ["commercial", 5, "get_quote_follow_ups", "read_analyze", false],
+      // Lot 14: commercial gains the order book figure CDC section 29 asks for,
+      // after its two historical tools.
+      ["commercial", 6, "get_order_book_summary", "read_analyze", false],
       // Lot 2C commit 4: production and purchasing follow the same pattern.
-      ["production", 5, "get_delayed_production_orders", "read_analyze", false],
-      ["production", 6, "get_production_schedule", "read_analyze", false],
-      ["purchasing", 7, "get_purchase_needs", "read_analyze", false],
-      ["purchasing", 8, "get_material_requirements", "read_analyze", false],
-      ["hr", 9, "get_hr_overview", "read_analyze", false],
-      ["after_sales", 10, "get_after_sales_overview", "read_analyze", false],
-      ["marketing", 11, "get_marketing_overview", "read_analyze", false],
-      ["community_manager", 12, "get_community_overview", "read_analyze", false],
-      ["legal", 13, "get_legal_overview", "read_analyze", false]
+      ["production", 7, "get_delayed_production_orders", "read_analyze", false],
+      ["production", 8, "get_production_schedule", "read_analyze", false],
+      ["purchasing", 9, "get_purchase_needs", "read_analyze", false],
+      ["purchasing", 10, "get_material_requirements", "read_analyze", false],
+      ["hr", 11, "get_hr_overview", "read_analyze", false],
+      ["after_sales", 12, "get_after_sales_overview", "read_analyze", false],
+      ["marketing", 13, "get_marketing_overview", "read_analyze", false],
+      ["community_manager", 14, "get_community_overview", "read_analyze", false],
+      ["legal", 15, "get_legal_overview", "read_analyze", false]
     ]
   },
   {
@@ -43,7 +49,8 @@ const REFERENCE_PLANS = Object.freeze([
     agents: ["finance"],
     steps: [
       ["finance", 1, "get_pending_payments", "read_analyze", false],
-      ["finance", 2, "get_receivables_summary", "read_analyze", false]
+      ["finance", 2, "get_receivables_summary", "read_analyze", false],
+      ["finance", 3, "get_revenue_summary", "read_analyze", false]
     ]
   },
   {
@@ -135,11 +142,14 @@ test("the plan agent list carries no duplicate", () => {
   }
 });
 
-// Only these four agents carry a second step. Every other agent keeps exactly
-// one, so no routing was widened beyond what Lot 2C commit 4 allows.
-const AGENTS_WITH_TWO_STEPS = Object.freeze(["finance", "commercial", "production", "purchasing"]);
+// Four agents carry a second step since Lot 2C commit 4. Finance carries a third
+// since Lot 6, and commercial a third since Lot 14: both are figures CDC
+// section 29 asks for. Every other agent keeps exactly one, so no routing was
+// widened beyond what those lots allow.
+const AGENTS_WITH_TWO_STEPS = Object.freeze(["production", "purchasing"]);
+const AGENTS_WITH_THREE_STEPS = Object.freeze(["finance", "commercial"]);
 
-test("only the four routed agents contribute a second step", () => {
+test("only the routed agents contribute more than one step", () => {
   for (const reference of REFERENCE_PLANS) {
     const plan = planFor(reference.message);
     const stepsByAgent = new Map();
@@ -150,7 +160,12 @@ test("only the four routed agents contribute a second step", () => {
 
     for (const [agentId, count] of stepsByAgent) {
       const sensitive = plan.intent.startsWith("sensitive_");
-      const expected = AGENTS_WITH_TWO_STEPS.includes(agentId) && !sensitive ? 2 : 1;
+      let expected = 1;
+      if (!sensitive && AGENTS_WITH_THREE_STEPS.includes(agentId)) {
+        expected = 3;
+      } else if (!sensitive && AGENTS_WITH_TWO_STEPS.includes(agentId)) {
+        expected = 2;
+      }
       assert.equal(count, expected, `${reference.label}: ${agentId}`);
     }
   }
@@ -171,6 +186,8 @@ test("every planned tool is still one the planner routed before", () => {
     "get_quote_follow_ups",
     "get_production_schedule",
     "get_material_requirements",
+    "get_revenue_summary",
+    "get_order_book_summary",
     "execute_invoice_payment",
     "prepare_hr_sensitive_decision",
     "prepare_legal_sensitive_decision"
@@ -280,16 +297,28 @@ test("a sensitive request still collapses the agent to its single approval tool"
   assert.equal(plan.steps[0].requiresApproval, true);
 });
 
-test("only the four routed agents declare a second tool", () => {
+test("only the routed agents declare more than one tool", () => {
   for (const [agentId, tools] of Object.entries(DEFAULT_TOOLS_BY_AGENT)) {
     assert.ok(Array.isArray(tools), agentId);
-    assert.equal(tools.length, AGENTS_WITH_TWO_STEPS.includes(agentId) ? 2 : 1, agentId);
+    let expected = 1;
+    if (AGENTS_WITH_THREE_STEPS.includes(agentId)) {
+      expected = 3;
+    } else if (AGENTS_WITH_TWO_STEPS.includes(agentId)) {
+      expected = 2;
+    }
+    assert.equal(tools.length, expected, agentId);
   }
 
   // The historical tool stays first: the Director keeps reporting it before the
-  // computing one.
-  assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.finance], ["get_pending_payments", "get_receivables_summary"]);
-  assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.commercial], ["get_pending_quotes", "get_quote_follow_ups"]);
+  // computing one, and the figure CDC section 29 asks for comes last.
+  assert.deepEqual(
+    [...DEFAULT_TOOLS_BY_AGENT.finance],
+    ["get_pending_payments", "get_receivables_summary", "get_revenue_summary"]
+  );
+  assert.deepEqual(
+    [...DEFAULT_TOOLS_BY_AGENT.commercial],
+    ["get_pending_quotes", "get_quote_follow_ups", "get_order_book_summary"]
+  );
   assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.production], ["get_delayed_production_orders", "get_production_schedule"]);
   assert.deepEqual([...DEFAULT_TOOLS_BY_AGENT.purchasing], ["get_purchase_needs", "get_material_requirements"]);
 });

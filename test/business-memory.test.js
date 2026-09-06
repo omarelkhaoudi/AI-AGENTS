@@ -24,10 +24,11 @@ import {
 // demo record. Every other domain must carry demo records.
 //
 // Lot 2A.1 introduced five such domains.
-// Lot 2B.2 populates products, stock and bills_of_material with synthetic data,
-//          so only prices and payment_terms remain intentionally empty.
+// Lot 2B.2 populates products, stock and bills_of_material with synthetic data.
+// The datasheet lot populates prices too: a quote cannot be prepared from a
+// price list nobody filled. payment_terms stays a persistence foundation no
+// tool reads, and listing it keeps that gap visible.
 const REFERENCE_DOMAINS_WITHOUT_DEMO_DATA = Object.freeze([
-  "prices",
   "payment_terms"
 ]);
 

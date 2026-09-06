@@ -1,5 +1,10 @@
 # Livraison V1 MVP — AI AGENTS
 
+> ⚠️ **Instantané historique.** Ce document décrit le périmètre livré au commit
+> `c2c1d89` et porte les chiffres d'alors — notamment 21 outils, alors que le
+> registre en compte 25 aujourd'hui. Pour l'état courant du projet, voir le
+> [README](../README.md), section « État du MVP ».
+
 **Commit de référence : `c2c1d89`** — *feat: add persistent delay alert idempotency*
 
 Ce document décrit ce que contient réellement la V1, ce qu'elle ne contient pas,

@@ -20,7 +20,7 @@ import {
   hasValidDatabaseUrl,
   ingestBusinessRecords
 } from "../src/index.js";
-import { loadDotEnvIfPresent } from "./lib/load-dotenv.mjs";
+import { loadDotEnvIfPresent } from "../src/load-dotenv.js";
 
 loadDotEnvIfPresent();
 

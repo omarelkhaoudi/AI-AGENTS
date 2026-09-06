@@ -23,7 +23,19 @@ const AGENT_ROLES = Object.freeze({
 // rather than being refused before an approval can exist. The domain scoped
 // prepare_action rows it also produces grant nothing new: the domain check is
 // kind agnostic and read_analyze already covers those same domains.
-export const SENSITIVE_PREPARATION_AGENT_IDS = Object.freeze(["finance", "hr", "legal", "production"]);
+//
+// commercial joins it for prepare_quote_from_datasheet. CDC section 4 gives
+// that agent the preparation of quotes, and without this the tool was refused
+// before an approval could exist: the call answered PERMISSION_DENIED, so the
+// human decision the tool exists to ask for was never asked. No domain is
+// added, for the reason stated just above.
+export const SENSITIVE_PREPARATION_AGENT_IDS = Object.freeze([
+  "finance",
+  "hr",
+  "legal",
+  "production",
+  "commercial"
+]);
 
 // Minimum necessary access: the request scope lets an agent take part in an
 // orchestration, and the domain scopes bound it to its own business perimeter.

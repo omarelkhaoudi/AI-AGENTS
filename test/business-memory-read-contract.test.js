@@ -194,22 +194,40 @@ test("Director still completes the company overview request through demo tools",
     [
       "finance",
       "finance",
+      "finance",
+      "commercial",
       "commercial",
       "commercial",
       "production",
       "production",
       "purchasing",
       "purchasing",
-      "after_sales"
+      "hr",
+      "after_sales",
+      "marketing",
+      "community_manager",
+      "legal"
     ]
   );
   assert.deepEqual(
     [...new Set(body.results.map((result) => result.agent))],
-    ["finance", "commercial", "production", "purchasing", "after_sales"]
+    [
+      "finance",
+      "commercial",
+      "production",
+      "purchasing",
+      "hr",
+      "after_sales",
+      "marketing",
+      "community_manager",
+      "legal"
+    ]
   );
   assert.equal(body.results.every((result) => result.result?.demo === true), true);
-  // One tool_called per step: nine steps for five distinct agents.
-  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 9);
+  // One tool_called per step: fifteen steps for the nine agents CDC section 1
+  // names for this question. Finance carries the revenue figure of section 29,
+  // commercial the order book, which that section lists as a rubric of its own.
+  assert.equal(body.audit.filter((event) => event.type === "tool_called").length, 15);
 });
 
 test("Director payment request creates approval and never auto-executes payment", async (t) => {

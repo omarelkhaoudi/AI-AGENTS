@@ -74,6 +74,81 @@
           <div id="agent-results" class="agent-grid"></div>
         </section>
 
+        <section class="panel" aria-labelledby="datasheet-title">
+          <div class="panel-heading">
+            <div>
+              <h2 id="datasheet-title">Test Hiba - Preparation de devis</h2>
+              <p>Fiche produit retrouvee par reference, prix en vigueur, et devis soumis a votre validation.</p>
+            </div>
+          </div>
+          <form id="datasheet-form" class="request-form">
+            <label for="datasheet-reference">Reference produit</label>
+            <input id="datasheet-reference" name="productReference" value="PRD-ATLAS-PANEL">
+            <label for="datasheet-customer">Client</label>
+            <input id="datasheet-customer" name="customerId" value="customer-atlas">
+            <label for="datasheet-quantity">Quantite</label>
+            <input id="datasheet-quantity" name="quantity" type="number" min="1" value="12">
+            <div class="actions">
+              <button type="submit">Preparer le devis</button>
+              <button type="button" class="secondary" data-datasheet="PRD-ATLAS-PANEL">Cas nominal</button>
+              <button type="button" class="secondary" data-datasheet="PRD-INEXISTANT">Reference inconnue</button>
+              <button type="button" class="secondary" data-datasheet="MAT-ALU-A">Sans prix</button>
+              <button type="button" class="secondary" data-datasheet="MAT-PACK-B">Prix ambigu</button>
+            </div>
+            <p id="datasheet-state" class="state-line" role="status">Pret.</p>
+          </form>
+          <div id="datasheet-result" class="empty">Aucune preparation lancee.</div>
+        </section>
+
+        <section class="panel" aria-labelledby="documents-title">
+          <div class="panel-heading">
+            <div>
+              <h2 id="documents-title">Documents H-KIDS</h2>
+              <p>Aperçu obligatoire avant génération du PDF et du Word.</p>
+            </div>
+          </div>
+          <form id="document-form" class="request-form">
+            <label for="document-type">Type de document</label>
+            <select id="document-type" name="documentType">
+              <option value="delivery_note">Bon de livraison</option>
+              <option value="invoice">Facture</option>
+            </select>
+            <label for="document-number">Numéro</label>
+            <input id="document-number" name="documentNumber">
+            <label for="document-date">Date</label>
+            <input id="document-date" name="date" placeholder="05/09/2026">
+            <label for="document-reference">Référence BL</label>
+            <input id="document-reference" name="deliveryNoteReference">
+            <label for="document-object">Objet</label>
+            <input id="document-object" name="object" placeholder="Vente de mobilier">
+            <label for="document-client">Client</label>
+            <input id="document-client" name="clientName">
+            <label for="document-address">Adresse client</label>
+            <input id="document-address" name="clientAddress">
+            <label for="document-payment-method">Moyen de paiement</label>
+            <input id="document-payment-method" name="paymentMethod" value="virement bancaire">
+            <label for="document-payment-terms">Conditions de paiement</label>
+            <select id="document-payment-terms" name="paymentTermsRule">
+              <option value="">Saisie manuelle requise</option>
+              <option value="hkids-60-20-20-2026">Règle active H-KIDS 60/20/20</option>
+            </select>
+            <textarea id="document-payment-terms-manual" rows="2" placeholder="Conditions de paiement explicites"></textarea>
+            <label for="document-note">Note</label>
+            <input id="document-note" name="note">
+            <label for="document-items">Produits JSON</label>
+            <textarea id="document-items" rows="8">[
+  { "designation": "Canapé", "quantity": 1, "unitPriceHt": 4500, "amountHt": 4500 },
+  { "designation": "Matelas", "quantity": 1, "unitPriceHt": 1500, "amountHt": 1500 },
+  { "designation": "Tour de lit", "quantity": 1, "unitPriceHt": 1300, "amountHt": 1300 }
+]</textarea>
+            <div class="actions">
+              <button type="submit">Prévisualiser</button>
+            </div>
+            <p id="document-state" class="state-line" role="status">Prêt.</p>
+          </form>
+          <div id="document-preview" class="empty">Aucun aperçu généré.</div>
+        </section>
+
         <section class="panel approvals" aria-labelledby="approval-title">
           <div class="panel-heading">
             <div>

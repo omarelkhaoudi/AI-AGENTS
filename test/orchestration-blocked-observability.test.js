@@ -48,7 +48,8 @@ test("the blocked execution says why, in structured fields", async () => {
         code: "DOMAIN_NOT_ALLOWED",
         toolName: "get_receivables_summary",
         missingDomains: ["payments", "invoices"]
-      }
+      },
+      { code: "DOMAIN_NOT_ALLOWED", toolName: "get_revenue_summary", missingDomains: ["invoices"] }
     ]
   );
 });
@@ -77,12 +78,12 @@ test("the failure is auditable step by step, not as a bare count", async () => {
   const result = await orchestrateWithoutDomainScope();
   const failed = result.auditEvents.filter((event) => event.type === "execution_failed");
 
-  assert.equal(failed.length, 2);
+  assert.equal(failed.length, 3);
   assert.equal(failed.every((event) => typeof event.planStepId === "string"), true, "each one names its step");
   assert.equal(failed.every((event) => typeof event.executionId === "string"), true);
   // The request summary now names the agent that stopped instead of an empty list.
   assert.deepEqual(result.result.summary.agents, ["finance"]);
-  assert.equal(result.result.summary.blockedSteps, 2);
+  assert.equal(result.result.summary.blockedSteps, 3);
 });
 
 // A sensitive action is not a failure: it waits for a human, and the approval

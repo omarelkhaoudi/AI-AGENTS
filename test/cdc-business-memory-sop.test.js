@@ -111,7 +111,9 @@ test("CDC priority business memory records expose useful relations and dates", (
   assert.equal(ticket.relations.orderId, "order-atlas-001");
 });
 
-test("Director central CDC scenario has the five priority agents and demo-marked outputs", async (t) => {
+// CDC section 1 answers this question by naming nine agents, not the five of the
+// MVP core. Renamed with the count it now checks rather than left saying five.
+test("Director central CDC scenario has the nine CDC agents and demo-marked outputs", async (t) => {
   const repository = new InMemoryRepository();
   const { app, inject } = await buildAuthenticatedApi({ repository });
   t.after(() => app.close());
@@ -131,23 +133,33 @@ test("Director central CDC scenario has the five priority agents and demo-marked
   assert.deepEqual(body.results.map((result) => result.agent), [
     "finance",
     "finance",
+    "finance",
+    "commercial",
     "commercial",
     "commercial",
     "production",
     "production",
     "purchasing",
     "purchasing",
-    "after_sales"
+    "hr",
+    "after_sales",
+    "marketing",
+    "community_manager",
+    "legal"
   ]);
   assert.deepEqual([...new Set(body.results.map((result) => result.agent))], [
     "finance",
     "commercial",
     "production",
     "purchasing",
-    "after_sales"
+    "hr",
+    "after_sales",
+    "marketing",
+    "community_manager",
+    "legal"
   ]);
   assert.equal(body.results.every((result) => result.result?.demo === true), true);
   assert.equal(body.results.every((result) => result.result?.dataSource === BUSINESS_DATA_SOURCES.DEMO_MOCK), true);
-  assert.match(body.summary.headline, /5\/5 agents responded/);
+  assert.match(body.summary.headline, /9\/9 agents responded/);
   assert.equal(body.summary.decisionsRequired.length > 0, true);
 });

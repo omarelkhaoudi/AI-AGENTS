@@ -5,6 +5,11 @@ const GLOBAL_PATTERNS = [
   "point entreprise",
   "mon entreprise",
   "entreprise",
+  // CDC section 29 asks its question in these words. Without them the sentence
+  // matched nothing and fell back to the five default agents, leaving HR,
+  // marketing, community management and legal out of the very report the
+  // section describes.
+  "situation",
   "global",
   "synthese",
   "tableau de bord"
@@ -15,6 +20,12 @@ const CDC_PRIORITY_PATTERNS = [
 ];
 
 const EXTENDED_ISSUES_PATTERNS = [
+  // "est urgent", never a bare "urgent". Patterns are matched as substrings, so
+  // "sujets juridiques urgents" and "publications reseaux sociaux urgentes" have
+  // to keep reaching the one agent they name: urgent is an adjective there, not
+  // the question. Checked against the 1834 request strings this project carries,
+  // this form captures the section 3 question and nothing else.
+  "est urgent",
   "problemes urgents",
   "problemes importants",
   "important aujourd"
@@ -188,8 +199,8 @@ const MATERIAL_NEEDS_AGENT_IDS = Object.freeze(["production", "purchasing"]);
 // carry several steps; every agent holds exactly one tool today, so the plans
 // produced are unchanged.
 export const DEFAULT_TOOLS_BY_AGENT = Object.freeze({
-  finance: Object.freeze(["get_pending_payments", "get_receivables_summary"]),
-  commercial: Object.freeze(["get_pending_quotes", "get_quote_follow_ups"]),
+  finance: Object.freeze(["get_pending_payments", "get_receivables_summary", "get_revenue_summary"]),
+  commercial: Object.freeze(["get_pending_quotes", "get_quote_follow_ups", "get_order_book_summary"]),
   production: Object.freeze(["get_delayed_production_orders", "get_production_schedule"]),
   purchasing: Object.freeze(["get_purchase_needs", "get_material_requirements"]),
   hr: Object.freeze(["get_hr_overview"]),
@@ -349,8 +360,13 @@ export function selectAgentIds(text) {
     return ["commercial"];
   }
 
+  // CDC section 1 answers this exact question by naming nine agents one by one.
+  // It returned the five of the MVP core, which left the marketing and the legal
+  // headings of section 31 empty in the very report section 1 describes. The
+  // fallback at the end of this function still returns those five: an
+  // unrecognised request goes to the core, which is what section 23 asks for.
   if (CDC_PRIORITY_PATTERNS.some((pattern) => text.includes(pattern))) {
-    return [...GLOBAL_AGENT_IDS];
+    return [...EXTENDED_GLOBAL_AGENT_IDS];
   }
 
   if (EXTENDED_ISSUES_PATTERNS.some((pattern) => text.includes(pattern))) {
@@ -417,5 +433,12 @@ function normalizeRequestText(request = {}) {
     .join(" ")
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase();
+    .toLowerCase()
+    // "recommandes" contains "commandes", and patterns are matched as
+    // substrings, so asking the Director for a recommendation routed the whole
+    // request to production. Checked against all 103 declared patterns: this is
+    // the only such collision, which is why the family is removed here rather
+    // than switching every pattern to whole word matching and disturbing thirty
+    // routing tests to fix one word.
+    .replace(/recommand\w*/g, " ");
 }

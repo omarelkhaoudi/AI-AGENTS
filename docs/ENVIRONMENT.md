@@ -33,9 +33,7 @@ Trois règles à retenir :
 3. Il est cherché à `.env` **relatif au répertoire courant**. Lancez les
    commandes depuis la racine du dépôt.
 
-**Rien n'est obligatoire pour démarrer.** Toutes les variables ont un défaut
-utilisable, et l'application démarre sur un `.env` intégralement copié depuis
-`.env.example` sans y toucher.
+**Rien n'est obligatoire pour démarrer l'API.** Pour une démo navigateur, renseignez `AUTH_MODE="demo"` afin que le cockpit obtienne automatiquement un jeton. L'application démarre aussi sur un `.env` intégralement copié depuis `.env.example`, mais le cockpit demandera alors une authentification en mode `token`.
 
 ---
 
@@ -48,7 +46,9 @@ utilisable, et l'application démarre sur un `.env` intégralement copié depuis
 | `PORT` | `3000` | non | Port d'écoute. |
 
 > ⚠️ `PORT` est converti par `parseInt`. Une valeur **vide** ne donne pas le
-> défaut mais un port indéterminé : renseignez la ligne ou supprimez-la.
+> défaut mais un port indéterminé : renseignez la ligne ou supprimez-la. Si le
+> port `3000` est déjà occupé, utilisez par exemple `PORT="3100"` puis adaptez
+> les URL en `http://127.0.0.1:3100/...`.
 
 ---
 
@@ -142,8 +142,8 @@ sauf si son nombre de pages diffère — auquel cas il est refusé.
 
 ### Tester sans les gabarits officiels
 
-```bash
-npm run dev:templates
+```powershell
+npm.cmd run dev:templates
 ```
 
 Écrit deux PDF vierges dans `assets/documents/hkids-local/` — répertoire **ignoré
@@ -155,7 +155,8 @@ généré à partir d'eux.
 Ces gabarits servent uniquement à vérifier que la chaîne aperçu → génération →
 téléchargement fonctionne. **Ils ne remplacent pas les gabarits officiels** : un
 document produit à partir d'eux n'a ni en-tête, ni mentions légales, ni
-habillage H-KIDS.
+habillage H-KIDS. Ils ne doivent pas être envoyés à un client, et les anciens
+PDF H-KIDS contenant des données clients ne doivent jamais être réutilisés.
 
 ### Le verrou de checksum
 
@@ -193,6 +194,31 @@ remplacée par un candidat sondé.
 
 Une valeur **vide** vaut « non configurée » pour les six variables : copier
 `.env.example` sans y toucher est sans effet.
+
+
+---
+
+## Validation de la passation
+
+Dernière validation réalisée sur un clone propre de `delivery/hkids-clean` :
+
+```text
+npm ci                 PASS
+npm test               810 tests / 776 passed / 34 skipped / 0 failed
+npm run lint           PASS
+npm run build          PASS
+npm run typecheck      PASS
+npm run scan:secrets   PASS
+git diff --check       PASS
+serveur                PASS
+/health                PASS
+/app/                  PASS
+Director/Finance       PASS
+H-KIDS preview DEV     PASS
+```
+
+Les 34 tests ignorés sont les tests PostgreSQL conditionnés à
+`RUN_POSTGRES_INTEGRATION="true"` et à une `DATABASE_URL` valide.
 
 ---
 

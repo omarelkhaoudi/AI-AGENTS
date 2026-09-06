@@ -17,6 +17,97 @@ Sur cette question, le Directeur sollicite **les 10 agents**, exécute **15
 
 ---
 
+## Installation / Passation MVP
+
+Cette section est le chemin recommandé pour remettre la branche propre à Hiba et vérifier le projet comme sur un poste neuf.
+
+### Prérequis
+
+- Node.js **20 ou supérieur**
+- Git
+- npm, fourni avec Node.js
+
+### Cloner la branche de livraison
+
+```powershell
+git clone --branch delivery/hkids-clean --single-branch https://github.com/omarelkhaoudi/AI-AGENTS.git
+cd AI-AGENTS
+```
+
+La branche attendue est `delivery/hkids-clean`, au commit `fda2545` ou à un commit de documentation plus récent issu de cette branche. `main` n'est pas la branche de passation.
+
+### Installer
+
+```powershell
+npm.cmd ci
+```
+
+`npm ci` est recommandé pour une livraison : il respecte exactement `package-lock.json` et reproduit l'arbre de dépendances validé.
+
+### Créer `.env`
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Pour une première démo navigateur, renseigner uniquement :
+
+```env
+NODE_ENV="development"
+AUTH_MODE="demo"
+PORT="3000"
+HOST="127.0.0.1"
+```
+
+Ne jamais écrire de vraie clé, de jeton, de mot de passe ou de chaîne de connexion réelle dans `.env.example`, le code ou la documentation.
+
+### Démarrer
+
+```powershell
+npm.cmd start
+```
+
+Vérifier ensuite :
+
+```text
+http://127.0.0.1:3000/health
+http://127.0.0.1:3000/app/
+```
+
+Si le port `3000` est déjà occupé, modifier seulement cette ligne dans `.env` :
+
+```env
+PORT="3100"
+```
+
+Puis redémarrer et ouvrir :
+
+```text
+http://127.0.0.1:3100/health
+http://127.0.0.1:3100/app/
+```
+
+### Documents H-KIDS
+
+Les gabarits H-KIDS officiels ne sont pas versionnés dans Git. Pour une utilisation réelle, Hiba doit fournir des gabarits vierges officiels, puis renseigner leurs chemins absolus dans `.env`.
+
+Pour une validation technique sans document officiel, générer les gabarits DEV :
+
+```powershell
+npm.cmd run dev:templates
+```
+
+La commande crée des PDF locaux dans `assets/documents/hkids-local/`, dossier ignoré par Git, puis affiche les deux lignes à copier dans `.env` :
+
+```env
+HKIDS_INVOICE_TEMPLATE_PATH="...\assets\documents\hkids-local\facture_reference.pdf"
+HKIDS_DELIVERY_NOTE_TEMPLATE_PATH="...\assets\documents\hkids-local\bon_livraison_reference.pdf"
+```
+
+Ces gabarits DEV servent uniquement à tester preview, génération et téléchargement. Ils ne remplacent pas les gabarits officiels H-KIDS et ne doivent pas être envoyés à un client. Les anciens PDF H-KIDS contenant des données clients ne doivent jamais être réutilisés.
+
+---
+
 ## 1. Présentation
 
 L'objectif n'est pas de juxtaposer des chatbots indépendants, mais de construire
@@ -134,18 +225,13 @@ où une commande diffère selon le système, les trois variantes sont données.
 
 ## 4. Installation
 
-```bash
-git clone https://github.com/omarelkhaoudi/AI-AGENTS.git
-```
-
-```bash
+```powershell
+git clone --branch delivery/hkids-clean --single-branch https://github.com/omarelkhaoudi/AI-AGENTS.git
 cd AI-AGENTS
+npm.cmd ci
 ```
 
-```bash
-npm install
-```
-
+`npm ci` est recommandé pour reproduire exactement le lockfile de la livraison.
 Aucune étape de compilation : le projet est en JavaScript ESM natif.
 
 ---
@@ -190,7 +276,7 @@ Comment `.env` est lu — c'est une particularité du projet :
 
 ## 6. Démarrage rapide — Demo
 
-Le chemin le plus court : **aucune base de données, aucun compte externe**.
+Le chemin le plus court : **aucune base de données, aucun compte externe**. Il exige seulement `AUTH_MODE="demo"` pour que le cockpit obtienne automatiquement un jeton.
 
 Dans `.env`, une seule ligne à changer :
 
@@ -431,7 +517,7 @@ fail        0
 skipped    34
 ```
 
-`lint`, `build` et `scan:secrets` : sans erreur.
+`lint`, `build`, `typecheck` et `scan:secrets` : PASS. Clone propre, démarrage serveur, `/health`, `/app/`, Director/Finance et preview H-KIDS avec gabarit DEV : PASS.
 
 **Les 34 tests ignorés sont exactement les tests d'intégration PostgreSQL.**
 Ils sont répartis sur 12 fichiers, tous conditionnés à `RUN_POSTGRES_INTEGRATION`
@@ -497,8 +583,8 @@ et **bon de livraison**, chacun en **PDF et en Word**.
 **Pour tester la chaîne complète en attendant les gabarits officiels**, le
 projet sait fabriquer des gabarits de développement :
 
-```bash
-npm run dev:templates
+```powershell
+npm.cmd run dev:templates
 ```
 
 Deux PDF vierges au bon nombre de pages sont écrits dans

@@ -1,9 +1,18 @@
 # Rapport de tests — V1 MVP
 
+> ⚠️ **Instantané historique.** Les chiffres de ce rapport sont ceux de la suite
+> au commit `c2c1d89`. Ils étaient exacts à cette date et ne décrivent pas
+> l'état courant. Pour le résultat mesuré aujourd'hui et la façon de le
+> reproduire, voir le [README](../README.md), section « Tests et validation ».
+
 **Commit de référence : `c2c1d89`** — *feat: add persistent delay alert idempotency*
 
 Ce rapport ne contient que des résultats réellement produits par la suite du
 dépôt à ce commit. Aucun chiffre n'est estimé ni extrapolé.
+
+**Tous les compteurs qui suivent — 723, 693, 30 — décrivent ce commit et lui
+seul.** La suite a grandi depuis. Ne comparez pas ces chiffres à une exécution
+d'aujourd'hui : lisez le [README](../README.md) pour l'état courant.
 
 ---
 

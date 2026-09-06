@@ -19,6 +19,34 @@ test("repository factory uses in-memory repository when DATABASE_URL is missing"
   assert.equal(hasValidDatabaseUrl("not-a-url"), false);
 });
 
+// A blank value is not a configuration. Treating it as one would refuse to start
+// on a .env that simply left the line in place, which is the shipped default.
+test("repository factory treats a blank DATABASE_URL as no database at all", async () => {
+  for (const databaseUrl of ["", "   "]) {
+    assert.ok(await createRepository({ env: { DATABASE_URL: databaseUrl } }) instanceof InMemoryRepository);
+  }
+});
+
+// The dangerous case. A malformed URL used to fall back to memory, so the
+// application started, answered, persisted nothing and said nothing. It now
+// refuses, and the refusal never carries the value: a connection string holds a
+// password.
+test("repository factory refuses a DATABASE_URL that is set but not a PostgreSQL URL", async () => {
+  for (const databaseUrl of ["not-a-url", "mysql://user:pass@localhost:3306/ai_agents", "postgresql//missing-colon"]) {
+    await assert.rejects(
+      () => createRepository({ env: { DATABASE_URL: databaseUrl } }),
+      (error) => {
+        assert.equal(error.name, "RepositoryConfigurationError");
+        assert.equal(error.code, "DATABASE_URL_INVALID");
+        assert.equal(error.details.hasDatabaseUrl, true);
+        assert.equal(error.message.includes(databaseUrl), false, "the value must not reach the error");
+        return true;
+      },
+      databaseUrl
+    );
+  }
+});
+
 test("repository factory uses PrismaRepository when DATABASE_URL is valid", async () => {
   const repository = await createRepository({
     env: { DATABASE_URL: "postgresql://user:pass@localhost:5432/ai_agents" },
@@ -58,13 +86,14 @@ test("MVP agent seed is idempotent and creates active agent records", async () =
 
 test("Request Finance routes to finance agent", async () => {
   const request = await createOrchestratedRequest("combien dois-je encaisser cette semaine");
-  // Finance now contributes two steps: its historical tool first, then the
-  // computing one. The agent selected is still finance alone.
-  assert.deepEqual(selectedAgents(request), ["finance", "finance"]);
+  // Finance contributes three steps: its historical tool first, then the
+  // computing one, then the revenue figure Lot 6 added for CDC section 29. The
+  // agent selected is still finance alone.
+  assert.deepEqual(selectedAgents(request), ["finance", "finance", "finance"]);
   assert.deepEqual(distinctAgents(request), ["finance"]);
   assert.deepEqual(
     request.plans[0].steps.map((step) => step.toolName),
-    ["get_pending_payments", "get_receivables_summary"]
+    ["get_pending_payments", "get_receivables_summary", "get_revenue_summary"]
   );
   assert.equal(request.executions[0].output.toolId, "get_pending_payments");
   assert.equal(request.executions[0].output.result.demo, true);
@@ -72,11 +101,13 @@ test("Request Finance routes to finance agent", async () => {
 
 test("Request Commercial routes to commercial agent", async () => {
   const request = await createOrchestratedRequest("quels clients dois-je relancer");
-  assert.deepEqual(selectedAgents(request), ["commercial", "commercial"]);
+  // Commercial contributes three steps since Lot 14: its two historical tools,
+  // then the order book figure CDC section 29 asks for.
+  assert.deepEqual(selectedAgents(request), ["commercial", "commercial", "commercial"]);
   assert.deepEqual(distinctAgents(request), ["commercial"]);
   assert.deepEqual(
     request.plans[0].steps.map((step) => step.toolName),
-    ["get_pending_quotes", "get_quote_follow_ups"]
+    ["get_pending_quotes", "get_quote_follow_ups", "get_order_book_summary"]
   );
 });
 
@@ -131,12 +162,15 @@ test("Request Legal routes to legal agent", async () => {
 
 test("Global request routes to all specialized agents", async () => {
   const request = await createOrchestratedRequest("fais-moi le point sur mon entreprise");
-  // Thirteen steps for nine distinct agents: finance, commercial, production
-  // and purchasing each carry their historical tool followed by their
-  // computing one.
+  // Fifteen steps for nine distinct agents: production and purchasing each carry
+  // their historical tool followed by their computing one, finance carries a
+  // third with the revenue figure of CDC section 29, and commercial a third with
+  // the order book figure the same section asks for.
   assert.deepEqual(selectedAgents(request), [
     "finance",
     "finance",
+    "finance",
+    "commercial",
     "commercial",
     "commercial",
     "production",
@@ -171,17 +205,20 @@ test("orchestration creates a Plan", async () => {
 
 test("orchestration creates PlanSteps", async () => {
   const request = await createOrchestratedRequest("fais-moi le point sur mon entreprise");
-  assert.equal(request.plans[0].steps.length, 13);
+  assert.equal(request.plans[0].steps.length, 15);
   assert.deepEqual(
     request.plans[0].steps.map((step) => step.sequence),
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
   );
 });
 
 test("orchestration creates Executions", async () => {
   const request = await createOrchestratedRequest("quels clients dois-je relancer");
-  assert.equal(request.executions.length, 2);
-  assert.deepEqual(request.executions.map((execution) => execution.agentId), ["commercial", "commercial"]);
+  assert.equal(request.executions.length, 3);
+  assert.deepEqual(
+    request.executions.map((execution) => execution.agentId),
+    ["commercial", "commercial", "commercial"]
+  );
   assert.ok(request.executions.every((execution) => execution.status === "completed"));
 });
 
@@ -246,11 +283,11 @@ test("GET /api/requests/:id returns full request orchestration details", async (
   assert.equal(response.statusCode, 200);
   assert.equal(body.request.status, "orchestrated");
   assert.equal(body.request.plans.length, 1);
-  assert.equal(body.request.plans[0].steps.length, 13);
+  assert.equal(body.request.plans[0].steps.length, 15);
   assert.equal(body.request.plans[0].steps[0].agent.id, "finance");
-  assert.equal(body.request.executions.length, 13);
-  // Thirteen steps executed for nine distinct agents.
-  assert.equal(body.request.result.summary.completedExecutions, 13);
+  assert.equal(body.request.executions.length, 15);
+  // Fifteen steps executed for nine distinct agents.
+  assert.equal(body.request.result.summary.completedExecutions, 15);
   assert.ok(body.request.auditEvents.length >= 1);
   assert.deepEqual(body.request.approvals, []);
 });

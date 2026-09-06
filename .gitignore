@@ -2,3 +2,16 @@ node_modules/
 .env
 .env.*
 !.env.example
+
+# Documents produced by the H-KIDS generator. They are outputs, regenerable at
+# will, and they carry customer data: an invoice names a person, an address and
+# an amount. Nothing here belongs in the repository.
+assets/documents/generated/
+
+# Local H-KIDS reference templates. The generator overlays its values on a
+# template PDF, and the templates are deliberately not versioned: the originals
+# were filled documents carrying a customer's name and order. Put the company's
+# templates here to make generation work on this machine; Git will never see
+# them, and the path is named by HKIDS_INVOICE_TEMPLATE_PATH and
+# HKIDS_DELIVERY_NOTE_TEMPLATE_PATH in .env.
+assets/documents/hkids-local/

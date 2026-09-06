@@ -59,6 +59,47 @@ test("Director frontend assets connect only to existing Director and approval en
   assert.match(styleResponse.body, /agent-roster/);
 });
 
+// A light guard beside the behavioural test in frontend-bootstrap.test.js: that
+// one drives the page and reads what it rendered, this one only says the served
+// asset still carries the figures at all. It catches the block being deleted.
+test("the served cockpit asset still carries the CDC section 29 figures", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const scriptResponse = await inject({ method: "GET", url: "/app/app.js" });
+
+  assert.equal(scriptResponse.statusCode, 200);
+  assert.match(scriptResponse.body, /CHIFFRE D'AFFAIRES/);
+  assert.match(scriptResponse.body, /ENCAISSEMENTS/);
+  assert.match(scriptResponse.body, /CREANCES EN RETARD/);
+  assert.match(scriptResponse.body, /BESOINS MATIERES/);
+  assert.match(scriptResponse.body, /overdueTotalsByCurrency/);
+});
+
+// The datasheet panel is driven by frontend-bootstrap.test.js, which submits the
+// form and reads what the page rendered. This one only says the served page and
+// script still carry it at all, and that it calls the one route it should.
+test("the served cockpit carries the datasheet panel and calls its own route", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const page = await inject({ method: "GET", url: "/" });
+  const script = await inject({ method: "GET", url: "/app/app.js" });
+
+  assert.equal(page.statusCode, 200);
+  assert.match(page.body, /Test Hiba - Preparation de devis/);
+  assert.match(page.body, /id="datasheet-reference"/);
+  assert.match(page.body, /id="datasheet-customer"/);
+  assert.match(page.body, /id="datasheet-quantity"/);
+  assert.match(page.body, /Preparer le devis/);
+
+  assert.equal(script.statusCode, 200);
+  assert.match(script.body, /\/api\/quotes\/datasheet/);
+  assert.match(script.body, /fromDatasheet/);
+  assert.match(script.body, /fromPriceList/);
+  assert.match(script.body, /fromRequest/);
+});
+
 test("Director cockpit API scenarios cover global, finance, production, purchasing, and multi-agent requests", async (t) => {
   const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
   t.after(() => app.close());
@@ -71,6 +112,8 @@ test("Director cockpit API scenarios cover global, finance, production, purchasi
       agents: [
         "finance",
         "finance",
+        "finance",
+        "commercial",
         "commercial",
         "commercial",
         "production",
@@ -86,7 +129,7 @@ test("Director cockpit API scenarios cover global, finance, production, purchasi
     },
     {
       message: "Combien dois-je encaisser cette semaine ?",
-      agents: ["finance", "finance"]
+      agents: ["finance", "finance", "finance"]
     },
     {
       message: "Quelles commandes risquent d'etre en retard ?",
@@ -98,7 +141,7 @@ test("Director cockpit API scenarios cover global, finance, production, purchasi
     },
     {
       message: "Quels clients dois-je relancer et quelles actions marketing proposes-tu ?",
-      agents: ["commercial", "commercial", "marketing"]
+      agents: ["commercial", "commercial", "commercial", "marketing"]
     }
   ];
 

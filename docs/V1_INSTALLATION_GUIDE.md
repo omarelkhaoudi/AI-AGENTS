@@ -1,5 +1,16 @@
 # Guide d'installation — V1 MVP
 
+> ⚠️ **Instantané historique.** Ce guide décrit la V1 telle qu'elle était au
+> commit `c2c1d89`. Il est conservé comme trace de cette livraison et ses
+> chiffres sont ceux d'alors.
+>
+> **Pour installer le projet aujourd'hui, suivez le
+> [README](../README.md).** Les variables d'environnement sont détaillées dans
+> [`ENVIRONMENT.md`](ENVIRONMENT.md). Plusieurs points ont changé depuis :
+> le nombre d'outils, le nombre de migrations, le comportement d'une
+> `DATABASE_URL` invalide, les polices des documents H-KIDS et le chargement de
+> `.env` par `auth:create-token`.
+
 **Commit de référence : `c2c1d89`**
 
 Ce guide mène d'un poste vierge à une application démarrée et testée. Deux
@@ -251,14 +262,19 @@ Un corps vide ou non JSON provoque une erreur `N8N_INVALID_RESPONSE`.
 
 ## 9. Lancement des tests
 
+> ⚠️ **Les compteurs de cette section sont ceux du commit `c2c1d89`.** Ils ne
+> correspondent plus à la suite actuelle, qui compte davantage de tests. Pour
+> les chiffres mesurés aujourd'hui, voir le [README](../README.md), section
+> « Tests et validation ». Les commandes, elles, restent valides.
+
 ### Suite complète, sans base
 
 ```bash
 npm test
 ```
 
-Attendu : **723 tests, 693 réussis, 0 échec, 30 ignorés.** Les 30 tests ignorés
-sont les tests d'intégration PostgreSQL.
+Attendu **au commit `c2c1d89`** : 723 tests, 693 réussis, 0 échec, 30 ignorés.
+Les tests ignorés sont les tests d'intégration PostgreSQL.
 
 ### Suite complète, avec PostgreSQL
 
@@ -268,7 +284,7 @@ Exportez `DATABASE_URL` et `RUN_POSTGRES_INTEGRATION="true"`, puis :
 npm test
 ```
 
-Attendu : **723 tests, 723 réussis, 0 échec, 0 ignoré.**
+Attendu **au commit `c2c1d89`** : 723 tests, 723 réussis, 0 échec, 0 ignoré.
 
 ### Autres contrôles
 

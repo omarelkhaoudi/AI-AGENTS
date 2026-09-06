@@ -2,6 +2,12 @@ import { readFile } from "node:fs/promises";
 import { createBusinessMemoryRepository } from "../src/business-memory/repository-factory.js";
 import { ingestBusinessRecords, listIngestableDomains } from "../src/business-memory/ingestion.js";
 import { BUSINESS_DATA_SOURCES } from "../src/business-memory/source.js";
+import { loadDotEnvIfPresent } from "../src/load-dotenv.js";
+
+// Before createBusinessMemoryRepository reads BUSINESS_MEMORY_PROVIDER and
+// DATABASE_URL. Without this, a .env asking for the postgres provider was
+// ignored and the records were ingested into memory and dropped.
+loadDotEnvIfPresent();
 
 function readOption(name, fallback = null) {
   const prefix = `--${name}=`;

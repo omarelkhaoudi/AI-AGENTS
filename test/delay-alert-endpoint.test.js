@@ -69,7 +69,7 @@ test("with the bridge off the endpoint refuses and nothing is registered", async
 
   assert.equal(response.statusCode, 409);
   assert.equal(body.details.code, "WORKFLOW_NOT_ENABLED");
-  assert.equal(createMvpToolRegistry({ repository }).list().length, 21);
+  assert.equal(createMvpToolRegistry({ repository }).list().length, 25);
   assert.equal((await repository.listExecutions()).length, 0);
   assert.equal((await repository.listApprovals()).length, 0);
 });

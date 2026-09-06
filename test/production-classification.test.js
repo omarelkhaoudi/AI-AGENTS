@@ -197,11 +197,19 @@ test("production reads its schedule through the tool", async () => {
   assert.equal(items.filter((item) => item.orderFound === false).length, 1);
 });
 
-test("no aggregate is produced by the schedule", async () => {
+// The schedule reported no figure while the wall clock convention was undecided.
+// Lot 14 gives it one, because it is the only tool that sees both the workshop
+// and the order book, and so the only one that can name a production file whose
+// order was never registered.
+test("the schedule names the workshop files with no registered order", async () => {
   const { service } = createHarness();
   const result = await execute(service);
+  const summary = result.output.result.summary;
 
-  assert.equal("summary" in result.output.result, false);
+  assert.ok(summary, "the schedule now carries a figure of its own");
+  assert.equal(summary.counts.records, 3);
+  assert.equal(summary.counts.withoutOrder, 1);
+  assert.deepEqual(summary.productionWithoutOrder, ["order-sample-003"]);
 });
 
 // The existing tool keeps its stored classifications: this commit must not

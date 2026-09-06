@@ -236,18 +236,34 @@ test("Director still completes the company overview request with adapter-backed 
     [
       "finance",
       "finance",
+      "finance",
+      "commercial",
       "commercial",
       "commercial",
       "production",
       "production",
       "purchasing",
       "purchasing",
-      "after_sales"
+      "hr",
+      "after_sales",
+      "marketing",
+      "community_manager",
+      "legal"
     ]
   );
   assert.deepEqual(
     [...new Set(body.results.map((result) => result.agent))],
-    ["finance", "commercial", "production", "purchasing", "after_sales"]
+    [
+      "finance",
+      "commercial",
+      "production",
+      "purchasing",
+      "hr",
+      "after_sales",
+      "marketing",
+      "community_manager",
+      "legal"
+    ]
   );
   assert.equal(body.results.every((result) => result.result?.demo === true), true);
 });

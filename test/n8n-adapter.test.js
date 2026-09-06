@@ -327,11 +327,11 @@ test("a boundary failure is audited as a tool failure", async () => {
 // Nothing is wired into the product yet.
 // ---------------------------------------------------------------------------
 
-test("the MVP registry holds no n8n adapter and still lists twenty one tools", () => {
+test("the MVP registry holds no n8n adapter and still lists twenty five tools", () => {
   const registry = createMvpToolRegistry();
   const tools = registry.list();
 
-  assert.equal(tools.length, 21);
+  assert.equal(tools.length, 25);
   for (const tool of tools) {
     const adapter = registry.getAdapter(tool.id);
     assert.notEqual(adapter?.kind, "n8n", `${tool.id} must not be wired to n8n yet`);

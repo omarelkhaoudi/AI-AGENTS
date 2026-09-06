@@ -181,8 +181,17 @@ test("demo mode distributes a real token and never bypasses verification", async
   assert.equal(stored.userId, session.user.id);
 });
 
+// The configuration is built from an empty environment, not from the one this
+// process happens to carry. Reading process.env made the test assert a default
+// while depending on a setting: on a machine whose .env sets AUTH_MODE=demo,
+// "the default token mode" was demo mode and the test failed on a correct build.
+// An empty environment is the only way to state what the default actually is.
 test("demo mode endpoint does not exist under the default token mode", async (t) => {
-  const app = buildApi({ repository: new InMemoryRepository() });
+  const security = createSecurityConfig({});
+  assert.equal(security.authMode, "token", "an unset AUTH_MODE must mean token");
+  assert.equal(security.demoModeEnabled, false);
+
+  const app = buildApi({ repository: new InMemoryRepository(), security });
   t.after(() => app.close());
 
   assert.equal((await app.inject({ method: "GET", url: "/api/auth/demo-session" })).statusCode, 404);

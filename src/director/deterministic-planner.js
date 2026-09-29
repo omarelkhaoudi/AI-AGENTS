@@ -36,8 +36,28 @@ const COMMUNICATION_PATTERNS = Object.freeze([
   "communiquer",
   "communique",
   "publier",
+  // "publie la premiere photo" states the intent without ever writing "publier"
+  // or "publication". Every French word holding "publie" is a publication word.
+  "publie",
   "publication",
   "publications",
+  // The networks by name. Asked "peux-tu creer une page Instagram", the Director
+  // recognised nothing and sent the question to the five core agents, which
+  // answered with cash and production figures.
+  //
+  // Patterns are matched as substrings, which rules four tempting words out:
+  // "insta" is inside "installation", "post" inside "poste", "compte" inside
+  // "comptes clients", and "reel" inside "reelle". The plural "reels" carries no
+  // such collision, and the networks are named in full.
+  "instagram",
+  "facebook",
+  "tiktok",
+  "linkedin",
+  "hashtag",
+  "story",
+  "reels",
+  "abonnes",
+  "followers",
   "publications de cette semaine",
   "contenus dois-je publier",
   "contenu dois-je publier",

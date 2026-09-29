@@ -578,3 +578,68 @@ test("the identity falls back through id, lineId, orderId, subject, label", () =
   assert.equal(collectedItemIdentity("d", { subject: "s", label: "l" }).endsWith("s"), true);
   assert.equal(collectedItemIdentity("d", { label: "l" }).endsWith("l"), true);
 });
+
+// --- the networks are named, so a question that names one is heard -------------
+//
+// "Peux-tu creer une page Instagram ?" matched no pattern: the Director sent it
+// to the five core agents, which answered with cash, orders and production
+// figures. The networks are now named among the communication patterns.
+
+test("a question naming a social network reaches marketing and community management", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const questions = [
+    "Est-ce que tu peux créer une page Instagram pour H-KIDS ?",
+    "publie la première photo sur Instagram",
+    "programme les publications Facebook de la semaine",
+    "notre compte TikTok et LinkedIn sont à jour ?",
+    "prépare 3 reels et des hashtags pour la semaine",
+    "la story du jour est prête ?",
+    "combien d'abonnés on a gagné cette semaine ?"
+  ];
+
+  for (const question of questions) {
+    const body = await ask(inject, question);
+    assert.deepEqual(
+      [...new Set(body.results.map((result) => result.agent))],
+      ["marketing", "community_manager"],
+      question
+    );
+  }
+});
+
+// Patterns are matched as substrings, which is why the words chosen avoid four
+// collisions: "insta" lives inside "installation", "post" inside "poste",
+// "compte" inside "comptes clients", and "reel" inside "reelle".
+test("the network words never divert a request that only looks like one", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const elsewhere = [
+    ["quand est prévue la livraison et l'installation du mobilier ?", ["production"]],
+    ["quels comptes clients dois-je relancer ?", ["commercial"]],
+    ["quelle est la marge réelle sur les commandes ?", ["production"]],
+    ["le poste de production est en retard", ["production"]]
+  ];
+
+  for (const [question, expected] of elsewhere) {
+    const body = await ask(inject, question);
+    assert.deepEqual([...new Set(body.results.map((result) => result.agent))], expected, question);
+  }
+});
+
+// Naming a network says which desk answers; it says nothing about what the agent
+// may do. Publishing is not among its tools, and no step asks for the approval a
+// publication would need.
+test("a request to publish still only reads: no publication tool, no approval", async (t) => {
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository() });
+  t.after(() => app.close());
+
+  const body = await ask(inject, "publie la première photo sur Instagram");
+
+  assert.deepEqual(toolsOf(body, "marketing"), ["get_marketing_overview"]);
+  assert.deepEqual(toolsOf(body, "community_manager"), ["get_community_overview"]);
+  assert.equal(body.results.every((result) => result.status === "completed"), true);
+  assert.equal(JSON.stringify(body).includes("publish"), false, "nothing claims a publication happened");
+});

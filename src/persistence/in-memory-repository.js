@@ -558,6 +558,24 @@ export class InMemoryRepository extends AgentPlatformRepository {
       if (filters.requestId && publication.requestId !== filters.requestId) {
         return false;
       }
+      // A calendar window reads planned publications: one with no date is not
+      // in any window, rather than in all of them. An absent bound is absent
+      // whether it arrives as undefined or as null, and the Prisma repository
+      // reads it with the same rule.
+      const from = filters.from ?? null;
+      const to = filters.to ?? null;
+      if (from !== null || to !== null) {
+        if (!publication.scheduledAt) {
+          return false;
+        }
+        const at = new Date(publication.scheduledAt).getTime();
+        if (from !== null && at < new Date(from).getTime()) {
+          return false;
+        }
+        if (to !== null && at > new Date(to).getTime()) {
+          return false;
+        }
+      }
       return true;
     });
   }

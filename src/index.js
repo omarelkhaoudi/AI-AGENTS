@@ -59,6 +59,7 @@ export * from "./security/tool-domains.js";
 export * from "./security/approval-flow.js";
 export * from "./security/permissions.js";
 export * from "./social/publication.js";
+export * from "./social/publication-calendar.js";
 export * from "./social/publication-service.js";
 export * from "./sop/contract.js";
 export * from "./sop/default-sops.js";

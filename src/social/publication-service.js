@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { assertFuturePublicationSlot } from "./publication-calendar.js";
 import {
   PublicationStateError,
   applyApprovalDecision,
@@ -48,15 +49,16 @@ export async function reworkPublication(repository, publicationId, changes = {})
 export async function requestPublicationApproval(
   repository,
   publicationId,
-  { requestingAgent = "community_manager", requestedByAgentId = null, reason, risk = "high" } = {}
+  { requestingAgent = "community_manager", requestedByAgentId = null, reason, risk = "high", changes = {} } = {}
 ) {
   const publication = await requirePublication(repository, publicationId);
 
   // The move is computed first, on an identifier reserved here. A publication
   // that cannot be submitted throws before anything is created, so a refusal
-  // never leaves an approval waiting in someone's queue.
+  // never leaves an approval waiting in someone's queue. Any content the
+  // submission carries, such as the calendar slot, travels in that same move.
   const approvalId = randomUUID();
-  const pending = transitionPublication(publication, "pending_approval", { approvalId });
+  const pending = transitionPublication(publication, "pending_approval", { ...changes, approvalId });
 
   const approval = await repository.createApproval({
     id: approvalId,
@@ -153,6 +155,38 @@ export async function cancelPublication(repository, publicationId, { reason = nu
   }
 
   return repository.savePublication(cancelled);
+}
+
+// M2.2. The one operation the editorial workflow needs: a draft is prepared,
+// given its slot in the calendar and submitted for approval, in that order. It
+// is built entirely from the M2.1 primitives, creates exactly one approval, and
+// leaves none behind when a step refuses. Preparing is internal work and opens
+// no approval of its own: the human gate is the submission, and it stays the
+// only one.
+export async function prepareAndSubmitPublication(
+  repository,
+  publicationId,
+  { scheduledAt, caption, hashtags, metadata, now, ...approvalOptions } = {}
+) {
+  const publication = await requirePublication(repository, publicationId);
+
+  // The slot is judged before anything is written: a date in the past is not a
+  // new plan, and a refusal must leave the publication as it was.
+  const slot = assertFuturePublicationSlot(scheduledAt, now === undefined ? {} : { now });
+
+  if (publication.status === "draft") {
+    await preparePublication(repository, publicationId, {
+      scheduledAt: slot,
+      ...(caption === undefined ? {} : { caption }),
+      ...(hashtags === undefined ? {} : { hashtags }),
+      ...(metadata === undefined ? {} : { metadata })
+    });
+  }
+
+  return requestPublicationApproval(repository, publicationId, {
+    ...approvalOptions,
+    changes: { scheduledAt: slot }
+  });
 }
 
 async function requirePublication(repository, publicationId) {

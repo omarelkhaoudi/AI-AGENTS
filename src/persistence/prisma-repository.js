@@ -542,11 +542,22 @@ export class PrismaRepository extends AgentPlatformRepository {
   }
 
   async listPublications(filters = {}) {
+    // A window is expressed on scheduledAt, so rows with no date fall outside
+    // it here exactly as they do in memory. An absent bound is absent whether
+    // it arrives as undefined or as null: ?? is what keeps the two repositories
+    // answering the same thing, since new Date(null) is 1 January 1970 and
+    // would silently become a bound.
+    const scheduledAt = stripUndefined({
+      gte: (filters.from ?? null) === null ? undefined : new Date(filters.from),
+      lte: (filters.to ?? null) === null ? undefined : new Date(filters.to)
+    });
+
     return this.prisma.socialPublication.findMany({
       where: stripUndefined({
         status: filters.status,
         channel: filters.channel,
-        requestId: filters.requestId
+        requestId: filters.requestId,
+        scheduledAt: Object.keys(scheduledAt).length === 0 ? undefined : scheduledAt
       }),
       orderBy: { createdAt: "desc" }
     });

@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { createAuditEvent as createAuditEventRecord } from "../observability/audit.js";
 import { ApprovalStateError } from "../security/approval.js";
-import { AgentPlatformRepository, IdempotencyConflictError } from "./repository-contract.js";
+import { assertPublicationRecord } from "../social/publication.js";
+import { AgentPlatformRepository, IdempotencyConflictError, RecordConflictError } from "./repository-contract.js";
 
 export class PrismaRepository extends AgentPlatformRepository {
   constructor({ prisma, transactional = false }) {
@@ -498,6 +499,59 @@ export class PrismaRepository extends AgentPlatformRepository {
     return this.prisma.document.findUnique({ where: { id: documentId } });
   }
 
+  async createPublication(publication = {}) {
+    const record = assertPublicationRecord(publication);
+
+    try {
+      return await this.prisma.socialPublication.create({ data: publicationData(record) });
+    } catch (cause) {
+      // Two different conflicts hide behind one P2002: a duplicate business
+      // event, and an identifier already taken. They are not the same failure
+      // and are not reported as one.
+      if (isIdempotencyKeyConflict(cause)) {
+        throw new IdempotencyConflictError("A publication already holds this idempotency key.", {
+          idempotencyKey: record.idempotencyKey,
+          publication: await this.prisma.socialPublication.findUnique({
+            where: { idempotencyKey: record.idempotencyKey }
+          })
+        });
+      }
+      if (isRecordIdConflict(cause)) {
+        throw new RecordConflictError("A publication already holds this identifier.", { id: record.id });
+      }
+      throw cause;
+    }
+  }
+
+  // Low level on purpose: it writes the record it is given, in whatever state
+  // that record is in. It is not a business entry point, and the business rules
+  // it does enforce are the ones a stored publication must satisfy whoever
+  // wrote it. Moving a publication from one state to another goes through
+  // src/social/publication-service.js.
+  async savePublication(publication) {
+    const record = assertPublicationRecord(publication);
+    return this.prisma.socialPublication.upsert({
+      where: { id: record.id },
+      create: publicationData(record),
+      update: publicationData(record)
+    });
+  }
+
+  async getPublication(publicationId) {
+    return this.prisma.socialPublication.findUnique({ where: { id: publicationId } });
+  }
+
+  async listPublications(filters = {}) {
+    return this.prisma.socialPublication.findMany({
+      where: stripUndefined({
+        status: filters.status,
+        channel: filters.channel,
+        requestId: filters.requestId
+      }),
+      orderBy: { createdAt: "desc" }
+    });
+  }
+
   async transaction(callback) {
     if (this.transactional) {
       return callback(this);
@@ -550,7 +604,28 @@ function isIdempotencyKeyConflict(cause) {
   }
 
   const driverMessage = cause.meta?.driverAdapterError?.cause?.originalMessage;
-  return typeof driverMessage === "string" && driverMessage.includes(REQUEST_IDEMPOTENCY_INDEX);
+  // Every idempotency index is named "<table>_idempotencyKey_key" by Prisma, so
+  // the pattern recognises the one on publications as it recognises the one on
+  // requests, with no second name to keep in step here.
+  return typeof driverMessage === "string" && IDEMPOTENCY_INDEX_NAME.test(driverMessage);
+}
+
+const IDEMPOTENCY_INDEX_NAME = /[A-Za-z_]+_idempotencyKey_key/;
+
+// A publication carries its own identifier, so a P2002 on it is a second row
+// under an identifier already taken, not a duplicate business event.
+function isRecordIdConflict(cause) {
+  if (cause?.code !== "P2002") {
+    return false;
+  }
+
+  const target = cause.meta?.target;
+  if (Array.isArray(target) ? target.includes("id") : target === "id") {
+    return true;
+  }
+
+  const driverMessage = cause.meta?.driverAdapterError?.cause?.originalMessage;
+  return typeof driverMessage === "string" && driverMessage.includes("_pkey");
 }
 
 function approvalData(approval) {
@@ -571,6 +646,32 @@ function approvalData(approval) {
     createdAt: approval.createdAt ? new Date(approval.createdAt) : undefined,
     updatedAt: approval.updatedAt ? new Date(approval.updatedAt) : undefined,
     decidedAt: approval.decidedAt ? new Date(approval.decidedAt) : null
+  });
+}
+
+function publicationData(publication) {
+  return stripUndefined({
+    id: publication.id ?? randomUUID(),
+    requestId: publication.requestId ?? null,
+    channel: publication.channel,
+    caption: publication.caption ?? "",
+    hashtags: publication.hashtags ? [...publication.hashtags] : [],
+    scheduledAt: publication.scheduledAt ? new Date(publication.scheduledAt) : null,
+    status: publication.status ?? "draft",
+    authorAgentId: publication.authorAgentId ?? null,
+    createdById: publication.createdById ?? null,
+    idempotencyKey: publication.idempotencyKey ?? null,
+    approvalId: publication.approvalId ?? null,
+    approvalDecision: publication.approvalDecision ?? null,
+    approvalDecidedById: publication.approvalDecidedById ?? null,
+    approvalDecidedAt: publication.approvalDecidedAt ? new Date(publication.approvalDecidedAt) : null,
+    approvalReason: publication.approvalReason ?? null,
+    publishedAt: publication.publishedAt ? new Date(publication.publishedAt) : null,
+    externalId: publication.externalId ?? null,
+    error: publication.error ?? null,
+    metadata: publication.metadata ?? {},
+    createdAt: publication.createdAt ? new Date(publication.createdAt) : undefined,
+    updatedAt: publication.updatedAt ? new Date(publication.updatedAt) : undefined
   });
 }
 

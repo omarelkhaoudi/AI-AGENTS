@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { createAuditEvent as createAuditEventRecord } from "../observability/audit.js";
 import { ApprovalStateError } from "../security/approval.js";
-import { AgentPlatformRepository, IdempotencyConflictError, RepositoryContractError } from "./repository-contract.js";
+import { assertPublicationRecord } from "../social/publication.js";
+import {
+  AgentPlatformRepository,
+  IdempotencyConflictError,
+  RecordConflictError,
+  RepositoryContractError
+} from "./repository-contract.js";
 
 export class InMemoryRepository extends AgentPlatformRepository {
   #users = new Map();
@@ -18,6 +24,10 @@ export class InMemoryRepository extends AgentPlatformRepository {
   #approvals = new Map();
   #auditEvents = new Map();
   #documents = new Map();
+  #publications = new Map();
+  // Same index as the one on requests, for the same reason: a duplicate must be
+  // refused in the tick that would have stored it.
+  #publicationIdempotencyKeys = new Map();
 
   upsertUser({
     id = randomUUID(),
@@ -489,6 +499,67 @@ export class InMemoryRepository extends AgentPlatformRepository {
 
   getDocument(documentId) {
     return this.#documents.get(documentId) ?? null;
+  }
+
+  createPublication(publication = {}) {
+    const idempotencyKey = publication.idempotencyKey ?? null;
+    // PostgreSQL refuses a second row under a taken identifier through the
+    // primary key. Memory refuses it here, so neither repository silently
+    // replaces a publication that already exists.
+    if (publication.id && this.#publications.has(publication.id)) {
+      throw new RecordConflictError("A publication already holds this identifier.", { id: publication.id });
+    }
+
+    if (idempotencyKey !== null && this.#publicationIdempotencyKeys.has(idempotencyKey)) {
+      throw new IdempotencyConflictError("A publication already holds this idempotency key.", {
+        idempotencyKey,
+        publication: this.getPublication(this.#publicationIdempotencyKeys.get(idempotencyKey))
+      });
+    }
+
+    const record = this.savePublication(publication);
+    if (idempotencyKey !== null) {
+      this.#publicationIdempotencyKeys.set(idempotencyKey, record.id);
+    }
+    return record;
+  }
+
+  // Low level on purpose, and documented as such on the contract: it stores the
+  // record it is given rather than moving a publication from one state to
+  // another. What it refuses is a record that is not a valid publication.
+  savePublication(publication) {
+    const validated = assertPublicationRecord({
+      ...publication,
+      id: publication.id ?? randomUUID(),
+      updatedAt: publication.updatedAt ?? new Date().toISOString()
+    });
+    const record = freezeRecord({
+      ...validated,
+      hashtags: cloneValue(validated.hashtags ?? []),
+      metadata: cloneValue(validated.metadata ?? {}),
+      error: cloneValue(validated.error ?? null)
+    });
+    this.#publications.set(record.id, record);
+    return record;
+  }
+
+  getPublication(publicationId) {
+    return this.#publications.get(publicationId) ?? null;
+  }
+
+  listPublications(filters = {}) {
+    return [...this.#publications.values()].filter((publication) => {
+      if (filters.status && publication.status !== filters.status) {
+        return false;
+      }
+      if (filters.channel && publication.channel !== filters.channel) {
+        return false;
+      }
+      if (filters.requestId && publication.requestId !== filters.requestId) {
+        return false;
+      }
+      return true;
+    });
   }
 
   async transaction(callback) {

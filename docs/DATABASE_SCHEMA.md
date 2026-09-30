@@ -1,7 +1,7 @@
 # Database Schema
 
 PostgreSQL through Prisma 7, with the `@prisma/adapter-pg` driver adapter. The
-schema lives in `prisma/schema.prisma` and is applied by the five committed
+schema lives in `prisma/schema.prisma` and is applied by the seven committed
 migrations under `prisma/migrations/`.
 
 This document describes what the schema holds and how the application reaches
@@ -17,7 +17,7 @@ the company is: customers, quotes, invoices, orders, production, purchasing.
 An agent reads business memory through a tool. It never reaches orchestration
 tables, and orchestration never carries business content.
 
-## Orchestration tables (10)
+## Orchestration tables (11)
 
 | Model | Holds |
 | --- | --- |
@@ -32,6 +32,7 @@ tables, and orchestration never carries business content.
 | `AuditEvent` | The trail. Twenty one event types, defined in `src/observability/audit.js`. |
 
 | `Document` | Documents attached to a request. |
+| `SocialPublication` | A social post and the state it is in, from draft to published. |
 
 `Agent.permissions` is written from `createMvpAgentPermissions`, the source of
 truth for the least privilege model. The seed overwrites it on every run: a row
@@ -44,6 +45,18 @@ database rather than by a lookup that another writer could slip past. PostgreSQL
 allows many NULLs in a unique index, so requests that carry no business identity
 are unaffected. Delay alerts derive theirs as
 `delay_alert:{orderId}:{delayRisk}:{UTC day}`.
+
+`SocialPublication` holds one post per row: its channel, caption, hashtags, the
+date it is meant to go out, and the decision a human took on it. Its status
+follows the state machine in `src/social/publication.js`: `draft`, `prepared`,
+`pending_approval`, `approved`, `scheduled`, `published`, plus `failed`,
+`rejected` and `cancelled`. `approved`, `scheduled` and `published` cannot be
+reached without an approval decision copied onto the row, so the existing human
+validation stays the gate. The table declares no foreign key: the request and
+the approval are referenced by id, which is what lets the migration be purely
+additive. Its `idempotencyKey` is nullable and unique, like the one on
+`Request`. Nothing in the model or its service calls a social network, an n8n
+workflow or an OAuth endpoint.
 
 ## Business memory tables (16)
 
@@ -116,6 +129,7 @@ become a column.
 | `20260819000000_add_api_tokens` | `ApiToken` |
 | `20260820000000_add_business_reference_models` | Products, prices, stock, bills of material, payment terms |
 | `20260824000000_add_request_idempotency_key` | `Request.idempotencyKey` and its unique index |
+| `20260929000000_add_social_publications` | `social_publications`, the state of a social post |
 
 Apply them with `npm run db:migrate`. Never edit a committed migration: add a
 new one. See `docs/POSTGRESQL_SETUP.md` for the full install path and

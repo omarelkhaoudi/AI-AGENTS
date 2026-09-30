@@ -28,6 +28,10 @@ export const REPOSITORY_METHODS = Object.freeze([
   "listAuditEvents",
   "createDocument",
   "getDocument",
+  "createPublication",
+  "getPublication",
+  "listPublications",
+  "savePublication",
   "transaction",
   "disconnect"
 ]);
@@ -47,6 +51,18 @@ export class IdempotencyConflictError extends Error {
     super(message);
     this.name = "IdempotencyConflictError";
     this.code = "IDEMPOTENCY_KEY_TAKEN";
+    this.details = details;
+  }
+}
+
+// Raised when a row is created under an identifier another row already holds.
+// PostgreSQL raises it through the primary key; memory has to refuse it too, or
+// the two repositories disagree on what creating a record means.
+export class RecordConflictError extends Error {
+  constructor(message, details = {}) {
+    super(message);
+    this.name = "RecordConflictError";
+    this.code = "RECORD_ID_TAKEN";
     this.details = details;
   }
 }
@@ -166,6 +182,26 @@ export class AgentPlatformRepository {
 
   getDocument() {
     throw new RepositoryContractError("getDocument is not implemented.");
+  }
+
+  // savePublication is deliberately low level: it stores the record it is given
+  // and is not where a publication changes state. What it does refuse is a
+  // record that is not a valid publication. The business entry point is
+  // src/social/publication-service.js.
+  createPublication() {
+    throw new RepositoryContractError("createPublication is not implemented.");
+  }
+
+  getPublication() {
+    throw new RepositoryContractError("getPublication is not implemented.");
+  }
+
+  listPublications() {
+    throw new RepositoryContractError("listPublications is not implemented.");
+  }
+
+  savePublication() {
+    throw new RepositoryContractError("savePublication is not implemented.");
   }
 
   transaction() {

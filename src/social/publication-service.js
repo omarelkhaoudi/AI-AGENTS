@@ -189,6 +189,38 @@ export async function prepareAndSubmitPublication(
   });
 }
 
+// M2.3. An approval that names a publication is the human gate of the editorial
+// workflow; every other approval is a tool action and is none of this module's
+// business. The caller asks this before deciding what a decision means.
+export function isPublicationApproval(approval) {
+  return typeof approval?.metadata?.publicationId === "string" && approval.metadata.publicationId.length > 0;
+}
+
+// M2.3. Carries a decision Hiba has already taken through to the publication it
+// was taken on. It decides nothing, it executes nothing, it publishes nothing
+// and it never creates an approval: the decision is read from the approval
+// record, and the state machine is what accepts or refuses it. A publication
+// already approved or rejected refuses a second decision, and an approval that
+// does not match its publication is refused by the model.
+export async function applyPublicationApprovalDecision(repository, approvalId) {
+  const approval = await repository.getApproval(approvalId);
+  if (!approval) {
+    throw new PublicationStateError(`Approval not found: ${approvalId}`, "PUBLICATION_APPROVAL_MISSING", {
+      approvalId
+    });
+  }
+
+  if (!isPublicationApproval(approval)) {
+    throw new PublicationStateError(
+      "This approval does not name a publication.",
+      "PUBLICATION_APPROVAL_MISMATCH",
+      { approvalId }
+    );
+  }
+
+  return recordPublicationDecision(repository, approval.metadata.publicationId);
+}
+
 async function requirePublication(repository, publicationId) {
   const publication = await repository.getPublication(publicationId);
   if (!publication) {

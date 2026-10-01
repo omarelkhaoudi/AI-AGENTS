@@ -19,6 +19,7 @@ import {
   executeApprovedApproval,
   rejectApprovalRequest
 } from "../security/approval-flow.js";
+import { applyPublicationApprovalDecision, isPublicationApproval } from "../social/publication-service.js";
 import { ToolExecutionService, ToolExecutionServiceError } from "../tools/execution-service.js";
 import { authenticatePrincipal, extractBearerToken } from "../security/authentication.js";
 import { assertCapability } from "../security/authorization.js";
@@ -248,6 +249,16 @@ export function buildApi({
           approverId: request.principal.userId,
           decisionReason: decision.value.decisionReason
         });
+        // A publication approval is the editorial gate, not a tool action: it
+        // references no plan step, so executing it is neither possible nor
+        // wanted. The decision is carried to the publication instead, and
+        // nothing is published here. Every other approval keeps its exact
+        // previous path.
+        if (isPublicationApproval(approval)) {
+          const publication = await applyPublicationApprovalDecision(repository, approval.id);
+          return { approval: await repository.getApproval(approval.id), publication };
+        }
+
         const execution = await executeApprovedApproval({
           repository,
           approval,
@@ -272,6 +283,13 @@ export function buildApi({
           approverId: request.principal.userId,
           decisionReason: decision.value.decisionReason
         });
+
+        // A refusal reaches the publication for the same reason an approval
+        // does: the decision is Hiba's, and the publication must follow it.
+        if (isPublicationApproval(approval)) {
+          return { approval, publication: await applyPublicationApprovalDecision(repository, approval.id) };
+        }
+
         return { approval };
       } catch (error) {
         return sendDomainError(reply, "Approval rejection failed.", error);

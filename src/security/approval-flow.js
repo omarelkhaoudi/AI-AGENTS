@@ -27,7 +27,10 @@ export async function approveApprovalRequest({
     metadata: {
       approvalId: approval.id,
       status: approval.status,
-      decisionReasonProvided: typeof decisionReason === "string" && decisionReason.length > 0
+      decisionReasonProvided: typeof decisionReason === "string" && decisionReason.length > 0,
+      // Present only when the approval names one, so the journal shows which
+      // publication a decision was taken on without a second event type.
+      ...publicationMetadata(approval)
     }
   });
 
@@ -57,7 +60,8 @@ export async function rejectApprovalRequest({
     metadata: {
       approvalId: approval.id,
       status: approval.status,
-      decisionReasonProvided: typeof decisionReason === "string" && decisionReason.length > 0
+      decisionReasonProvided: typeof decisionReason === "string" && decisionReason.length > 0,
+      ...publicationMetadata(approval)
     }
   });
 
@@ -157,6 +161,13 @@ function findPlanStep(request, planStepId) {
   return request?.plans
     ?.flatMap((plan) => plan.steps ?? [])
     .find((step) => step.id === planStepId) ?? null;
+}
+
+// An approval that names a publication carries it into the journal. Nothing is
+// added for any other approval, so the existing events keep their exact shape.
+function publicationMetadata(approval) {
+  const publicationId = approval?.metadata?.publicationId;
+  return typeof publicationId === "string" && publicationId.length > 0 ? { publicationId } : {};
 }
 
 async function audit(repository, event) {

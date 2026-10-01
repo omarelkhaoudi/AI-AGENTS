@@ -170,6 +170,11 @@ async function submitDirectorRequest(message) {
   }
 }
 
+const PUBLICATION_DECISION_LABELS = {
+  approved: "Publication approuvée",
+  rejected: "Publication refusée"
+};
+
 async function refreshApprovals() {
   try {
     const response = await fetch("/api/approvals", { headers: await authHeaders() });
@@ -188,14 +193,26 @@ async function decideApproval(id, decision) {
   const statusTarget = approvalList.querySelector(`[data-approval-id="${id}"] .approval-status`);
   try {
     const response = await postJson(`/api/approvals/${id}/${decision}`, {});
-    statusTarget.textContent = decision === "approve"
-      ? `Action executee: ${response.execution?.status ?? "completed"}`
-      : "Action rejetee.";
-    showToast(decision === "approve" ? "Action autorisée et exécutée." : "Action refusée : rien n'a été exécuté.", decision === "approve" ? "ok" : "warn");
+    statusTarget.textContent = decisionResultLabel(response, decision);
+    showToast(decision === "approve" ? "Décision enregistrée." : "Refus enregistré : rien n'a été exécuté.", decision === "approve" ? "ok" : "warn");
     await refreshApprovals();
   } catch (error) {
     statusTarget.textContent = error.message;
   }
+}
+
+// A publication approval executes nothing: the decision is carried to the
+// publication, and the answer says what became of it. Every other approval runs
+// a tool and keeps the wording it had.
+function decisionResultLabel(response, decision) {
+  if (response.publication) {
+    return PUBLICATION_DECISION_LABELS[response.publication.status]
+      ?? `Publication: ${response.publication.status}`;
+  }
+
+  return decision === "approve"
+    ? `Action executee: ${response.execution?.status ?? "completed"}`
+    : "Action rejetee.";
 }
 
 async function postJson(url, body) {

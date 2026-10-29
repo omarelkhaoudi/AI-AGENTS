@@ -7,182 +7,284 @@
     <link rel="stylesheet" href="/app/styles.css">
   </head>
   <body>
-    <main class="shell">
-      <section class="workspace" aria-labelledby="director-title">
+    <div class="app">
+      <aside class="sidebar" aria-label="Navigation">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">H</span>
+          <div>
+            <strong>Director IA</strong>
+            <span>H-KIDS · AI Agents</span>
+          </div>
+        </div>
+
+        <nav class="nav" aria-label="Vues du cockpit">
+          <button type="button" class="nav-item" data-view="director" aria-current="page">
+            <span class="nav-icon" aria-hidden="true">🧠</span><span class="nav-label">Director</span>
+          </button>
+          <button type="button" class="nav-item" data-view="approvals">
+            <span class="nav-icon" aria-hidden="true">✅</span><span class="nav-label">Validations</span>
+            <span class="nav-badge" id="approval-count" hidden>0</span>
+          </button>
+          <button type="button" class="nav-item" data-view="documents">
+            <span class="nav-icon" aria-hidden="true">📄</span><span class="nav-label">Documents</span>
+          </button>
+          <button type="button" class="nav-item" data-view="quotes">
+            <span class="nav-icon" aria-hidden="true">🧾</span><span class="nav-label">Devis</span>
+          </button>
+          <button type="button" class="nav-item" data-view="team">
+            <span class="nav-icon" aria-hidden="true">👥</span><span class="nav-label">Équipe IA</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-foot">
+          <span class="status-pill" id="api-status">Demo mock</span>
+          <p>Données de démonstration. Aucune action sensible sans votre accord.</p>
+        </div>
+      </aside>
+
+      <main class="main">
         <header class="topbar">
           <div>
             <p class="eyebrow">Plateforme AI Agents</p>
             <h1 id="director-title">Director IA</h1>
           </div>
-          <span class="status-pill" id="api-status">Demo mock</span>
         </header>
 
-        <section class="panel composer" aria-labelledby="request-title">
-          <div class="panel-heading">
-            <div>
-              <h2 id="request-title">Demande dirigeant</h2>
-              <p>Les reponses utilisent uniquement des donnees de demonstration.</p>
-            </div>
-          </div>
-          <form id="director-form" class="request-form">
-            <label for="director-message">Votre demande</label>
-            <textarea id="director-message" name="message" rows="5">Fais-moi le point sur mon entreprise aujourd'hui.</textarea>
-            <div class="actions">
-              <button type="submit">Envoyer au Director</button>
-              <button type="button" class="secondary" data-scenario="Fais-moi le point sur mon entreprise aujourd'hui.">Point entreprise</button>
-              <button type="button" class="secondary" data-scenario="Qu'est-ce qui est urgent ?">Urgences</button>
-              <button type="button" class="secondary" data-scenario="Combien dois-je encaisser cette semaine ?">Encaissements</button>
-              <button type="button" class="secondary" data-scenario="Quelles commandes risquent d'etre en retard ?">Retards</button>
-              <button type="button" class="secondary" data-scenario="Qu'est-ce que je dois commander ?">Achats</button>
-              <button type="button" class="secondary" data-scenario="Quels clients dois-je relancer ?">Relances</button>
-              <button type="button" class="secondary" data-scenario="Effectue le paiement de cette facture.">Paiement sensible</button>
-            </div>
+        <!-- Director -->
+        <section class="view" data-view-panel="director" aria-labelledby="request-title">
+          <section class="composer" aria-labelledby="request-title">
+            <p class="eyebrow" id="request-title">Demande dirigeant</p>
+            <h2 class="composer-question">Que veux-tu faire ?</h2>
+            <form id="director-form" class="composer-form">
+              <label for="director-message" class="visually-hidden">Votre demande</label>
+              <textarea id="director-message" name="message" rows="3">Fais-moi le point sur mon entreprise aujourd'hui.</textarea>
+              <div class="composer-bar">
+                <div class="chips" role="group" aria-label="Demandes fréquentes">
+                  <button type="button" class="chip" data-scenario="Fais-moi le point sur mon entreprise aujourd'hui.">Point entreprise</button>
+                  <button type="button" class="chip" data-scenario="Qu'est-ce qui est urgent ?">Urgences</button>
+                  <button type="button" class="chip" data-scenario="Combien dois-je encaisser cette semaine ?">Encaissements</button>
+                  <button type="button" class="chip" data-scenario="Quelles commandes risquent d'etre en retard ?">Retards</button>
+                  <button type="button" class="chip" data-scenario="Qu'est-ce que je dois commander ?">Achats</button>
+                  <button type="button" class="chip" data-scenario="Quels clients dois-je relancer ?">Relances</button>
+                  <button type="button" class="chip chip-sensitive" data-scenario="Effectue le paiement de cette facture.">Paiement sensible</button>
+                </div>
+                <div class="composer-actions">
+                  <button type="button" class="icon-button" id="voice-placeholder" disabled title="Commande vocale à venir">
+                    <span aria-hidden="true">🎙</span><span class="visually-hidden">Voix indisponible en Phase 0</span>
+                  </button>
+                  <button type="submit" class="primary">Envoyer au Director</button>
+                </div>
+              </div>
+            </form>
             <p id="ui-state" class="state-line" role="status">Pret.</p>
-          </form>
-        </section>
-
-        <section class="grid">
-          <section class="panel" aria-labelledby="summary-title">
-            <div class="panel-heading">
-              <div>
-                <h2 id="summary-title">Synthese Director</h2>
-                <p id="summary-subtitle">En attente d'une demande.</p>
-              </div>
-            </div>
-            <div id="summary-content" class="empty">Aucune synthese disponible.</div>
           </section>
 
-          <section class="panel" aria-labelledby="plan-title">
+          <div class="director-layout">
+            <section class="panel summary-panel" aria-labelledby="summary-title">
+              <div class="panel-heading">
+                <div>
+                  <h2 id="summary-title">Synthese Director</h2>
+                  <p id="summary-subtitle">En attente d'une demande.</p>
+                </div>
+              </div>
+              <div id="summary-content" class="empty-state">
+                <span class="empty-icon" aria-hidden="true">✨</span>
+                <p>Posez une question au Director : il interroge les agents et vous rend une synthèse en 10 rubriques.</p>
+              </div>
+            </section>
+
+            <div class="side-column">
+              <section class="panel" aria-labelledby="plan-title">
+                <div class="panel-heading">
+                  <div>
+                    <h2 id="plan-title">Plan genere</h2>
+                    <p>Director → agents spécialisés → outils sécurisés.</p>
+                  </div>
+                </div>
+                <ol id="plan-list" class="timeline"></ol>
+              </section>
+
+              <section class="panel" aria-labelledby="history-title">
+                <div class="panel-heading">
+                  <div>
+                    <h2 id="history-title">Historique</h2>
+                    <p>Cliquez pour réafficher une réponse.</p>
+                  </div>
+                </div>
+                <div id="history-list" class="history-list"></div>
+              </section>
+            </div>
+          </div>
+
+          <details class="panel agents-panel">
+            <summary>
+              <span>
+                <strong id="agents-title">Agents sollicites</strong>
+                <span class="muted">Détail des réponses de chaque agent</span>
+              </span>
+            </summary>
+            <div id="agent-results" class="agent-grid"></div>
+          </details>
+        </section>
+
+        <!-- Validations -->
+        <section class="view" data-view-panel="approvals" hidden aria-labelledby="approval-title">
+          <section class="panel approvals">
             <div class="panel-heading">
               <div>
-                <h2 id="plan-title">Plan genere</h2>
-                <p>Director -> agents specialises -> outils securises.</p>
+                <h2 id="approval-title">Actions necessitant votre validation</h2>
+                <p>Aucune action sensible n'est executee automatiquement.</p>
               </div>
+              <button type="button" class="secondary" id="refresh-approvals">Rafraichir</button>
             </div>
-            <ol id="plan-list" class="timeline"></ol>
+            <div id="approval-list" class="approval-list"></div>
           </section>
         </section>
 
-        <section class="panel" aria-labelledby="agents-title">
-          <div class="panel-heading">
-            <div>
-              <h2 id="agents-title">Agents sollicites</h2>
-              <p>Les executions passent par ToolExecutionService. Community Manager reste sous Marketing.</p>
+        <!-- Documents -->
+        <section class="view" data-view-panel="documents" hidden aria-labelledby="documents-title">
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <h2 id="documents-title">Documents H-KIDS</h2>
+                <p>Aperçu obligatoire avant génération du PDF et du Word.</p>
+              </div>
             </div>
-          </div>
-          <div id="agent-roster" class="agent-roster" aria-label="Agents disponibles"></div>
-          <div id="agent-results" class="agent-grid"></div>
-        </section>
-
-        <section class="panel" aria-labelledby="datasheet-title">
-          <div class="panel-heading">
-            <div>
-              <h2 id="datasheet-title">Test Hiba - Preparation de devis</h2>
-              <p>Fiche produit retrouvee par reference, prix en vigueur, et devis soumis a votre validation.</p>
-            </div>
-          </div>
-          <form id="datasheet-form" class="request-form">
-            <label for="datasheet-reference">Reference produit</label>
-            <input id="datasheet-reference" name="productReference" value="PRD-ATLAS-PANEL">
-            <label for="datasheet-customer">Client</label>
-            <input id="datasheet-customer" name="customerId" value="customer-atlas">
-            <label for="datasheet-quantity">Quantite</label>
-            <input id="datasheet-quantity" name="quantity" type="number" min="1" value="12">
-            <div class="actions">
-              <button type="submit">Preparer le devis</button>
-              <button type="button" class="secondary" data-datasheet="PRD-ATLAS-PANEL">Cas nominal</button>
-              <button type="button" class="secondary" data-datasheet="PRD-INEXISTANT">Reference inconnue</button>
-              <button type="button" class="secondary" data-datasheet="MAT-ALU-A">Sans prix</button>
-              <button type="button" class="secondary" data-datasheet="MAT-PACK-B">Prix ambigu</button>
-            </div>
-            <p id="datasheet-state" class="state-line" role="status">Pret.</p>
-          </form>
-          <div id="datasheet-result" class="empty">Aucune preparation lancee.</div>
-        </section>
-
-        <section class="panel" aria-labelledby="documents-title">
-          <div class="panel-heading">
-            <div>
-              <h2 id="documents-title">Documents H-KIDS</h2>
-              <p>Aperçu obligatoire avant génération du PDF et du Word.</p>
-            </div>
-          </div>
-          <form id="document-form" class="request-form">
-            <label for="document-type">Type de document</label>
-            <select id="document-type" name="documentType">
-              <option value="delivery_note">Bon de livraison</option>
-              <option value="invoice">Facture</option>
-              <option value="purchase_order">Bon de commande</option>
-            </select>
-            <label for="document-number">Numéro</label>
-            <input id="document-number" name="documentNumber">
-            <label for="document-date">Date</label>
-            <input id="document-date" name="date" placeholder="05/09/2026">
-            <label for="document-reference" data-hide-for="purchase_order">Référence BL</label>
-            <input id="document-reference" name="deliveryNoteReference" data-hide-for="purchase_order">
-            <label for="document-object">Objet</label>
-            <input id="document-object" name="object" placeholder="Vente de mobilier">
-            <label for="document-client">Client</label>
-            <input id="document-client" name="clientName">
-            <label for="document-address">Adresse client</label>
-            <input id="document-address" name="clientAddress">
-            <label for="document-payment-method">Moyen de paiement</label>
-            <input id="document-payment-method" name="paymentMethod" value="virement bancaire">
-            <label for="document-payment-terms">Conditions de paiement</label>
-            <select id="document-payment-terms" name="paymentTermsRule">
-              <option value="" data-hide-for="purchase_order">Saisie manuelle requise</option>
-              <option value="hkids-po-50-50" data-only-for="purchase_order">50 % à la commande / 50 % à la livraison</option>
-              <option value="hkids-60-20-20-2026">Règle active H-KIDS 60/20/20</option>
-            </select>
-            <textarea id="document-payment-terms-manual" rows="2" placeholder="Conditions de paiement explicites" data-hide-for="purchase_order"></textarea>
-            <label for="document-note">Note</label>
-            <input id="document-note" name="note">
-            <label for="document-specifications" data-only-for="purchase_order">Caractéristiques et finitions (une par ligne)</label>
-            <textarea id="document-specifications" rows="4" data-only-for="purchase_order" placeholder="Escalier à droite, avec tiroirs intégrés&#10;Coloris : blanc et rose"></textarea>
-            <label for="document-image" data-only-for="purchase_order">Visuel de référence (JPEG ou PNG, facultatif)</label>
-            <input id="document-image" type="file" accept="image/jpeg,image/png" data-only-for="purchase_order">
-            <label for="document-items">Produits JSON</label>
-            <textarea id="document-items" rows="8">[
+            <form id="document-form" class="form-grid">
+              <div class="field">
+                <label for="document-type">Type de document</label>
+                <select id="document-type" name="documentType">
+                  <option value="delivery_note">Bon de livraison</option>
+                  <option value="invoice">Facture</option>
+                  <option value="purchase_order">Bon de commande</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="document-number">Numéro</label>
+                <input id="document-number" name="documentNumber">
+              </div>
+              <div class="field">
+                <label for="document-date">Date</label>
+                <input id="document-date" name="date" placeholder="05/09/2026">
+              </div>
+              <div class="field" data-hide-for="purchase_order">
+                <label for="document-reference">Référence BL</label>
+                <input id="document-reference" name="deliveryNoteReference">
+              </div>
+              <div class="field">
+                <label for="document-object">Objet</label>
+                <input id="document-object" name="object" placeholder="Vente de mobilier">
+              </div>
+              <div class="field">
+                <label for="document-client">Client</label>
+                <input id="document-client" name="clientName">
+              </div>
+              <div class="field field-wide">
+                <label for="document-address">Adresse client</label>
+                <input id="document-address" name="clientAddress">
+              </div>
+              <div class="field">
+                <label for="document-payment-method">Moyen de paiement</label>
+                <input id="document-payment-method" name="paymentMethod" value="virement bancaire">
+              </div>
+              <div class="field">
+                <label for="document-payment-terms">Conditions de paiement</label>
+                <select id="document-payment-terms" name="paymentTermsRule">
+                  <option value="" data-hide-for="purchase_order">Saisie manuelle requise</option>
+                  <option value="hkids-po-50-50" data-only-for="purchase_order">50 % à la commande / 50 % à la livraison</option>
+                  <option value="hkids-60-20-20-2026">Règle active H-KIDS 60/20/20</option>
+                </select>
+              </div>
+              <div class="field field-wide" data-hide-for="purchase_order">
+                <label for="document-payment-terms-manual">Conditions explicites</label>
+                <textarea id="document-payment-terms-manual" rows="2" placeholder="Conditions de paiement explicites"></textarea>
+              </div>
+              <div class="field field-wide">
+                <label for="document-note">Note</label>
+                <input id="document-note" name="note">
+              </div>
+              <div class="field field-wide" data-only-for="purchase_order">
+                <label for="document-specifications">Caractéristiques et finitions (une par ligne)</label>
+                <textarea id="document-specifications" rows="4" placeholder="Escalier à droite, avec tiroirs intégrés&#10;Coloris : blanc et rose"></textarea>
+              </div>
+              <div class="field field-wide" data-only-for="purchase_order">
+                <label for="document-image">Visuel de référence (JPEG ou PNG, facultatif)</label>
+                <input id="document-image" type="file" accept="image/jpeg,image/png">
+              </div>
+              <div class="field field-wide">
+                <label for="document-items">Produits JSON</label>
+                <textarea id="document-items" class="code" rows="7">[
   { "designation": "Canapé", "quantity": 1, "unitPriceHt": 4500, "amountHt": 4500 },
   { "designation": "Matelas", "quantity": 1, "unitPriceHt": 1500, "amountHt": 1500 },
   { "designation": "Tour de lit", "quantity": 1, "unitPriceHt": 1300, "amountHt": 1300 }
 ]</textarea>
-            <div class="actions">
-              <button type="submit">Prévisualiser</button>
-            </div>
-            <p id="document-state" class="state-line" role="status">Prêt.</p>
-          </form>
-          <div id="document-preview" class="empty">Aucun aperçu généré.</div>
-        </section>
-
-        <section class="panel approvals" aria-labelledby="approval-title">
-          <div class="panel-heading">
-            <div>
-              <h2 id="approval-title">Actions necessitant votre validation</h2>
-              <p>Aucune action sensible n'est executee automatiquement.</p>
-            </div>
-            <button type="button" class="secondary" id="refresh-approvals">Rafraichir</button>
+              </div>
+              <div class="form-footer field-wide">
+                <p id="document-state" class="state-line" role="status">Prêt.</p>
+                <button type="submit" class="primary">Prévisualiser</button>
+              </div>
+            </form>
+          </section>
+          <div id="document-preview" class="empty-state">
+            <span class="empty-icon" aria-hidden="true">📄</span>
+            <p>Aucun aperçu généré.</p>
           </div>
-          <div id="approval-list" class="approval-list"></div>
         </section>
 
-        <section class="panel" aria-labelledby="voice-title">
-          <div class="panel-heading">
-            <div>
-              <h2 id="voice-title">Voix</h2>
-              <p>Interface preparee pour une future commande vocale locale. Aucune API voix n'est connectee.</p>
+        <!-- Devis -->
+        <section class="view" data-view-panel="quotes" hidden aria-labelledby="datasheet-title">
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <h2 id="datasheet-title">Test Hiba - Preparation de devis</h2>
+                <p>Fiche produit retrouvee par reference, prix en vigueur, et devis soumis a votre validation.</p>
+              </div>
             </div>
-            <span class="tag">preparee_offline</span>
+            <form id="datasheet-form" class="form-grid">
+              <div class="field">
+                <label for="datasheet-reference">Reference produit</label>
+                <input id="datasheet-reference" name="productReference" value="PRD-ATLAS-PANEL">
+              </div>
+              <div class="field">
+                <label for="datasheet-customer">Client</label>
+                <input id="datasheet-customer" name="customerId" value="customer-atlas">
+              </div>
+              <div class="field">
+                <label for="datasheet-quantity">Quantite</label>
+                <input id="datasheet-quantity" name="quantity" type="number" min="1" value="12">
+              </div>
+              <div class="chips field-wide" role="group" aria-label="Cas de test">
+                <button type="button" class="chip" data-datasheet="PRD-ATLAS-PANEL">Cas nominal</button>
+                <button type="button" class="chip" data-datasheet="PRD-INEXISTANT">Reference inconnue</button>
+                <button type="button" class="chip" data-datasheet="MAT-ALU-A">Sans prix</button>
+                <button type="button" class="chip" data-datasheet="MAT-PACK-B">Prix ambigu</button>
+              </div>
+              <div class="form-footer field-wide">
+                <p id="datasheet-state" class="state-line" role="status">Pret.</p>
+                <button type="submit" class="primary">Preparer le devis</button>
+              </div>
+            </form>
+          </section>
+          <div id="datasheet-result" class="empty-state">
+            <span class="empty-icon" aria-hidden="true">🧾</span>
+            <p>Aucune preparation lancee.</p>
           </div>
-          <button type="button" class="secondary" id="voice-placeholder" disabled>Voix indisponible en Phase 0</button>
         </section>
-      </section>
 
-      <aside class="history panel" aria-labelledby="history-title">
-        <h2 id="history-title">Historique</h2>
-        <div id="history-list" class="history-list"></div>
-      </aside>
-    </main>
+        <!-- Équipe IA -->
+        <section class="view" data-view-panel="team" hidden aria-labelledby="team-title">
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <h2 id="team-title">Mon équipe IA</h2>
+                <p>Les executions passent par ToolExecutionService. Community Manager reste sous Marketing. Les agents en vert ont répondu à la dernière demande.</p>
+              </div>
+            </div>
+            <div id="agent-roster" class="agent-roster" aria-label="Agents disponibles"></div>
+          </section>
+        </section>
+      </main>
+    </div>
     <script type="module" src="/app/app.js"></script>
   </body>
 </html>

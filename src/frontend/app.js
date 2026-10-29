@@ -31,6 +31,18 @@ const DIRECTOR_FIGURES = Object.freeze([
   ["CREANCES EN RETARD", "payments", "overdueTotalsByCurrency", "overdue", "en retard"]
 ]);
 
+// The colour of each heading says how to read it at a glance: green is good
+// news, red needs attention, amber needs a decision, blue is money or material
+// to follow.
+const SECTION_TONES = Object.freeze({
+  "CE QUI VA BIEN": "good",
+  "RETARDS / PROBLEMES": "danger",
+  "RISQUES / BLOCAGES": "danger",
+  "DECISIONS NECESSAIRES": "warn",
+  "A ENCAISSER": "info",
+  "A COMMANDER": "info"
+});
+
 const AGENT_ROSTER = Object.freeze([
   ["director", "🧠 Direction"],
   ["commercial", "💼 Commercial"],
@@ -62,6 +74,7 @@ const historyList = document.querySelector("#history-list");
 const apiStatus = document.querySelector("#api-status");
 const uiState = document.querySelector("#ui-state");
 const voicePlaceholder = document.querySelector("#voice-placeholder");
+const approvalCount = document.querySelector("#approval-count");
 
 voicePlaceholder.dataset.voiceStatus = VOICE_INTERFACE.status;
 voicePlaceholder.dataset.externalConnectionsEnabled = String(VOICE_INTERFACE.externalConnectionsEnabled);
@@ -174,7 +187,7 @@ async function postJson(url, body) {
 
 function renderCurrent(response) {
   apiStatus.textContent = formatStatus(response.status);
-  apiStatus.style.color = response.status === "requires_approval" ? "#9f3412" : "#667085";
+  apiStatus.style.color = response.status === "requires_approval" ? "#e0763f" : "";
   uiState.textContent = response.status === "partial"
     ? "Reponse partielle: certains agents n'ont pas pu repondre."
     : response.status === "requires_approval"
@@ -194,7 +207,7 @@ function renderSummary(response) {
 
   summaryContent.className = "";
   summaryContent.innerHTML = `
-    <p>${escapeHtml(response.summary?.headline ?? "Synthese indisponible.")}</p>
+    <p class="summary-headline">${escapeHtml(response.summary?.headline ?? "Synthese indisponible.")}</p>
     ${renderFigures(response.summary?.aggregates)}
     ${renderDirectorSections(minimumSections)}
     ${renderProvenance(domainSources)}
@@ -251,6 +264,9 @@ function renderAgentRoster(activeAgents) {
 function renderApprovals() {
   const localApprovals = state.current?.decisionsRequired?.filter((decision) => decision.type === "approval") ?? [];
   const approvals = mergeApprovals(localApprovals, state.approvals);
+  const pending = approvals.filter((approval) => approval.status === "pending").length;
+  approvalCount.textContent = String(pending);
+  approvalCount.hidden = pending === 0;
   if (approvals.length === 0) {
     approvalList.innerHTML = '<p class="empty">Aucune approval en attente.</p>';
     return;
@@ -422,8 +438,11 @@ function renderDirectorSections(minimumSections) {
       ${DIRECTOR_SECTIONS.map(([key, label]) => {
         const entries = minimumSections[key] ?? [];
         return `
-          <section class="director-section">
-            <h3>${escapeHtml(label)}</h3>
+          <section class="director-section" data-tone="${SECTION_TONES[key] ?? "neutral"}" data-empty="${entries.length === 0}">
+            <header>
+              <h3>${escapeHtml(label)}</h3>
+              <span class="section-count">${escapeHtml(String(entries.length))}</span>
+            </header>
             ${entries.length > 0
               ? `<ul>${entries.slice(0, 6).map((entry) => `<li>${escapeHtml(describeSectionEntry(entry))}</li>`).join("")}</ul>`
               : '<p class="empty">Aucun resultat.</p>'}
@@ -937,6 +956,39 @@ function formatDh(value) {
   }).format(Number(value)).replace(/\u202f/g, " ")} DH`;
 }
 
+// The cockpit is one page with several views. The view is kept in the URL hash
+// so a reload, or a link sent to a colleague, lands on the same screen.
+const COCKPIT_VIEWS = Object.freeze({
+  director: "Director IA",
+  approvals: "Validations",
+  documents: "Documents H-KIDS",
+  quotes: "Préparation de devis",
+  team: "Équipe IA"
+});
+
+function showView(name) {
+  const view = Object.hasOwn(COCKPIT_VIEWS, name ?? "") ? name : "director";
+  document.querySelector("#director-title").textContent = COCKPIT_VIEWS[view];
+  document.querySelectorAll("[data-view-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.viewPanel !== view;
+  });
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    if (button.dataset.view === view) {
+      button.setAttribute("aria-current", "page");
+    } else {
+      button.removeAttribute("aria-current");
+    }
+  });
+  if (globalThis.location && globalThis.location.hash !== `#${view}`) {
+    globalThis.history?.replaceState?.(null, "", `#${view}`);
+  }
+}
+
+document.querySelectorAll("[data-view]").forEach((button) => {
+  button.addEventListener("click", () => showView(button.dataset.view));
+});
+globalThis.addEventListener?.("hashchange", () => showView(globalThis.location.hash.slice(1)));
+
 // Last, because it is the only part that runs rather than declares. It used to
 // sit above the declarations, where the top level await suspended evaluation
 // before let apiToken was reached: refreshApprovals then read a binding still in
@@ -945,5 +997,6 @@ function formatDh(value) {
 //
 // Function declarations hoist, so the call looked fine; let bindings do not.
 // Anything that runs must therefore come after everything it depends on.
+showView(globalThis.location?.hash?.slice(1));
 renderAgentRoster([]);
 await refreshApprovals();

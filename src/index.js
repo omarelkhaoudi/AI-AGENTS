@@ -31,6 +31,8 @@ export * from "./documents/document-validation.js";
 export * from "./documents/docx-renderer.js";
 export * from "./documents/hkids-template.js";
 export * from "./documents/pdf-renderer.js";
+export * from "./documents/purchase-order.js";
+export * from "./documents/purchase-order-renderer.js";
 export * from "./demo/company-data.js";
 export * from "./integrations/ai-provider.js";
 export * from "./integrations/business-integration-contract.js";

@@ -3,9 +3,13 @@ import yazl from "yazl";
 import { HKIDS_DOCUMENT_TYPES } from "./document-schema.js";
 import { HKIDS_FIXED_IDENTITY, HKIDS_LOGO_PATH, assertHkidsTemplateAvailable, documentTitleFor, referenceLabelFor } from "./hkids-template.js";
 import { formatMoney } from "./pdf-renderer.js";
+import { HKIDS_PURCHASE_ORDER_ADDRESS_LINES } from "./purchase-order.js";
 
 export async function renderHkidsDocx(document) {
-  await assertHkidsTemplateAvailable(document.documentType);
+  // A purchase order is drawn without a template, so there is none to check.
+  if (document.documentType !== HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER) {
+    await assertHkidsTemplateAvailable(document.documentType);
+  }
   const zip = new yazl.ZipFile();
   const logoBytes = await extractLogoBytes();
   const documentXml = createDocumentXml(document);
@@ -59,6 +63,9 @@ function createDocumentXml(document) {
 
   const objectLine = document.object ? p(`Objet : ${document.object}`) : "";
   const noteLine = document.note ? p(`Note : ${document.note}`) : "";
+  if (document.documentType === HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER) {
+    return wrapBody(purchaseOrderBody(document, { headers, rows, totals, objectLine, noteLine }));
+  }
   const body = [
     p(HKIDS_FIXED_IDENTITY.legalLine, { align: "center", size: 15 }),
     logo(),
@@ -84,6 +91,47 @@ function createDocumentXml(document) {
     p(HKIDS_FIXED_IDENTITY.footerMention, { size: 17 })
   ].join("");
 
+  return wrapBody(body);
+}
+
+// The Word copy of a purchase order carries the same text as the PDF. The
+// reference visual is left to the PDF.
+function purchaseOrderBody(document, { headers, rows, totals, objectLine, noteLine }) {
+  const specifications = document.specifications ?? [];
+  const instalments = document.payment.instalments ?? [];
+  return [
+    logo(),
+    p(HKIDS_FIXED_IDENTITY.companyName, { bold: true, align: "right" }),
+    ...HKIDS_PURCHASE_ORDER_ADDRESS_LINES.map((line) => p(line, { align: "right" })),
+    p(`E-mail : ${HKIDS_FIXED_IDENTITY.email}`, { align: "right" }),
+    p(`Tél : ${HKIDS_FIXED_IDENTITY.phone}`, { align: "right" }),
+    p(documentTitleFor(document.documentType), { bold: true, size: 34 }),
+    objectLine,
+    p(`N° : ${document.documentNumber}`, { bold: true }),
+    p(`Date : ${displayDate(document.date)}`),
+    referenceLabelFor(document) ? p(referenceLabelFor(document)) : "",
+    p("Adressé à :", { bold: true }),
+    p(document.client.name),
+    p(document.client.address),
+    table(tr(headers, { bold: true, shade: "7FA696", white: true }) + rows),
+    p(""),
+    table(totals),
+    ...(specifications.length > 0
+      ? [p("CARACTÉRISTIQUES ET FINITIONS", { bold: true }), ...specifications.map((line) => p(`• ${line}`))]
+      : []),
+    p("CONDITIONS DE RÈGLEMENT", { bold: true }),
+    ...instalments.map((instalment) => p(`${instalment.percent} % ${instalment.due} : ${formatMoney(instalment.amount)}.`)),
+    document.payment.method ? p(`Moyen de paiement : ${document.payment.method}`) : "",
+    noteLine,
+    p("BON POUR ACCORD", { bold: true }),
+    p("Pour H KIDS — Nom, signature et cachet :"),
+    p(`Le client — Nom : ${document.client.name} — Signature :`),
+    p(HKIDS_FIXED_IDENTITY.footerMention, { size: 17 }),
+    p(HKIDS_FIXED_IDENTITY.legalLine, { size: 15 })
+  ].join("");
+}
+
+function wrapBody(body) {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr></w:body></w:document>`;
 }
 

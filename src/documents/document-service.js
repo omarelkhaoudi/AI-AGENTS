@@ -1,8 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { validateAndPrepareDocument, DocumentValidationError } from "./document-validation.js";
+import { HKIDS_DOCUMENT_TYPES } from "./document-schema.js";
 import { renderHkidsPdf } from "./pdf-renderer.js";
+import { renderPurchaseOrderPdf } from "./purchase-order-renderer.js";
+import { isPurchaseOrderNumberUsed, nextPurchaseOrderNumber } from "./purchase-order.js";
 import { renderHkidsDocx } from "./docx-renderer.js";
 import { assertHkidsTemplateAvailable } from "./hkids-template.js";
 
@@ -25,7 +28,8 @@ export class HkidsDocumentService {
 
   async preview(input = {}) {
     const document = validateAndPrepareDocument(input);
-    const template = await assertHkidsTemplateAvailable(document.documentType);
+    await this.#assertPurchaseOrderNumberFree(document);
+    const template = await templateFor(document.documentType);
     const previewHash = hashPayload({ document: stripRuntimeFields(document), templateChecksum: template.checksum });
     const previewToken = randomUUID();
     this.#previewTokens.set(previewToken, previewHash);
@@ -39,7 +43,7 @@ export class HkidsDocumentService {
 
   async generate(input = {}, { createdById = null } = {}) {
     const document = validateAndPrepareDocument(input, { requireConfirmation: true });
-    const template = await assertHkidsTemplateAvailable(document.documentType);
+    const template = await templateFor(document.documentType);
     const expectedHash = this.#previewTokens.get(document.previewToken);
     const actualHash = hashPayload({ document: stripRuntimeFields(document), templateChecksum: template.checksum });
     if (!expectedHash || expectedHash !== actualHash) {
@@ -48,9 +52,15 @@ export class HkidsDocumentService {
       });
     }
 
+    // Checked again at generation: another order may have taken the number
+    // between the preview and the confirmation.
+    await this.#assertPurchaseOrderNumberFree(document);
+
     await mkdir(this.outputDir, { recursive: true });
     const stem = safeFileStem(document);
-    const pdfBuffer = await renderHkidsPdf(document);
+    const pdfBuffer = document.documentType === HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER
+      ? await renderPurchaseOrderPdf(document)
+      : await renderHkidsPdf(document);
     const docxBuffer = await renderHkidsDocx(document);
     const pdfStorageKey = resolve(this.outputDir, `${stem}.pdf`);
     const docxStorageKey = resolve(this.outputDir, `${stem}.docx`);
@@ -88,6 +98,39 @@ export class HkidsDocumentService {
         docx: fileResponse(docx)
       })
     });
+  }
+
+  async nextPurchaseOrderNumber() {
+    return nextPurchaseOrderNumber(await this.#generatedPurchaseOrderNumbers());
+  }
+
+  // Generated orders are read back from the output directory, which survives a
+  // restart, so a number handed out once is never handed out again.
+  async #generatedPurchaseOrderNumbers() {
+    let names = [];
+    try {
+      names = await readdir(this.outputDir);
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
+    }
+    return names
+      .map((name) => new RegExp(`^${PURCHASE_ORDER_FILE_PREFIX}_HKIDS_(\\d+)_`).exec(name)?.[1])
+      .filter(Boolean);
+  }
+
+  async #assertPurchaseOrderNumberFree(document) {
+    if (document.documentType !== HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER) {
+      return;
+    }
+    if (isPurchaseOrderNumberUsed(document.documentNumber, await this.#generatedPurchaseOrderNumbers())) {
+      throw new DocumentGenerationError("This purchase order number has already been issued.", "PURCHASE_ORDER_NUMBER_USED", {
+        field: "documentNumber",
+        documentNumber: document.documentNumber,
+        nextNumber: await this.nextPurchaseOrderNumber()
+      });
+    }
   }
 
   async download(documentId) {
@@ -141,8 +184,29 @@ function checksumBuffer(buffer) {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
+// The purchase order has no template file; this descriptor stands in for one so
+// the preview hash and the response keep the same shape for every type.
+async function templateFor(documentType) {
+  if (documentType !== HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER) {
+    return assertHkidsTemplateAvailable(documentType);
+  }
+  return Object.freeze({
+    id: "hkids-purchase-order-builtin",
+    path: null,
+    sizeBytes: null,
+    checksum: null,
+    expectedChecksum: null,
+    locked: false,
+    expectedPageCount: null
+  });
+}
+
+const PURCHASE_ORDER_FILE_PREFIX = "bon_commande";
+
 function safeFileStem(document) {
-  const prefix = document.documentType === "invoice" ? "facture" : "bon_livraison";
+  const prefix = document.documentType === "invoice"
+    ? "facture"
+    : document.documentType === HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER ? PURCHASE_ORDER_FILE_PREFIX : "bon_livraison";
   return `${prefix}_HKIDS_${document.documentNumber}_${document.date}`.replace(/[^a-zA-Z0-9_-]+/g, "_");
 }
 

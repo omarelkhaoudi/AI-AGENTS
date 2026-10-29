@@ -165,7 +165,9 @@ async function postJson(url, body) {
   });
   const payload = await response.json();
   if (!response.ok) {
-    throw new Error(payload.error ?? "La requete a echoue.");
+    const error = new Error(payload.error ?? "La requete a echoue.");
+    error.details = payload.details ?? null;
+    throw error;
   }
   return payload;
 }
@@ -549,7 +551,79 @@ const documentNote = document.querySelector("#document-note");
 const documentItems = document.querySelector("#document-items");
 const documentState = document.querySelector("#document-state");
 const documentPreview = document.querySelector("#document-preview");
+const documentSpecifications = document.querySelector("#document-specifications");
+const documentImage = document.querySelector("#document-image");
 let lastDocumentPreview = null;
+let documentReferenceImage = "";
+
+documentType.addEventListener("change", () => applyDocumentType());
+applyDocumentType();
+
+// Shows the fields of the chosen document type. A purchase order has its own
+// number series, so its next free number is asked to the server.
+async function applyDocumentType() {
+  const type = documentType.value;
+  documentForm.querySelectorAll("[data-only-for]").forEach((element) => {
+    element.hidden = element.dataset.onlyFor !== type;
+  });
+  documentForm.querySelectorAll("[data-hide-for]").forEach((element) => {
+    element.hidden = element.dataset.hideFor === type;
+  });
+  const options = [...(documentPaymentTermsRule.options ?? [])];
+  if (options.find((option) => option.selected)?.hidden) {
+    documentPaymentTermsRule.value = options.find((option) => !option.hidden)?.value ?? "";
+  }
+  if (type === "purchase_order") {
+    try {
+      const response = await fetch("/api/documents/purchase-orders/next-number", { headers: await authHeaders() });
+      if (response.ok) {
+        documentNumber.value = (await response.json()).documentNumber;
+      }
+    } catch {
+      // The number stays editable; the server refuses a number already issued.
+    }
+  }
+}
+
+// The visual is reduced in the browser before it is sent: a phone photo is
+// several megabytes, and the order only needs it legible on an A4 page.
+documentImage.addEventListener("change", async () => {
+  documentReferenceImage = "";
+  const file = documentImage.files?.[0];
+  if (!file) {
+    return;
+  }
+  try {
+    documentReferenceImage = await downscaleImage(file, 1600, 0.85);
+    documentState.textContent = "Visuel chargé.";
+  } catch {
+    documentState.textContent = "Le visuel n'a pas pu être lu.";
+  }
+});
+
+function downscaleImage(file, maxSide, quality) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(image.width * scale);
+      canvas.height = Math.round(image.height * scale);
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("image illisible"));
+    };
+    image.src = url;
+  });
+}
 
 datasheetForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -684,9 +758,19 @@ async function previewHkidsDocument() {
   } catch (error) {
     lastDocumentPreview = null;
     documentPreview.className = "";
-    documentPreview.innerHTML = card("Erreur de validation", escapeHtml(error.message), "warning");
+    documentPreview.innerHTML = card("Erreur de validation", describeDocumentError(error), "warning");
     documentState.textContent = error.message;
   }
+}
+
+// The field names and codes say what to correct; the bare message does not.
+function describeDocumentError(error) {
+  const details = error.details ?? {};
+  const lines = (details.errors ?? []).map((entry) => `${entry.field} : ${entry.message}`);
+  if (details.code === "PURCHASE_ORDER_NUMBER_USED") {
+    lines.push(`Le numéro ${details.documentNumber} est déjà attribué. Prochain numéro libre : ${details.nextNumber}.`);
+  }
+  return [escapeHtml(error.message), ...lines.map(escapeHtml)].join("<br>");
 }
 
 function collectDocumentInput() {
@@ -715,7 +799,11 @@ function collectDocumentInput() {
       termsRule: documentPaymentTermsRule.value,
       terms: documentPaymentTermsManual.value
     },
-    note: documentNote.value
+    note: documentNote.value,
+    ...(documentType.value === "purchase_order" ? {
+      specifications: documentSpecifications.value.split("\n").map((line) => line.trim()).filter(Boolean),
+      referenceImage: documentReferenceImage
+    } : {})
   };
 }
 
@@ -728,7 +816,7 @@ function renderDocumentPreview(payload) {
       <div class="card-head">
         <div>
           <p class="eyebrow">Vérification H-KIDS</p>
-          <h3>${escapeHtml(document.documentType === "invoice" ? "Facture" : "Bon de livraison")} ${escapeHtml(document.documentNumber)}</h3>
+          <h3>${escapeHtml({ invoice: "Facture", purchase_order: "Bon de commande" }[document.documentType] ?? "Bon de livraison")} ${escapeHtml(document.documentNumber)}</h3>
         </div>
         <span class="tag">${escapeHtml(payload.status)}</span>
       </div>
@@ -774,8 +862,11 @@ function renderDocumentPreview(payload) {
         <li><strong>TVA</strong><span>${escapeHtml(formatDh(document.totals.tva))}</span></li>
         <li><strong>Total TTC</strong><span>${escapeHtml(formatDh(document.totals.totalTtc))}</span></li>
         <li><strong>Conditions de paiement</strong><span>${escapeHtml(document.payment.terms)}</span></li>
-        <li><strong>Moyen de paiement</strong><span>${escapeHtml(document.payment.method)}</span></li>
+        ${(document.payment.instalments ?? []).map((instalment) => `<li><strong>${escapeHtml(`${instalment.percent} % ${instalment.due}`)}</strong><span>${escapeHtml(formatDh(instalment.amount))}</span></li>`).join("")}
+        ${document.payment.method ? `<li><strong>Moyen de paiement</strong><span>${escapeHtml(document.payment.method)}</span></li>` : ""}
         ${document.note ? `<li><strong>Note</strong><span>${escapeHtml(document.note)}</span></li>` : ""}
+        ${(document.specifications ?? []).length > 0 ? `<li><strong>Caractéristiques</strong><span>${document.specifications.map(escapeHtml).join("<br>")}</span></li>` : ""}
+        ${document.referenceImage ? `<li><strong>Visuel</strong><span><img src="${escapeHtml(document.referenceImage)}" alt="Visuel de référence" style="max-width:160px;max-height:160px"></span></li>` : ""}
       </ul>
       <div class="actions">
         <button type="button" id="document-generate">Valider et générer</button>

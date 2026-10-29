@@ -489,3 +489,8 @@ button.link-button:hover {
     width: 100%;
   }
 }
+
+/* Fields of another document type stay hidden even where a rule sets display. */
+[hidden] {
+  display: none !important;
+}

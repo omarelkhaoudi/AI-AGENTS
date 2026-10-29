@@ -3,9 +3,11 @@ import {
   HKIDS_DOCUMENT_TYPES,
   REQUIRED_DOCUMENT_FIELDS,
   REQUIRED_INVOICE_FIELDS,
+  REQUIRED_PURCHASE_ORDER_FIELDS,
   isControlledDocumentType
 } from "./document-schema.js";
 import { HKIDS_ACTIVE_PAYMENT_TERMS } from "./hkids-template.js";
+import { computeInstalments, parseReferenceImage, purchaseOrderPaymentPlan } from "./purchase-order.js";
 
 const FORBIDDEN_PLACEHOLDERS = Object.freeze(["?", "À compléter", "A compléter"]);
 
@@ -34,7 +36,8 @@ export function normalizeDocumentInput(input = {}) {
     }))
     : [];
 
-  const payment = normalizePayment(input.payment);
+  const purchaseOrder = documentType === HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER;
+  const payment = purchaseOrder ? normalizePurchaseOrderPayment(input.payment) : normalizePayment(input.payment);
 
   return Object.freeze({
     documentType,
@@ -47,6 +50,12 @@ export function normalizeDocumentInput(input = {}) {
       name: text(input.client?.name),
       address: text(input.client?.address)
     }),
+    ...(purchaseOrder ? {
+      specifications: Object.freeze(Array.isArray(input.specifications)
+        ? input.specifications.map((line) => text(line)).filter((line) => line !== "")
+        : []),
+      referenceImage: text(input.referenceImage)
+    } : {}),
     items: Object.freeze(items),
     totals: Object.freeze({
       totalHt: input.totals?.totalHt === undefined ? undefined : Number(input.totals.totalHt),
@@ -66,12 +75,13 @@ export function validateAndPrepareDocument(input = {}, { requireConfirmation = f
   const errors = [];
 
   if (!isControlledDocumentType(document.documentType)) {
-    errors.push(error("documentType", "INVALID_DOCUMENT_TYPE", "documentType must be delivery_note or invoice."));
+    errors.push(error("documentType", "INVALID_DOCUMENT_TYPE", "documentType must be delivery_note, invoice or purchase_order."));
   }
 
+  const purchaseOrder = document.documentType === HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER;
   const required = document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE
     ? REQUIRED_INVOICE_FIELDS
-    : REQUIRED_DOCUMENT_FIELDS;
+    : purchaseOrder ? REQUIRED_PURCHASE_ORDER_FIELDS : REQUIRED_DOCUMENT_FIELDS;
   for (const field of required) {
     if (isMissing(getField(document, field))) {
       errors.push(error(field, "REQUIRED_FIELD_MISSING", `${field} is required.`));
@@ -89,7 +99,15 @@ export function validateAndPrepareDocument(input = {}, { requireConfirmation = f
   validateTextRecursively(document, "", errors);
   validateDocumentObject(document, errors);
   validateItems(document, errors);
-  validatePayment(document.payment, errors);
+  if (purchaseOrder) {
+    validatePurchaseOrderPayment(document.payment, errors);
+    const { error: imageError } = parseReferenceImage(document.referenceImage);
+    if (imageError) {
+      errors.push(error("referenceImage", imageError, "referenceImage must be a JPEG or PNG data URL of at most 3 MB."));
+    }
+  } else {
+    validatePayment(document.payment, errors);
+  }
 
   const calculated = calculateDocumentTotals(document.items, document.tvaRate);
   errors.push(...assertLineAmounts(document.items, calculated.items));
@@ -103,11 +121,32 @@ export function validateAndPrepareDocument(input = {}, { requireConfirmation = f
     throw new DocumentValidationError(errors);
   }
 
+  const plan = purchaseOrder ? purchaseOrderPaymentPlan(document.payment.termsRule) : null;
   return Object.freeze({
     ...document,
     items: calculated.items,
-    totals: calculated.totals
+    totals: calculated.totals,
+    ...(plan ? { payment: Object.freeze({ ...document.payment, instalments: computeInstalments(plan, calculated.totals.totalTtc) }) } : {})
   });
+}
+
+// Purchase order terms come only from a named plan, never from free text: the
+// instalment amounts printed on the order are computed from the plan, and a
+// typed sentence could contradict them.
+function normalizePurchaseOrderPayment(payment = {}) {
+  const termsRule = text(payment?.termsRule);
+  const plan = purchaseOrderPaymentPlan(termsRule);
+  return Object.freeze({
+    method: normalizePaymentMethod(payment?.method),
+    terms: plan ? plan.label : "",
+    termsRule
+  });
+}
+
+function validatePurchaseOrderPayment(payment, errors) {
+  if (!purchaseOrderPaymentPlan(payment.termsRule)) {
+    errors.push(error("payment.termsRule", "UNKNOWN_PAYMENT_TERMS_RULE", "payment.termsRule must name a purchase order payment plan."));
+  }
 }
 
 function normalizePayment(payment = {}) {

@@ -112,13 +112,14 @@
             <select id="document-type" name="documentType">
               <option value="delivery_note">Bon de livraison</option>
               <option value="invoice">Facture</option>
+              <option value="purchase_order">Bon de commande</option>
             </select>
             <label for="document-number">Numéro</label>
             <input id="document-number" name="documentNumber">
             <label for="document-date">Date</label>
             <input id="document-date" name="date" placeholder="05/09/2026">
-            <label for="document-reference">Référence BL</label>
-            <input id="document-reference" name="deliveryNoteReference">
+            <label for="document-reference" data-hide-for="purchase_order">Référence BL</label>
+            <input id="document-reference" name="deliveryNoteReference" data-hide-for="purchase_order">
             <label for="document-object">Objet</label>
             <input id="document-object" name="object" placeholder="Vente de mobilier">
             <label for="document-client">Client</label>
@@ -129,12 +130,17 @@
             <input id="document-payment-method" name="paymentMethod" value="virement bancaire">
             <label for="document-payment-terms">Conditions de paiement</label>
             <select id="document-payment-terms" name="paymentTermsRule">
-              <option value="">Saisie manuelle requise</option>
+              <option value="" data-hide-for="purchase_order">Saisie manuelle requise</option>
+              <option value="hkids-po-50-50" data-only-for="purchase_order">50 % à la commande / 50 % à la livraison</option>
               <option value="hkids-60-20-20-2026">Règle active H-KIDS 60/20/20</option>
             </select>
-            <textarea id="document-payment-terms-manual" rows="2" placeholder="Conditions de paiement explicites"></textarea>
+            <textarea id="document-payment-terms-manual" rows="2" placeholder="Conditions de paiement explicites" data-hide-for="purchase_order"></textarea>
             <label for="document-note">Note</label>
             <input id="document-note" name="note">
+            <label for="document-specifications" data-only-for="purchase_order">Caractéristiques et finitions (une par ligne)</label>
+            <textarea id="document-specifications" rows="4" data-only-for="purchase_order" placeholder="Escalier à droite, avec tiroirs intégrés&#10;Coloris : blanc et rose"></textarea>
+            <label for="document-image" data-only-for="purchase_order">Visuel de référence (JPEG ou PNG, facultatif)</label>
+            <input id="document-image" type="file" accept="image/jpeg,image/png" data-only-for="purchase_order">
             <label for="document-items">Produits JSON</label>
             <textarea id="document-items" rows="8">[
   { "designation": "Canapé", "quantity": 1, "unitPriceHt": 4500, "amountHt": 4500 },

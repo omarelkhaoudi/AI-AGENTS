@@ -443,7 +443,15 @@ export function buildApi({
       }
     });
 
-    app.post("/api/documents/preview", writeRouteOptions(), async (request, reply) => {
+    app.get("/api/documents/purchase-orders/next-number", readRouteOptions(), async (request, reply) => {
+      try {
+        return reply.code(200).send({ documentNumber: await hkidsDocuments.nextPurchaseOrderNumber() });
+      } catch (error) {
+        return sendDomainError(reply, "Purchase order numbering failed.", error);
+      }
+    });
+
+    app.post("/api/documents/preview", documentRouteOptions(securityConfig), async (request, reply) => {
       try {
         return reply.code(200).send(await hkidsDocuments.preview(request.body));
       } catch (error) {
@@ -455,7 +463,7 @@ export function buildApi({
       }
     });
 
-    app.post("/api/documents/generate", writeRouteOptions(), async (request, reply) => {
+    app.post("/api/documents/generate", documentRouteOptions(securityConfig), async (request, reply) => {
       try {
         return reply.code(201).send(await hkidsDocuments.generate(request.body, {
           createdById: request.principal.userId
@@ -581,6 +589,17 @@ function writeRouteOptions() {
     config: {
       capability: "create_requests"
     }
+  };
+}
+
+// A purchase order may carry its reference visual, which does not fit in the
+// general body limit. Only the two document routes get the larger allowance.
+const DOCUMENT_BODY_LIMIT_BYTES = 5 * 1024 * 1024;
+
+function documentRouteOptions(securityConfig) {
+  return {
+    ...writeRouteOptions(),
+    bodyLimit: Math.max(securityConfig.bodyLimitBytes, DOCUMENT_BODY_LIMIT_BYTES)
   };
 }
 

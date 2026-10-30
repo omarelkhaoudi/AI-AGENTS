@@ -21,8 +21,8 @@ test("Director frontend is served by the existing API server", async (t) => {
   assert.match(response.headers["content-type"], /text\/html/);
   assert.match(response.body, /Director IA/);
   assert.match(response.body, /Demande dirigeant/);
-  assert.match(response.body, /Plan genere/);
-  assert.match(response.body, /Actions necessitant votre validation/);
+  assert.match(response.body, /Plan généré/);
+  assert.match(response.body, /Actions nécessitant votre validation/);
   assert.match(response.body, /Fais-moi le point sur mon entreprise aujourd'hui/);
   assert.match(response.body, /Qu'est-ce qui est urgent/);
   assert.match(response.body, /Combien dois-je encaisser cette semaine/);
@@ -87,11 +87,11 @@ test("the served cockpit carries the datasheet panel and calls its own route", a
   const script = await inject({ method: "GET", url: "/app/app.js" });
 
   assert.equal(page.statusCode, 200);
-  assert.match(page.body, /Test Hiba - Preparation de devis/);
+  assert.match(page.body, /Préparation de devis/);
   assert.match(page.body, /id="datasheet-reference"/);
   assert.match(page.body, /id="datasheet-customer"/);
   assert.match(page.body, /id="datasheet-quantity"/);
-  assert.match(page.body, /Preparer le devis/);
+  assert.match(page.body, /Préparer le devis/);
 
   assert.equal(script.statusCode, 200);
   assert.match(script.body, /\/api\/quotes\/datasheet/);

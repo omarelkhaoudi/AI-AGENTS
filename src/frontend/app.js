@@ -31,29 +31,43 @@ const DIRECTOR_FIGURES = Object.freeze([
   ["CREANCES EN RETARD", "payments", "overdueTotalsByCurrency", "overdue", "en retard"]
 ]);
 
-// The colour of each heading says how to read it at a glance: green is good
+// How each heading reads at a glance: its icon, and its tone. Green is good
 // news, red needs attention, amber needs a decision, blue is money or material
-// to follow.
-const SECTION_TONES = Object.freeze({
-  "CE QUI VA BIEN": "good",
-  "RETARDS / PROBLEMES": "danger",
-  "RISQUES / BLOCAGES": "danger",
-  "DECISIONS NECESSAIRES": "warn",
-  "A ENCAISSER": "info",
-  "A COMMANDER": "info"
+// to follow; the others stay neutral.
+const SECTION_META = Object.freeze({
+  "CE QUI VA BIEN": { icon: "check-circle", tone: "good" },
+  "RETARDS / PROBLEMES": { icon: "clock", tone: "danger" },
+  "A ENCAISSER": { icon: "wallet", tone: "info" },
+  "A COMMANDER": { icon: "cart", tone: "info" },
+  "RISQUES / BLOCAGES": { icon: "alert", tone: "danger" },
+  "DECISIONS NECESSAIRES": { icon: "user-check", tone: "warn" },
+  "CE QUI NECESSITE UNE ACTION COMMERCIALE": { icon: "trend", tone: "neutral" },
+  "CE QUI NECESSITE UNE ACTION MARKETING OU COMMUNICATION": { icon: "megaphone", tone: "neutral" },
+  "CE QUI NECESSITE UNE INTERVENTION SAV": { icon: "wrench", tone: "neutral" },
+  "CE QUI PRESENTE UN RISQUE JURIDIQUE": { icon: "scale", tone: "neutral" }
 });
 
+const FIGURE_ICONS = Object.freeze({
+  "CHIFFRE D'AFFAIRES": "trend",
+  ENCAISSEMENTS: "wallet",
+  "CREANCES EN RETARD": "alert",
+  COMMANDES: "package",
+  "BESOINS MATIERES": "cart"
+});
+
+// The team, in the order of CDC section 15. Each agent has initials and a hue
+// of its own, so it is recognised in every list without reading its name.
 const AGENT_ROSTER = Object.freeze([
-  ["director", "🧠 Direction"],
-  ["commercial", "💼 Commercial"],
-  ["finance", "💰 Finance"],
-  ["production", "🏭 Production"],
-  ["purchasing", "📦 Achats"],
-  ["hr", "👥 RH"],
-  ["marketing", "📢 Marketing"],
-  ["community_manager", "👥 Community Manager", "Marketing"],
-  ["legal", "⚖️ Juridique"],
-  ["after_sales", "🛠 SAV"]
+  { id: "director", initials: "Di", color: "#24584a", role: "Orchestre l'équipe et consolide le point du jour." },
+  { id: "commercial", initials: "Co", color: "#2c6e9b", role: "Devis, relances clients et pipeline commercial." },
+  { id: "finance", initials: "Fi", color: "#3f7d4e", role: "Encaissements, créances, factures et échéances." },
+  { id: "production", initials: "Pr", color: "#b8641e", role: "Planning atelier, avancement et retards." },
+  { id: "purchasing", initials: "Ac", color: "#7a5ba6", role: "Matières, fournisseurs, stock et besoins d'achat." },
+  { id: "hr", initials: "RH", color: "#a64b6b", role: "Présences, contrats et besoins de personnel." },
+  { id: "marketing", initials: "Ma", color: "#c2852b", role: "Campagnes, offres et positionnement." },
+  { id: "community_manager", initials: "CM", color: "#d0688a", role: "Réseaux sociaux et contenus.", parent: "Marketing" },
+  { id: "legal", initials: "Ju", color: "#4f5d75", role: "Contrats, clauses, risques et échéances juridiques." },
+  { id: "after_sales", initials: "SA", color: "#2f8a87", role: "Réclamations, garanties et qualité après livraison." }
 ]);
 
 const VOICE_INTERFACE = Object.freeze({
@@ -75,6 +89,8 @@ const apiStatus = document.querySelector("#api-status");
 const uiState = document.querySelector("#ui-state");
 const voicePlaceholder = document.querySelector("#voice-placeholder");
 const approvalCount = document.querySelector("#approval-count");
+const toastRegion = document.querySelector("#toast-region");
+const sendButton = form.querySelector("button[type='submit']");
 
 voicePlaceholder.dataset.voiceStatus = VOICE_INTERFACE.status;
 voicePlaceholder.dataset.externalConnectionsEnabled = String(VOICE_INTERFACE.externalConnectionsEnabled);
@@ -84,10 +100,20 @@ form.addEventListener("submit", async (event) => {
   await submitDirectorRequest(messageInput.value);
 });
 
+// Ctrl+Enter (Cmd+Enter on a Mac) sends from the composer.
+messageInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    submitDirectorRequest(messageInput.value);
+  }
+});
+
+// A chip asks its question straight away: picking one is the request.
 document.querySelectorAll("[data-scenario]").forEach((button) => {
   button.addEventListener("click", () => {
     messageInput.value = button.dataset.scenario;
     messageInput.focus();
+    submitDirectorRequest(messageInput.value);
   });
 });
 
@@ -132,9 +158,10 @@ async function submitDirectorRequest(message) {
   setLoading(true);
   try {
     const response = await postJson("/api/director/requests", { message: cleanMessage });
-    state.current = response;
-    state.history = [response, ...state.history.filter((entry) => entry.requestId !== response.requestId)].slice(0, 8);
-    renderCurrent(response);
+    state.current = { ...response, receivedAt: Date.now() };
+    state.history = [state.current, ...state.history.filter((entry) => entry.requestId !== response.requestId)].slice(0, 8);
+    renderCurrent(state.current);
+    showToast(response.status === "requires_approval" ? "Action préparée : votre validation est requise." : "Synthèse prête.", response.status === "requires_approval" ? "warn" : "ok");
     await refreshApprovals();
   } catch (error) {
     renderError(error.message);
@@ -164,6 +191,7 @@ async function decideApproval(id, decision) {
     statusTarget.textContent = decision === "approve"
       ? `Action executee: ${response.execution?.status ?? "completed"}`
       : "Action rejetee.";
+    showToast(decision === "approve" ? "Action autorisée et exécutée." : "Action refusée : rien n'a été exécuté.", decision === "approve" ? "ok" : "warn");
     await refreshApprovals();
   } catch (error) {
     statusTarget.textContent = error.message;
@@ -189,10 +217,10 @@ function renderCurrent(response) {
   apiStatus.textContent = formatStatus(response.status);
   apiStatus.style.color = response.status === "requires_approval" ? "#e0763f" : "";
   uiState.textContent = response.status === "partial"
-    ? "Reponse partielle: certains agents n'ont pas pu repondre."
+    ? "Réponse partielle : certains agents n'ont pas pu répondre."
     : response.status === "requires_approval"
-      ? "Approval en attente: aucune action sensible n'a ete executee."
-      : "Reponse recue.";
+      ? "Validation en attente : aucune action sensible n'a été exécutée."
+      : `Réponse reçue${response.receivedAt ? ` ${formatRelativeTime(response.receivedAt)}` : ""}.`;
   renderSummary(response);
   renderPlan(response);
   renderAgents(response);
@@ -209,25 +237,58 @@ function renderSummary(response) {
   summaryContent.innerHTML = `
     <p class="summary-headline">${escapeHtml(response.summary?.headline ?? "Synthese indisponible.")}</p>
     ${renderFigures(response.summary?.aggregates)}
+    ${renderPriorities(response.summary?.urgent)}
+    <div class="section-title"><h3>Le point en dix rubriques</h3></div>
     ${renderDirectorSections(minimumSections)}
     ${renderProvenance(domainSources)}
   `;
 }
 
+// What deserves attention first: the urgent signals, at most five, each with
+// the agent that raised it and whether a decision is waiting on it.
+function renderPriorities(urgent) {
+  const entries = Array.isArray(urgent) ? urgent.slice(0, 5) : [];
+  if (entries.length === 0) {
+    return "";
+  }
+  return `
+    <div class="section-title"><h3>À traiter en priorité</h3><span class="tag danger">${escapeHtml(String(urgent.length))} urgent(s)</span></div>
+    <ul class="priority-list">
+      ${entries.map((entry) => `
+        <li>
+          ${avatar(entry.agent)}
+          <div class="priority-text">
+            <strong>${escapeHtml(entry.label ?? describeSectionEntry(entry))}</strong>
+            <span>${escapeHtml(formatAgent(entry.agent))}</span>
+          </div>
+          ${entry.item?.requiresDecision ? '<span class="tag warning">Décision</span>' : '<span class="tag danger">Urgent</span>'}
+        </li>
+      `).join("")}
+    </ul>
+  `;
+}
+
 function renderPlan(response) {
   const results = response.results ?? [];
-  planList.innerHTML = results.map((result, index) => `
-    <li>
-      <strong>${index === 0 ? "Director -> " : ""}${escapeHtml(formatAgent(result.agent))}</strong>
-      <span>${escapeHtml(result.tool ?? "aucun tool")} - ${escapeHtml(result.status)}</span>
-    </li>
-  `).join("");
+  planList.innerHTML = results.map((result) => {
+    const done = result.status === "completed";
+    return `
+      <li>
+        ${avatar(result.agent)}
+        <div class="step-text">
+          <strong>${escapeHtml(formatAgent(result.agent))}</strong>
+          <span>${escapeHtml(result.tool ?? "aucun outil")}</span>
+        </div>
+        <span class="step-status ${done ? "done" : "wait"}" title="${escapeHtml(result.status)}">${icon(done ? "check" : "clock")}</span>
+      </li>
+    `;
+  }).join("");
 }
 
 function renderAgents(response) {
   const results = response.results ?? [];
   if (results.length === 0) {
-    agentResults.innerHTML = '<p class="empty">Aucun agent sollicite.</p>';
+    agentResults.innerHTML = '<p class="empty">Aucun agent sollicité.</p>';
     return;
   }
   agentResults.innerHTML = results.map((result) => {
@@ -240,13 +301,16 @@ function renderAgents(response) {
       <article class="agent-card">
         <header>
           <div>
-            <h3>${escapeHtml(formatAgent(result.agent))}</h3>
-            <p class="muted">${escapeHtml(result.tool ?? "Action preparee")}</p>
+            ${avatar(result.agent)}
+            <div>
+              <h3>${escapeHtml(formatAgent(result.agent))}</h3>
+              <p class="muted">${escapeHtml(result.tool ?? "Action préparée")}</p>
+            </div>
           </div>
           <span class="tag ${statusClass}">${escapeHtml(result.status)}</span>
         </header>
         ${renderResultProvenance(result)}
-        ${items.length > 0 ? `<ul>${itemList}</ul>` : '<p class="muted">Aucun resultat execute pour le moment.</p>'}
+        ${items.length > 0 ? `<ul>${itemList}</ul>` : '<p class="muted">Aucun résultat pour le moment.</p>'}
       </article>
     `;
   }).join("");
@@ -254,10 +318,18 @@ function renderAgents(response) {
 
 function renderAgentRoster(activeAgents) {
   const active = new Set(["director", ...activeAgents]);
-  agentRoster.innerHTML = AGENT_ROSTER.map(([id, label, parent]) => `
-    <span class="agent-chip ${active.has(id) ? "active" : ""}" title="${parent ? `Sous ${parent}` : "Agent"}">
-      ${escapeHtml(label)}${parent ? ` <small>↳ ${escapeHtml(parent)}</small>` : ""}
-    </span>
+  agentRoster.innerHTML = AGENT_ROSTER.map((agent) => `
+    <article class="agent-chip ${active.has(agent.id) ? "active" : ""}">
+      <header>
+        ${avatar(agent.id, "lg")}
+        <div>
+          <strong>${escapeHtml(formatAgent(agent.id))}</strong>
+          ${agent.parent ? `<small>↳ sous ${escapeHtml(agent.parent)}</small>` : '<small>Agent spécialisé</small>'}
+        </div>
+        ${active.has(agent.id) && agent.id !== "director" ? '<span class="tag ok">a répondu</span>' : ""}
+      </header>
+      <p>${escapeHtml(agent.role)}</p>
+    </article>
   `).join("");
 }
 
@@ -268,7 +340,13 @@ function renderApprovals() {
   approvalCount.textContent = String(pending);
   approvalCount.hidden = pending === 0;
   if (approvals.length === 0) {
-    approvalList.innerHTML = '<p class="empty">Aucune approval en attente.</p>';
+    approvalList.innerHTML = `
+      <div class="all-clear">
+        <span class="badge">${icon("check-circle")}</span>
+        <h3>Tout est à jour</h3>
+        <p>Aucune approval en attente.</p>
+      </div>
+    `;
     return;
   }
 
@@ -281,11 +359,15 @@ function renderApprovals() {
         </div>
         <span class="tag warning">${escapeHtml(approval.status)}</span>
       </header>
-      <p class="muted">Agent: ${escapeHtml(formatAgent(approval.agent))} - Risque: ${escapeHtml(approval.risk ?? "medium")}</p>
-      <p class="approval-status muted">Validation requise. Aucune execution avant autorisation humaine.</p>
+      <div class="approval-meta">
+        ${avatar(approval.agent)}
+        <span>${escapeHtml(formatAgent(approval.agent))}</span>
+        <span class="tag ${["high", "critical"].includes(approval.risk) ? "danger" : "warning"}">Risque ${escapeHtml(approval.risk ?? "medium")}</span>
+      </div>
+      <p class="approval-status muted">Validation requise. Aucune exécution avant autorisation humaine.</p>
       <div class="approval-actions">
-        <button type="button" data-approve="${escapeHtml(approval.id)}">Autoriser</button>
-        <button type="button" class="danger" data-reject="${escapeHtml(approval.id)}">Refuser</button>
+        <button type="button" class="primary" data-approve="${escapeHtml(approval.id)}">${icon("check")}Autoriser</button>
+        <button type="button" class="danger" data-reject="${escapeHtml(approval.id)}">${icon("x")}Refuser</button>
       </div>
     </article>
   `).join("");
@@ -300,17 +382,17 @@ function renderApprovals() {
 
 function renderHistory() {
   if (state.history.length === 0) {
-    historyList.innerHTML = '<p class="empty">Aucune demande recente.</p>';
+    historyList.innerHTML = '<p class="empty">Aucune demande récente.</p>';
     return;
   }
 
   historyList.innerHTML = state.history.map((entry) => `
     <article class="history-item" data-history-id="${escapeHtml(entry.requestId)}">
-      <header>
-        <h3>${escapeHtml(entry.status)}</h3>
-        <span class="tag demo">demo</span>
-      </header>
-      <p>${escapeHtml(entry.message)}</p>
+      <span class="history-dot ${entry.status === "completed" ? "" : "warn"}" aria-hidden="true"></span>
+      <div>
+        <p>${escapeHtml(entry.message)}</p>
+        <small>${escapeHtml(formatStatus(entry.status))}${entry.receivedAt ? ` · ${escapeHtml(formatRelativeTime(entry.receivedAt))}` : ""}</small>
+      </div>
     </article>
   `).join("");
 
@@ -383,6 +465,7 @@ function renderFigures(aggregates) {
       const count = aggregate.counts?.[countKey] ?? 0;
       return `
         <li>
+          <span class="kpi-icon">${icon(FIGURE_ICONS[label])}</span>
           <strong>${escapeHtml(label)}</strong>
           ${renderAmounts(aggregate[totalsKey])}
           <span class="muted">${escapeHtml(String(count))} ${escapeHtml(countLabel)}</span>
@@ -402,6 +485,7 @@ function renderFigures(aggregates) {
     const withoutOrder = figures.production?.productionWithoutOrder ?? [];
     rows.push(`
       <li>
+        <span class="kpi-icon">${icon(FIGURE_ICONS.COMMANDES)}</span>
         <strong>COMMANDES</strong>
         <span class="tag">${escapeHtml(String(orders.counts?.orders ?? 0))} au carnet</span>
         <span class="muted">${byStatus || "aucun statut"}</span>
@@ -419,6 +503,7 @@ function renderFigures(aggregates) {
     const counts = materials.counts ?? {};
     rows.push(`
       <li>
+        <span class="kpi-icon">${icon(FIGURE_ICONS["BESOINS MATIERES"])}</span>
         <strong>BESOINS MATIERES</strong>
         <span class="tag">${escapeHtml(String(counts.shortages ?? 0))} rupture(s)</span>
         <span class="muted">${escapeHtml(String(counts.lines ?? 0))} ligne(s), ${escapeHtml(String(counts.orders ?? 0))} commande(s)</span>
@@ -437,15 +522,19 @@ function renderDirectorSections(minimumSections) {
     <div class="director-sections">
       ${DIRECTOR_SECTIONS.map(([key, label]) => {
         const entries = minimumSections[key] ?? [];
+        const meta = SECTION_META[key] ?? { icon: "sparkles", tone: "neutral" };
+        const shown = entries.slice(0, 4);
         return `
-          <section class="director-section" data-tone="${SECTION_TONES[key] ?? "neutral"}" data-empty="${entries.length === 0}">
+          <section class="director-section" data-tone="${meta.tone}" data-empty="${entries.length === 0}">
             <header>
+              <span class="section-icon">${icon(meta.icon)}</span>
               <h3>${escapeHtml(label)}</h3>
               <span class="section-count">${escapeHtml(String(entries.length))}</span>
             </header>
             ${entries.length > 0
-              ? `<ul>${entries.slice(0, 6).map((entry) => `<li>${escapeHtml(describeSectionEntry(entry))}</li>`).join("")}</ul>`
-              : '<p class="empty">Aucun resultat.</p>'}
+              ? `<ul>${shown.map((entry) => `<li>${escapeHtml(describeSectionEntry(entry))}</li>`).join("")}</ul>
+                 ${entries.length > shown.length ? `<p class="more">+ ${entries.length - shown.length} autre(s)</p>` : ""}`
+              : '<p class="empty">Rien à signaler.</p>'}
           </section>
         `;
       }).join("")}
@@ -458,7 +547,7 @@ function renderProvenance(domainSources) {
     return '<p class="muted">Provenance indisponible.</p>';
   }
   return `
-    <details class="provenance" open>
+    <details class="provenance">
       <summary>Provenance des informations</summary>
       <ul>
         ${domainSources.map((entry) => `
@@ -521,15 +610,78 @@ function formatStatus(status) {
 
 function renderError(message) {
   summarySubtitle.textContent = "Erreur";
-  uiState.textContent = "Erreur: la demande n'a pas pu etre traitee.";
+  uiState.textContent = "Erreur : la demande n'a pas pu être traitée.";
   summaryContent.className = "";
-  summaryContent.innerHTML = `<p>${escapeHtml(message)}</p>`;
+  summaryContent.innerHTML = card("La demande n'a pas abouti", escapeHtml(message), "warning");
+  planList.innerHTML = "";
+  showToast("La demande n'a pas abouti.", "warn");
 }
 
+// While the Director works, the report is drawn as a skeleton and the team is
+// shown being consulted, so the wait reads as work in progress.
 function setLoading(isLoading) {
-  form.querySelector("button[type='submit']").disabled = isLoading;
-  form.querySelector("button[type='submit']").textContent = isLoading ? "Analyse en cours..." : "Envoyer au Director";
-  uiState.textContent = isLoading ? "Chargement: Director analyse la demande." : uiState.textContent;
+  sendButton.disabled = isLoading;
+  sendButton.textContent = isLoading ? "Analyse en cours..." : "Envoyer au Director";
+  sendButton.className = `primary send-button${isLoading ? " is-loading" : ""}`;
+  if (!isLoading) {
+    return;
+  }
+  uiState.textContent = "Le Director consulte les agents…";
+  summaryContent.className = "";
+  summaryContent.innerHTML = `
+    <div class="skeleton" aria-label="Chargement">
+      <div class="shimmer" style="width:60%"></div>
+      <div class="skeleton-row">${'<div class="shimmer block"></div>'.repeat(4)}</div>
+      <div class="skeleton-row">${'<div class="shimmer tall"></div>'.repeat(2)}<div></div><div></div></div>
+      <div class="shimmer" style="width:85%"></div>
+      <div class="shimmer" style="width:70%"></div>
+    </div>
+  `;
+  planList.innerHTML = AGENT_ROSTER.filter((agent) => agent.id !== "director").map((agent, index) => `
+    <li class="is-pending" style="--n:${index}">
+      ${avatar(agent.id)}
+      <div class="step-text"><strong>${escapeHtml(formatAgent(agent.id))}</strong><span>consultation…</span></div>
+    </li>
+  `).join("");
+}
+
+// The documents stepper: steps before the current one are done.
+function setDocumentStep(step) {
+  document.querySelectorAll(".stepper li").forEach((item, index) => {
+    item.className = index + 1 < step ? "is-done" : index + 1 === step ? "is-active" : "";
+  });
+}
+
+function icon(name) {
+  return `<svg class="i" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+}
+
+function avatar(agentId, size = "") {
+  const agent = AGENT_ROSTER.find((entry) => entry.id === agentId);
+  const initials = agent?.initials ?? String(agentId ?? "?").slice(0, 2);
+  return `<span class="avatar ${size}" style="--c:${agent?.color ?? "#6b756f"}" title="${escapeHtml(formatAgent(agentId))}">${escapeHtml(initials)}</span>`;
+}
+
+// A short confirmation in the corner, gone after a few seconds.
+function showToast(message, tone = "ok") {
+  const toast = `<div class="toast ${tone}">${icon(tone === "ok" ? "check-circle" : "alert")}<span>${escapeHtml(message)}</span></div>`;
+  toastRegion.innerHTML = toast;
+  const timer = setTimeout(() => {
+    toastRegion.innerHTML = "";
+  }, 3800);
+  timer?.unref?.();
+}
+
+function formatRelativeTime(timestamp) {
+  const seconds = Math.round((Date.now() - timestamp) / 1000);
+  if (seconds < 45) {
+    return "à l'instant";
+  }
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) {
+    return `il y a ${minutes} min`;
+  }
+  return `il y a ${Math.round(minutes / 60)} h`;
 }
 
 function card(title, body, tone = "") {
@@ -774,6 +926,7 @@ async function previewHkidsDocument() {
     lastDocumentPreview = payload;
     renderDocumentPreview(payload);
     documentState.textContent = "Aperçu validé. Vérifiez puis générez.";
+    setDocumentStep(2);
   } catch (error) {
     lastDocumentPreview = null;
     documentPreview.className = "";
@@ -924,6 +1077,8 @@ async function generateHkidsDocument() {
       });
     });
     documentState.textContent = "Document généré.";
+    setDocumentStep(3);
+    showToast("PDF et Word générés.");
   } catch (error) {
     filesTarget.innerHTML = card("Erreur génération", escapeHtml(error.message), "warning");
     documentState.textContent = error.message;
@@ -959,7 +1114,7 @@ function formatDh(value) {
 // The cockpit is one page with several views. The view is kept in the URL hash
 // so a reload, or a link sent to a colleague, lands on the same screen.
 const COCKPIT_VIEWS = Object.freeze({
-  director: "Director IA",
+  director: "Briefing du jour",
   approvals: "Validations",
   documents: "Documents H-KIDS",
   quotes: "Préparation de devis",
@@ -989,6 +1144,72 @@ document.querySelectorAll("[data-view]").forEach((button) => {
 });
 globalThis.addEventListener?.("hashchange", () => showView(globalThis.location.hash.slice(1)));
 
+// "/" anywhere outside a field jumps to the composer, as in most command bars.
+globalThis.addEventListener?.("keydown", (event) => {
+  const target = event.target;
+  const typing = target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+  if (event.key === "/" && !typing) {
+    event.preventDefault();
+    showView("director");
+    messageInput.focus();
+  }
+});
+
+// The greeting follows the hour, and the date is the leader's own day.
+function renderGreeting(now = new Date()) {
+  const hour = now.getHours();
+  const greeting = hour < 5 || hour >= 18 ? "Bonsoir" : "Bonjour";
+  document.querySelector("#greeting").textContent = `${greeting}, que veux-tu faire ?`;
+  document.querySelector("#today-label").textContent = new Intl.DateTimeFormat("fr-FR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric"
+  }).format(now);
+}
+
+// Theme: follows the system by default; the button cycles system, light and
+// dark, and the choice is remembered on this browser only.
+const THEMES = Object.freeze([
+  { id: "system", label: "Thème : système", icon: "monitor" },
+  { id: "light", label: "Thème : clair", icon: "sun" },
+  { id: "dark", label: "Thème : sombre", icon: "moon" }
+]);
+
+function readStoredTheme() {
+  try {
+    return globalThis.localStorage?.getItem("cockpitTheme") ?? "system";
+  } catch {
+    return "system";
+  }
+}
+
+function applyTheme(id) {
+  const theme = THEMES.find((entry) => entry.id === id) ?? THEMES[0];
+  const root = document.documentElement;
+  if (root) {
+    if (theme.id === "system") {
+      delete root.dataset.theme;
+    } else {
+      root.dataset.theme = theme.id;
+    }
+  }
+  document.querySelector("#theme-label").textContent = theme.label;
+  document.querySelector("#theme-icon").setAttribute?.("href", `#i-${theme.icon}`);
+  try {
+    globalThis.localStorage?.setItem("cockpitTheme", theme.id);
+  } catch {
+    // Storage may be blocked; the theme still applies for this visit.
+  }
+  return theme.id;
+}
+
+let currentTheme = "system";
+document.querySelector("#theme-toggle").addEventListener("click", () => {
+  const index = THEMES.findIndex((entry) => entry.id === currentTheme);
+  currentTheme = applyTheme(THEMES[(index + 1) % THEMES.length].id);
+});
+
 // Last, because it is the only part that runs rather than declares. It used to
 // sit above the declarations, where the top level await suspended evaluation
 // before let apiToken was reached: refreshApprovals then read a binding still in
@@ -998,5 +1219,8 @@ globalThis.addEventListener?.("hashchange", () => showView(globalThis.location.h
 // Function declarations hoist, so the call looked fine; let bindings do not.
 // Anything that runs must therefore come after everything it depends on.
 showView(globalThis.location?.hash?.slice(1));
+currentTheme = applyTheme(readStoredTheme());
+renderGreeting();
 renderAgentRoster([]);
+renderHistory();
 await refreshApprovals();

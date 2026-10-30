@@ -1459,7 +1459,10 @@ function createSummaryHeadline({ status, completedCount, expectedCount, agentRes
   if (status === "partial") {
     return `Point available with ${respondingAgents} agent(s) out of ${solicitedAgents}. Missing: ${unavailableAgents.join(", ")}.`;
   }
-  return `Point complete: ${respondingAgents}/${solicitedAgents} agents responded with ${highPriorityCount} high-priority demo signal(s).`;
+  // "demo" is said only when every answer came from the demo set: once real
+  // data is imported, calling its signals demo would misreport where they came from.
+  const demoOnly = agentResults.every((result) => !result.dataSource || result.dataSource === "demo_mock");
+  return `Point complete: ${respondingAgents}/${solicitedAgents} agents responded with ${highPriorityCount} high-priority ${demoOnly ? "demo " : ""}signal(s).`;
 }
 
 function countHighPrioritySignals(agentResults, directory) {
@@ -1560,8 +1563,13 @@ export async function createBusinessDirectory(businessMemory) {
 
   const customerNames = new Map();
   const customerIdByOrder = new Map();
+  // Read from the source the tools read. Left to its default, the PostgreSQL
+  // memory lists demo records only, so with real data every customer stayed an
+  // identifier.
+  const source = businessMemory.getBusinessDataSource?.()?.recordSource;
+  const scope = source ? { agentId: "director", source } : { agentId: "director" };
 
-  for (const record of await businessMemory.listBusinessRecords({ domain: "customers", agentId: "director" })) {
+  for (const record of await businessMemory.listBusinessRecords({ domain: "customers", ...scope })) {
     const name = record?.data?.name;
     if (record?.id && typeof name === "string" && name.trim() !== "") {
       customerNames.set(record.id, name);
@@ -1571,7 +1579,7 @@ export async function createBusinessDirectory(businessMemory) {
   // A production record names its order, and an order names its customer.
   // Following that existing key is what lets a production entry say whose
   // order is at risk instead of only quoting an order identifier.
-  for (const record of await businessMemory.listBusinessRecords({ domain: "orders", agentId: "director" })) {
+  for (const record of await businessMemory.listBusinessRecords({ domain: "orders", ...scope })) {
     const customerId = record?.data?.customerId ?? record?.relations?.customerId;
     if (record?.id && typeof customerId === "string") {
       customerIdByOrder.set(record.id, customerId);

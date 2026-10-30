@@ -440,6 +440,46 @@ Le schéma compte **26 modèles Prisma** répartis entre l'orchestration et la
 mémoire métier. Détail :
 [`docs/DATABASE_SCHEMA.md`](docs/DATABASE_SCHEMA.md).
 
+### Importer les données réelles H-KIDS
+
+Les données réelles arrivent par le classeur
+[`docs/modele-donnees-hkids.xlsx`](docs/modele-donnees-hkids.xlsx) : Clients,
+Devis, Commandes, Paiements, Achats, Fournisseurs. L'entreprise le remplit ;
+le fichier rempli contient des données personnelles et **ne se verse jamais
+dans le dépôt**.
+
+```bash
+npm run data:import-hkids -- --file=C:/chemin/donnees-hkids.xlsx
+```
+
+Sans `--write`, la commande vérifie tout et n'écrit rien. Chaque problème est
+indiqué par onglet et numéro de ligne (client inconnu, date illisible, valeur
+hors liste), et **un seul problème bloque tout l'import**. Une fois le fichier
+propre :
+
+```bash
+npm run data:import-hkids -- --file=C:/chemin/donnees-hkids.xlsx --write
+```
+
+Les enregistrements sont écrits sous la source `future_real_data`, jamais sous
+`demo` ; réimporter le même classeur les met à jour sans doublon. Les retards,
+priorités et décisions sont calculés **au jour de l'import** : réimportez le
+classeur dès qu'il change, et au moins une fois par jour. Une ligne supprimée
+du classeur n'est pas supprimée de la base : changez plutôt son statut.
+
+Pour que le Directeur lise ces données au lieu de la démonstration, dans `.env` :
+
+```
+BUSINESS_MEMORY_PROVIDER="postgres"
+BUSINESS_DATA_PROVIDER="future_real_data"
+BUSINESS_PROVIDER_ADAPTER="future_real_data"
+BUSINESS_DATA_SOURCE_ID="future_real_data"
+```
+
+Les agents Commercial, Finance, Production et Achats lisent alors les données
+importées. RH, SAV, Marketing, Community Manager et Juridique n'ont pas encore
+d'onglet dans le classeur.
+
 ---
 
 ## 8. Authentification Token

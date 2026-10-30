@@ -19,7 +19,8 @@
     "db:seed:business": "node scripts/db-seed-business.mjs",
     "auth:create-token": "node scripts/create-api-token.mjs",
     "dev:templates": "node scripts/create-dev-templates.mjs",
-    "data:ingest": "node scripts/ingest-business-data.mjs"
+    "data:ingest": "node scripts/ingest-business-data.mjs",
+    "data:import-hkids": "node scripts/import-hkids-workbook.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -1,15 +1,10 @@
 import { readFile } from "node:fs/promises";
 import yazl from "yazl";
 import { HKIDS_DOCUMENT_TYPES } from "./document-schema.js";
-import { HKIDS_FIXED_IDENTITY, HKIDS_LOGO_PATH, assertHkidsTemplateAvailable, documentTitleFor, referenceLabelFor } from "./hkids-template.js";
+import { HKIDS_FIXED_IDENTITY, HKIDS_LOGO_PATH, documentTitleFor, referenceLabelFor } from "./hkids-template.js";
 import { formatMoney } from "./pdf-renderer.js";
-import { HKIDS_PURCHASE_ORDER_ADDRESS_LINES } from "./purchase-order.js";
 
 export async function renderHkidsDocx(document) {
-  // A purchase order is drawn without a template, so there is none to check.
-  if (document.documentType !== HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER) {
-    await assertHkidsTemplateAvailable(document.documentType);
-  }
   const zip = new yazl.ZipFile();
   const logoBytes = await extractLogoBytes();
   const documentXml = createDocumentXml(document);
@@ -35,7 +30,7 @@ export async function renderHkidsDocx(document) {
 function createDocumentXml(document) {
   const invoice = document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE;
   const headers = invoice
-    ? ["Désignation", "Qté", "Unité", "Pu Brut", "TVA", "Pu TTC", "Total HT", "Total TTC"]
+    ? HKIDS_FIXED_IDENTITY.invoiceColumns
     : ["Désignation", "Qté", "Prix unitaire HT", "Montant HT"];
   const rows = document.items.map((item) => tr(invoice
     ? [
@@ -102,7 +97,7 @@ function purchaseOrderBody(document, { headers, rows, totals, objectLine, noteLi
   return [
     logo(),
     p(HKIDS_FIXED_IDENTITY.companyName, { bold: true, align: "right" }),
-    ...HKIDS_PURCHASE_ORDER_ADDRESS_LINES.map((line) => p(line, { align: "right" })),
+    ...HKIDS_FIXED_IDENTITY.addressLines.map((line) => p(line, { align: "right" })),
     p(`E-mail : ${HKIDS_FIXED_IDENTITY.email}`, { align: "right" }),
     p(`Tél : ${HKIDS_FIXED_IDENTITY.phone}`, { align: "right" }),
     p(documentTitleFor(document.documentType), { bold: true, size: 34 }),

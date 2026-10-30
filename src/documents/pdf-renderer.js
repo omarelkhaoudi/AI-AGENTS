@@ -3,7 +3,8 @@ import { access, readFile } from "node:fs/promises";
 import { PDFDocument, rgb } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import { HKIDS_DOCUMENT_TYPES } from "./document-schema.js";
-import { HKIDS_FIXED_IDENTITY, assertHkidsTemplateAvailable, documentTitleFor } from "./hkids-template.js";
+import { HKIDS_FIXED_IDENTITY, HKIDS_LOGO_PATH, documentTitleFor } from "./hkids-template.js";
+import { parseReferenceImage } from "./purchase-order.js";
 
 // pdf-lib embeds a real font file, so rendering needs a .ttf that exists on the
 // machine doing the rendering. The two variables below are the way to name one.
@@ -92,305 +93,372 @@ async function isReadableFile(path) {
   }
 }
 
-const TEMPLATE_LAYOUTS = Object.freeze({
-  [HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE]: Object.freeze({
-    expectedPages: 3,
-    header: Object.freeze({
-      title: { x: 306, y: 807, size: 8.4 },
-      number: { x: 437, y: 807, size: 8.4 },
-      date: { x: 306, y: 792, size: 8 },
-      reference: { x: 306, y: 775, size: 7.6 },
-      clientBox: { x: 306, y: 704, width: 262, height: 47 },
-      clientTextCover: { x: 306, y: 704, width: 262, height: 58 },
-      clientLabel: { x: 313, y: 741, size: 8 },
-      clientName: { x: 313, y: 727, size: 7.8 },
-      clientAddress: { x: 313, y: 713, size: 7.2, maxWidth: 238 }
-    }),
-    covers: Object.freeze([
-      Object.freeze([
-        { x: 305, y: 772, width: 258, height: 50 },
-        { x: 20, y: 37, width: 555, height: 613 }
-      ]),
-      Object.freeze([
-        { x: 20, y: 335, width: 555, height: 475 },
-        { x: 0, y: 180, width: 595, height: 185 },
-        { x: 400, y: 120, width: 175, height: 260 }
-      ]),
-      Object.freeze([])
-    ]),
-    tables: Object.freeze([
-      { x: 20, y: 37, width: 555, top: 620, headerBottom: 600, verticals: [193, 413, 445, 505], headers: ["Image", "Désignation", "Qté", "Pu HT", "Total HT"] },
-      { x: 20, y: 395, width: 555, top: 810, headerBottom: null, verticals: [193, 413, 445, 505], headers: null },
-      null
-    ]),
-    itemPageIndex: 0,
-    totalsPageIndex: 1,
-    itemStartY: 575,
-    rowHeight: 55,
+// Every H-KIDS document is drawn here, in one design: the one the company
+// adopted with its purchase orders and quotes (BC 163, devis of October 2026).
+// Logo and company block at the top, the title and its subject, the number and
+// date on the left and the client on the right, a table with a green header,
+// the totals on a green band, the terms, then what the type needs: the
+// specifications and an agreement block on an order, a receipt block on a
+// delivery note. Nothing is painted over a template any more, so a document
+// needs the logo and a font and nothing else.
+const PAGE = Object.freeze({ width: 595.28, height: 841.89 });
+const L = 40;
+const R = PAGE.width - 40;
+const CONTENT_BOTTOM = 770;
+
+const COLORS = Object.freeze({
+  green: rgb(0x80 / 255, 0xa6 / 255, 0x97 / 255),
+  ink: rgb(0x17 / 255, 0x21 / 255, 0x29 / 255),
+  gray: rgb(0x66 / 255, 0x71 / 255, 0x7a / 255),
+  line: rgb(0xcc / 255, 0xd3 / 255, 0xd8 / 255),
+  pale: rgb(0xf1 / 255, 0xf5 / 255, 0xf3 / 255),
+  white: rgb(1, 1, 1)
+});
+
+// Columns per type. `right` aligns a figure on its right edge; the first column
+// is the designation, which wraps within its width. An invoice carries the
+// eight columns a Moroccan invoice is read by; the other types the four of the
+// purchase order.
+const TABLE_LAYOUTS = Object.freeze({
+  standard: Object.freeze({
+    size: 8.5,
+    headerSize: 7.8,
+    designation: { label: "Désignation", x: L + 6, width: 250 },
     columns: Object.freeze([
-      { key: "designation", x: 195, width: 216, align: "left", size: 8 },
-      { key: "quantity", x: 414, width: 29, align: "center", size: 8 },
-      { key: "unitPriceHt", x: 446, width: 57, align: "right", size: 8 },
-      { key: "amountHt", x: 506, width: 67, align: "right", size: 8 }
-    ]),
-    totals: { xLabel: 420, xValue: 500, y: 315, size: 8 },
-    payment: { x: 45, y: 252, size: 7.4, maxWidth: 500 },
-    footer: null
+      { label: "Qté", key: "quantity", right: 340 },
+      { label: "Prix unitaire HT", key: "unitPriceHt", right: 440 },
+      { label: "Montant HT", key: "amountHt", right: R - 6 }
+    ])
   }),
-  [HKIDS_DOCUMENT_TYPES.INVOICE]: Object.freeze({
-    expectedPages: 2,
-    outputPageIndices: Object.freeze([0]),
-    header: Object.freeze({
-      title: { x: 306, y: 799, size: 10.6 },
-      number: { x: 365, y: 799, size: 10 },
-      date: { x: 348, y: 785, size: 9.5 },
-      reference: { x: 306, y: 758, size: 8.5 },
-      clientBox: { x: 306, y: 696, width: 262, height: 47 },
-      clientTextCover: { x: 306, y: 696, width: 262, height: 55 },
-      clientLabel: { x: 313, y: 731, size: 8 },
-      clientName: { x: 313, y: 716, size: 8 },
-      clientAddress: { x: 313, y: 702, size: 7.4, maxWidth: 240 }
-    }),
-    covers: Object.freeze([
-      Object.freeze([
-        { x: 305, y: 748, width: 258, height: 64 },
-        { x: 20, y: 25, width: 560, height: 602 },
-        { x: 575, y: 25, width: 20, height: 602 }
-      ]),
-      Object.freeze([
-        { x: 20, y: 588, width: 560, height: 220 },
-        { x: 0, y: 360, width: 595, height: 225 },
-        { x: 420, y: 170, width: 160, height: 180 }
-      ])
-    ]),
-    tables: Object.freeze([
-      { x: 20, y: 315, width: 555, top: 627, headerBottom: 608, verticals: [225, 253, 285, 345, 401, 461, 519], headers: ["Désignation", "Qté", "Unité", "Pu Brut", "TVA", "Pu TTC", "Total HT", "Total TTC"] }
-    ]),
-    itemPageIndex: 0,
-    totalsPageIndex: 0,
-    paymentPageIndex: 0,
-    object: { x: 20, y: 640, size: 8.4, maxWidth: 500, cover: { x: 18, y: 632, width: 230, height: 18 } },
-    itemStartY: 586,
-    rowHeight: 24,
+  invoice: Object.freeze({
+    size: 7.4,
+    headerSize: 7,
+    designation: { label: "Désignation", x: L + 6, width: 140 },
     columns: Object.freeze([
-      { key: "designation", x: 25, width: 198, align: "left", size: 6.7 },
-      { key: "quantity", x: 226, width: 26, align: "center", size: 6.7 },
-      { key: "unit", x: 254, width: 30, align: "center", size: 6.7 },
-      { key: "unitPriceHt", x: 286, width: 58, align: "right", size: 5.9 },
-      { key: "tva", x: 346, width: 54, align: "right", size: 5.9 },
-      { key: "unitPriceTtc", x: 402, width: 58, align: "right", size: 5.9 },
-      { key: "amountHt", x: 462, width: 56, align: "right", size: 5.9 },
-      { key: "totalTtc", x: 520, width: 53, align: "right", size: 5.9 }
-    ]),
-    totals: { xLabel: 420, xValue: 500, y: 280, size: 8.4 },
-    payment: { x: 45, y: 220, size: 8.3, maxWidth: 500 },
-    footer: { x: 45, y: 95, size: 7.2, maxWidth: 505 }
+      { label: "Qté", key: "quantity", right: 214 },
+      { label: "Unité", key: "unit", right: 246 },
+      { label: "PU HT", key: "unitPriceHt", right: 306 },
+      { label: "TVA", key: "tva", right: 361 },
+      { label: "PU TTC", key: "unitPriceTtc", right: 423 },
+      { label: "Total HT", key: "amountHt", right: 489 },
+      { label: "Total TTC", key: "totalTtc", right: R - 6 }
+    ])
   })
 });
+
+const TAGLINE = "H-KIDS – Mobilier et aménagement sur mesure pour enfants.";
 
 export async function renderHkidsPdf(document, {
   fontPath = process.env.HKIDS_DOCUMENT_FONT_PATH ?? null,
   boldFontPath = process.env.HKIDS_DOCUMENT_BOLD_FONT_PATH ?? null
 } = {}) {
   // Resolved before anything else is read. A missing font is a configuration
-  // problem, and reporting it first makes it the error the caller actually sees
-  // instead of an ENOENT thrown halfway through a render.
+  // problem, and reporting it first makes it the error the caller actually sees.
   const resolvedFontPath = await resolveDocumentFontPath("regular", fontPath);
   const resolvedBoldFontPath = await resolveDocumentFontPath("bold", boldFontPath);
 
-  const template = await assertHkidsTemplateAvailable(document.documentType);
-  const templateBytes = await readFile(template.path);
-  const source = await PDFDocument.load(templateBytes);
-  const layout = TEMPLATE_LAYOUTS[document.documentType];
-  if (source.getPageCount() !== layout.expectedPages) {
-    throw new Error(`Template ${template.id} must contain ${layout.expectedPages} pages.`);
-  }
-
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
-  const copiedPages = await pdf.copyPages(source, layout.outputPageIndices ?? [...Array(source.getPageCount()).keys()]);
-  copiedPages.forEach((page) => pdf.addPage(page));
-
+  pdf.setTitle(`H-KIDS — ${titleCase(documentTitleFor(document.documentType))} n° ${document.documentNumber} — ${document.client.name}`);
+  pdf.setAuthor("H-KIDS");
   const font = await pdf.embedFont(await readFile(resolvedFontPath), { subset: true });
-  const boldFont = await pdf.embedFont(await readFile(resolvedBoldFontPath), { subset: true });
-  const pages = pdf.getPages();
+  const bold = await pdf.embedFont(await readFile(resolvedBoldFontPath), { subset: true });
+  const logo = await pdf.embedJpg(await readFile(logoPath()));
+  const writer = createWriter(pdf, document, { font, bold, logo });
 
-  applyCovers(pages, layout);
-  drawTableFrames(pages, layout, { font: boldFont });
-  drawHeaderVariables(pages[0], document, layout, { font, boldFont });
-  drawDocumentObject(pages[0], document, layout, { font: boldFont });
-  drawItems(pages[layout.itemPageIndex], document, layout, { font });
-  drawTotals(pages[layout.totalsPageIndex], document, layout, { font, boldFont });
-  drawPaymentAndNotes(pages[layout.paymentPageIndex ?? layout.totalsPageIndex], document, layout, { font, boldFont });
+  drawFirstPageHeader(writer, document);
+  drawItems(writer, document);
+  drawTotals(writer, document);
+  drawSpecifications(writer, document);
+  drawPaymentTerms(writer, document);
+  drawClosing(writer, document);
+
+  const { image } = parseReferenceImage(document.referenceImage);
+  if (image) {
+    const embedded = image.format === "png" ? await pdf.embedPng(image.bytes) : await pdf.embedJpg(image.bytes);
+    drawReferenceImagePage(writer, document, embedded);
+  }
 
   assertNoQuestionMarkInPdfText(document);
   return Buffer.from(await pdf.save({ useObjectStreams: false }));
 }
 
-function applyCovers(pages, layout) {
-  layout.covers.forEach((pageCovers, index) => {
-    const page = pages[index];
-    if (!page) {
-      return;
+// Coordinates are written from the top of the page, as on the reference
+// documents, and converted to pdf-lib's bottom-up frame in one place.
+function createWriter(pdf, document, { font, bold, logo }) {
+  const writer = {
+    pdf,
+    font,
+    bold,
+    logo,
+    page: null,
+    y: 0,
+    text(value, x, top, { size = 9, isBold = false, color = COLORS.ink, align = "left" } = {}) {
+      const usedFont = isBold ? bold : font;
+      const content = String(value);
+      const width = usedFont.widthOfTextAtSize(content, size);
+      const left = align === "right" ? x - width : align === "center" ? x - width / 2 : x;
+      this.page.drawText(content, { x: left, y: PAGE.height - top, size, font: usedFont, color });
+    },
+    box(x, top, width, height, { fill = null, border = COLORS.line } = {}) {
+      this.page.drawRectangle({
+        x,
+        y: PAGE.height - top - height,
+        width,
+        height,
+        ...(fill ? { color: fill } : { borderColor: border, borderWidth: 0.6 })
+      });
+    },
+    rule(top) {
+      this.page.drawLine({ start: { x: L, y: PAGE.height - top }, end: { x: R, y: PAGE.height - top }, color: COLORS.line, thickness: 0.5 });
+    },
+    wrap(value, width, size = 9, isBold = false) {
+      return wrapText(String(value), isBold ? bold : font, size, width);
+    },
+    newPage() {
+      this.page = pdf.addPage([PAGE.width, PAGE.height]);
+      drawFooter(this);
+      this.y = 0;
+    },
+    // Starts a continuation page when the block would cross the footer.
+    ensure(height) {
+      if (this.y + height > CONTENT_BOTTOM) {
+        this.newPage();
+        drawContinuationHeader(this, document);
+      }
     }
-    for (const box of pageCovers) {
-      cover(page, box);
-    }
-  });
+  };
+  writer.newPage();
+  return writer;
 }
 
-function drawTableFrames(pages, layout, { font }) {
-  if (!layout.tables) {
-    return;
-  }
-  layout.tables.forEach((table, index) => {
-    if (!table) {
-      return;
-    }
-    const page = pages[index];
-    if (!page) {
-      return;
-    }
-    const right = table.x + table.width;
-    const black = rgb(0, 0, 0);
-    const line = { color: black, thickness: 0.6 };
-    page.drawLine({ start: { x: table.x, y: table.top }, end: { x: right, y: table.top }, ...line });
-    page.drawLine({ start: { x: table.x, y: table.y }, end: { x: right, y: table.y }, ...line });
-    page.drawLine({ start: { x: table.x, y: table.y }, end: { x: table.x, y: table.top }, ...line });
-    page.drawLine({ start: { x: right, y: table.y }, end: { x: right, y: table.top }, ...line });
-    for (const x of table.verticals) {
-      page.drawLine({ start: { x, y: table.y }, end: { x, y: table.top }, ...line });
-    }
-    if (table.headerBottom) {
-      page.drawLine({ start: { x: table.x, y: table.headerBottom }, end: { x: right, y: table.headerBottom }, ...line });
-      drawTableHeaders(page, table, font);
-    }
-  });
-}
+function drawFirstPageHeader(w, document) {
+  drawLogo(w);
+  w.text(HKIDS_FIXED_IDENTITY.companyName, 170, 48, { size: 11, isBold: true });
+  [...HKIDS_FIXED_IDENTITY.addressLines, `E-mail : ${HKIDS_FIXED_IDENTITY.email}`, `Tél : ${HKIDS_FIXED_IDENTITY.phone}`]
+    .forEach((line, index) => w.text(line, 170, 63 + index * 10, { size: 8, color: COLORS.gray }));
 
-function drawTableHeaders(page, table, font) {
-  const boundaries = [table.x, ...table.verticals, table.x + table.width];
-  table.headers.forEach((label, index) => {
-    const left = boundaries[index];
-    const right = boundaries[index + 1];
-    const size = 8.2;
-    const width = font.widthOfTextAtSize(label, size);
-    page.drawText(label, {
-      x: left + (right - left - width) / 2,
-      y: table.headerBottom + 6,
-      size,
-      font,
-      color: rgb(0, 0, 0)
-    });
-  });
-}
-
-function drawHeaderVariables(page, document, layout, { font, boldFont }) {
-  const h = layout.header;
-  drawText(page, documentTitleFor(document.documentType), h.title, boldFont);
-  drawText(page, `N°: ${document.documentNumber}`, h.number, boldFont);
-  drawText(page, `Date : ${formatDateForDisplay(document.date)}`, h.date, font);
-  if (document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE) {
-    drawText(page, `Référence BL : ${normalizeDeliveryNoteReference(document.deliveryNoteReference)}`, h.reference, font);
-  } else if (document.reference) {
-    drawText(page, `Référence : ${document.reference}`, h.reference, font);
-  }
-
-  cover(page, h.clientTextCover);
-  page.drawRectangle({ ...h.clientBox, borderColor: rgb(0, 0, 0), borderWidth: 0.45 });
-  drawText(page, "Adressé à :", h.clientLabel, font);
-  drawText(page, document.client.name, h.clientName, boldFont);
-  drawText(page, document.client.address, h.clientAddress, font);
-}
-
-function drawDocumentObject(page, document, layout, { font }) {
-  if (!layout.object) {
-    return;
-  }
-  if (layout.object.cover) {
-    cover(page, layout.object.cover);
-  }
+  w.text(documentTitleFor(document.documentType), L, 112, { size: 18, isBold: true });
   if (document.object) {
-    drawText(page, `Objet : ${document.object}`, layout.object, font);
+    w.wrap(document.object.toUpperCase(), 290, 12, true).slice(0, 2)
+      .forEach((line, index) => w.text(line, L, 132 + index * 15, { size: 12, isBold: true }));
   }
+
+  w.text(`N° : ${document.documentNumber}`, L, 166, { size: 9, isBold: true });
+  w.text(`Date : ${displayDate(document.date)}`, L, 183, { size: 8.5 });
+  const reference = referenceLine(document);
+  if (reference) {
+    w.text(reference, L, 199, { size: 8.5 });
+  }
+
+  w.text("Adressé à :", 350, 156, { size: 9, isBold: true });
+  const nameLines = w.wrap(document.client.name, R - 350, 10, true).slice(0, 2);
+  nameLines.forEach((line, index) => w.text(line, 350, 173 + index * 13, { size: 10, isBold: true }));
+  w.wrap(document.client.address, R - 350, 9).slice(0, 4)
+    .forEach((line, index) => w.text(line, 350, 173 + nameLines.length * 13 + 3 + index * 13, { size: 9, color: COLORS.gray }));
+
+  w.y = 236;
 }
 
-function drawItems(page, document, layout, { font }) {
-  document.items.forEach((item, index) => {
-    const y = layout.itemStartY - index * layout.rowHeight;
-    for (const column of layout.columns) {
-      const value = valueForColumn(item, column.key);
-      drawAlignedText(page, value, column, y, font);
+function referenceLine(document) {
+  if (document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE && document.deliveryNoteReference) {
+    return `Référence BL : ${String(document.deliveryNoteReference).replace(/^BL\s*n°?\s*/i, "")}`;
+  }
+  return document.reference ? `Référence : ${document.reference}` : null;
+}
+
+function tableLayout(document) {
+  return document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE ? TABLE_LAYOUTS.invoice : TABLE_LAYOUTS.standard;
+}
+
+function drawTableHeader(w, layout) {
+  w.box(L, w.y, R - L, 23, { fill: COLORS.green });
+  const top = w.y + 15;
+  const style = { size: layout.headerSize, isBold: true, color: COLORS.white };
+  w.text(layout.designation.label, layout.designation.x, top, style);
+  for (const column of layout.columns) {
+    w.text(column.label, column.right, top, { ...style, align: "right" });
+  }
+  w.y += 23;
+}
+
+function drawItems(w, document) {
+  const layout = tableLayout(document);
+  drawTableHeader(w, layout);
+  for (const item of document.items) {
+    const lines = w.wrap(item.designation, layout.designation.width, layout.size + 0.5);
+    const height = Math.max(33, 14 + lines.length * 12);
+    if (w.y + height > CONTENT_BOTTOM) {
+      w.ensure(height + 23);
+      drawTableHeader(w, layout);
     }
-  });
+    lines.forEach((line, index) => w.text(line, layout.designation.x, w.y + 19 + index * 12, { size: layout.size + 0.5 }));
+    for (const column of layout.columns) {
+      w.text(cellValue(item, column.key), column.right, w.y + 19, { size: layout.size, align: "right" });
+    }
+    w.y += height;
+    w.rule(w.y);
+  }
+  w.y += 12;
 }
 
-function drawTotals(page, document, layout, { font, boldFont }) {
-  const rows = [
-    ["TOTAL HT:", formatMoney(document.totals.totalHt)],
-    ["TOTAL TVA:", formatMoney(document.totals.tva)],
-    ["TOTAL TTC:", formatMoney(document.totals.totalTtc)]
-  ];
-  let y = layout.totals.y;
-  for (const [label, value] of rows) {
-    page.drawText(label, { x: layout.totals.xLabel, y, size: layout.totals.size, font: boldFont, color: rgb(0, 0, 0) });
-    page.drawText(value, { x: layout.totals.xValue, y, size: layout.totals.size, font, color: rgb(0, 0, 0) });
-    y -= document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE ? 15 : 14;
-  }
-}
-
-function drawPaymentAndNotes(page, document, layout, { font, boldFont }) {
-  const payment = layout.payment;
-  let y = payment.y;
-  if (document.note) {
-    drawText(page, `Note : ${document.note}`, { x: payment.x, y, size: payment.size, maxWidth: payment.maxWidth }, font);
-    y -= 20;
-  } else if (document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE) {
-    cover(page, { x: payment.x - 1, y: y - 3, width: 42, height: payment.size + 6 });
-  }
-  drawText(page, "Conditions de paiement", { x: payment.x, y, size: payment.size, maxWidth: payment.maxWidth }, boldFont);
-  drawText(page, document.payment.terms, { x: payment.x, y: y - 15, size: payment.size, maxWidth: payment.maxWidth }, font);
-  drawText(page, `Moyen de paiement : ${document.payment.method}`, { x: payment.x, y: y - 30, size: payment.size, maxWidth: payment.maxWidth }, font);
-  if (layout.footer) {
-    drawText(page, HKIDS_FIXED_IDENTITY.footerMention, layout.footer, font);
-  }
-}
-
-function valueForColumn(item, key) {
-  if (["unitPriceHt", "tva", "unitPriceTtc", "amountHt", "totalTtc"].includes(key)) {
-    return formatMoney(item[key]);
-  }
+function cellValue(item, key) {
   if (key === "quantity") {
     return formatQuantity(item.quantity);
   }
-  return item[key] ?? "";
-}
-
-function drawText(page, text, position, font) {
-  page.drawText(String(text), {
-    x: position.x,
-    y: position.y,
-    size: position.size,
-    font,
-    color: rgb(0, 0, 0),
-    maxWidth: position.maxWidth
-  });
-}
-
-function drawAlignedText(page, text, column, y, font) {
-  const value = String(text);
-  const padding = 2;
-  let x = column.x + padding;
-  if (column.align === "right") {
-    x = column.x + column.width - padding - font.widthOfTextAtSize(value, column.size);
-  } else if (column.align === "center") {
-    x = column.x + (column.width - font.widthOfTextAtSize(value, column.size)) / 2;
+  if (key === "unit") {
+    return item.unit || "—";
   }
-  page.drawText(value, { x, y, size: column.size, font, color: rgb(0, 0, 0), maxWidth: column.width - padding * 2 });
+  return formatMoney(item[key]);
 }
 
-function cover(page, box) {
-  page.drawRectangle({ ...box, color: rgb(1, 1, 1) });
+function drawTotals(w, document) {
+  w.ensure(80);
+  const labelX = 340;
+  const tvaPercent = Math.round(Number(document.totals.tvaRate ?? document.tvaRate ?? 0.2) * 100);
+  for (const [label, value] of [["TOTAL HT", document.totals.totalHt], [`TVA ${tvaPercent} %`, document.totals.tva]]) {
+    w.text(label, labelX, w.y + 12, { size: 9, isBold: true });
+    w.text(formatMoney(value), R - 10, w.y + 12, { size: 9, align: "right" });
+    w.y += 18;
+  }
+  w.box(labelX - 10, w.y, R - labelX + 10, 30, { fill: COLORS.green });
+  w.text("TOTAL TTC", labelX, w.y + 19, { size: 10.5, isBold: true, color: COLORS.white });
+  w.text(formatMoney(document.totals.totalTtc), R - 10, w.y + 20, { size: 12.5, isBold: true, color: COLORS.white, align: "right" });
+  w.y += 46;
+}
+
+function drawSpecifications(w, document) {
+  const specifications = document.specifications ?? [];
+  if (specifications.length === 0) {
+    return;
+  }
+  w.ensure(23 + 30);
+  w.box(L, w.y, R - L, 23, { fill: COLORS.pale });
+  w.text("CARACTÉRISTIQUES ET FINITIONS", L + 8, w.y + 15, { size: 9, isBold: true });
+  w.y += 33;
+  for (const specification of specifications) {
+    const lines = w.wrap(specification, R - L - 30, 9);
+    w.ensure(lines.length * 14 + 6);
+    w.text("•", L + 8, w.y + 10, { size: 9, color: COLORS.green });
+    lines.forEach((line, index) => w.text(line, L + 21, w.y + 10 + index * 14, { size: 9 }));
+    w.y += lines.length * 14 + 6;
+  }
+  w.y += 8;
+}
+
+// An order states its plan as instalments with their amounts; the other types
+// state the terms as written, as before.
+function drawPaymentTerms(w, document) {
+  const instalments = document.payment.instalments ?? [];
+  const termLines = instalments.length > 0
+    ? instalments.map((instalment) => `${instalment.percent} % ${instalment.due} : ${formatMoney(instalment.amount)}.`)
+    : document.payment.terms ? w.wrap(document.payment.terms, R - L, 9) : [];
+  const extra = (document.payment.method ? 1 : 0) + (document.note ? 1 : 0);
+  w.ensure(28 + (termLines.length + extra) * 18);
+  w.text("CONDITIONS DE RÈGLEMENT", L, w.y + 10, { size: 9, isBold: true });
+  w.y += 28;
+  for (const line of termLines) {
+    w.text(line, L, w.y, { size: 9 });
+    w.y += 18;
+  }
+  if (document.payment.method) {
+    w.text(`Moyen de paiement : ${document.payment.method}`, L, w.y, { size: 9 });
+    w.y += 18;
+  }
+  if (document.note) {
+    for (const line of w.wrap(`Note : ${document.note}`, R - L, 9)) {
+      w.ensure(14);
+      w.text(line, L, w.y, { size: 9 });
+      w.y += 14;
+    }
+    w.y += 4;
+  }
+}
+
+// What closes the document depends on what it is for: the client agrees to an
+// order, receives a delivery, and settles an invoice, which needs no signature.
+function drawClosing(w, document) {
+  const block = {
+    [HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER]: { title: "BON POUR ACCORD", left: "Pour H KIDS", right: "Le client", leftSign: "Signature / Cachet :", rightSign: "Signature :" },
+    [HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE]: { title: "RÉCEPTION DE LA LIVRAISON", left: "Livré par H KIDS", right: "Reçu par le client", leftSign: "Signature / Cachet :", rightSign: "Date et signature :" }
+  }[document.documentType];
+
+  w.ensure(block ? 110 : 20);
+  w.text(TAGLINE, L, w.y + 4, { size: 8, color: COLORS.gray });
+  w.y += 16;
+  if (!block) {
+    return;
+  }
+  w.rule(w.y);
+  w.text(block.title, L, w.y + 19, { size: 9, isBold: true });
+  w.text(block.left, L, w.y + 40, { size: 9, isBold: true });
+  w.text(block.right, 310, w.y + 40, { size: 9, isBold: true });
+  w.text("Nom : ______________________________", L, w.y + 56, { size: 8 });
+  w.text(`Nom : ${document.client.name}`, 310, w.y + 56, { size: 8 });
+  w.text(block.leftSign, L, w.y + 72, { size: 8 });
+  w.text(block.rightSign, 310, w.y + 72, { size: 8 });
+  w.box(L, w.y + 80, 245, 33);
+  w.box(310, w.y + 80, R - 310, 33);
+  w.y += 120;
+}
+
+function drawReferenceImagePage(w, document, image) {
+  w.newPage();
+  drawContinuationHeader(w, document);
+  w.text("VISUEL DE RÉFÉRENCE", L, 132, { size: 12, isBold: true });
+  const maxWidth = R - L;
+  const maxHeight = CONTENT_BOTTOM - 150 - 10;
+  const scale = Math.min(maxWidth / image.width, maxHeight / image.height, 1.5);
+  const width = image.width * scale;
+  const height = image.height * scale;
+  w.page.drawImage(image, { x: (PAGE.width - width) / 2, y: PAGE.height - 150 - height, width, height });
+}
+
+function drawContinuationHeader(w, document) {
+  drawLogo(w);
+  w.text(`${documentTitleFor(document.documentType)} N° ${document.documentNumber}`, R, 57, { size: 13, isBold: true, align: "right" });
+  w.text(document.client.name, R, 77, { size: 9, color: COLORS.gray, align: "right" });
+  w.rule(106);
+  w.y = 120;
+}
+
+function drawLogo(w) {
+  const height = 100 * w.logo.height / w.logo.width;
+  w.page.drawImage(w.logo, { x: L, y: PAGE.height - 29 - height, width: 100, height });
+}
+
+function drawFooter(w) {
+  w.text(HKIDS_FIXED_IDENTITY.footerMention, L, 792, { size: 6.5, color: COLORS.gray });
+  w.text(HKIDS_FIXED_IDENTITY.legalLine, L, 804, { size: 5.7, color: COLORS.gray });
+}
+
+function wrapText(value, font, size, width) {
+  const lines = [];
+  for (const paragraph of value.split(/\r?\n/)) {
+    let line = "";
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (line && font.widthOfTextAtSize(candidate, size) > width) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = candidate;
+      }
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
+// An override that is set to an empty string is not an override, as for the
+// Word renderer.
+function logoPath() {
+  const configured = typeof process.env.HKIDS_LOGO_PATH === "string" ? process.env.HKIDS_LOGO_PATH.trim() : "";
+  return configured === "" ? HKIDS_LOGO_PATH : configured;
+}
+
+function titleCase(value) {
+  return String(value ?? "").toLowerCase().replace(/^./, (letter) => letter.toUpperCase());
 }
 
 export function formatMoney(value) {
@@ -408,7 +476,7 @@ function formatQuantity(value) {
   return new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(Number(value)).replace(/\u202f/g, " ");
 }
 
-function formatDateForDisplay(value) {
+function displayDate(value) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     const [year, month, day] = value.split("-");
     return `${day}/${month}/${year}`;
@@ -416,13 +484,9 @@ function formatDateForDisplay(value) {
   return value;
 }
 
-function normalizeDeliveryNoteReference(value) {
-  return String(value).replace(/^BL\s*n°?\s*/i, "");
-}
-
 function assertNoQuestionMarkInPdfText(document) {
-  const serialized = JSON.stringify(document);
-  if (serialized.includes("?")) {
+  const { referenceImage, ...rest } = document;
+  if (JSON.stringify(rest).includes("?")) {
     throw new Error("Document data contains a forbidden question mark.");
   }
 }

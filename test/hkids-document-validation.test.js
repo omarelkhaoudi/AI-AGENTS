@@ -1,23 +1,17 @@
 import assert from "node:assert/strict";
 import { constants } from "node:fs";
-import { access, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access } from "node:fs/promises";
 import test from "node:test";
 import { PDFDocument } from "pdf-lib";
 import {
   DocumentValidationError,
   HKIDS_ACTIVE_PAYMENT_TERMS,
   HKIDS_FIXED_IDENTITY,
-  HKIDS_TEMPLATE_VARIABLES,
-  assertHkidsTemplateAvailable,
-  checksumFile,
   formatMoney,
   renderHkidsPdf,
   resolveDocumentFontPath,
-  templateLockFor,
   validateAndPrepareDocument
 } from "../src/index.js";
-import { useSyntheticHkidsTemplates } from "../test-support/hkids-templates.js";
 
 // The client is invented. A fixture is committed, read by anyone who clones the
 // repository and kept for the life of the project, so it must never carry the
@@ -47,75 +41,16 @@ const DELIVERY_NOTE = Object.freeze({
   deliveryNoteReference: ""
 });
 
-// --- the template is configuration, not repository content ------------------
-
-test("a configured template is accepted, and its identity is reported", async (t) => {
-  const { paths } = await useSyntheticHkidsTemplates(t);
-
-  const delivery = await assertHkidsTemplateAvailable("delivery_note");
-  const invoice = await assertHkidsTemplateAvailable("invoice");
-
-  assert.equal(delivery.path, paths.delivery_note);
-  assert.equal(invoice.path, paths.invoice);
-  assert.equal(delivery.expectedPageCount, 3);
-  assert.equal(invoice.expectedPageCount, 2);
-  assert.equal(delivery.locked, false, "no checksum configured means no lock, and it says so");
-  assert.equal(delivery.expectedChecksum, null);
-});
-
-// The lock did not disappear with the templates: it became opt-in. A company
-// that names its digest gets exactly the old guarantee.
-test("a configured checksum locks the template, and a changed byte is refused", async (t) => {
-  const { paths } = await useSyntheticHkidsTemplates(t, { lock: true });
-
-  const locked = await assertHkidsTemplateAvailable("invoice");
-  assert.equal(locked.locked, true);
-  assert.equal(locked.checksum, locked.expectedChecksum);
-  assert.equal(locked.checksum, await checksumFile(paths.invoice));
-
-  process.env[HKIDS_TEMPLATE_VARIABLES.invoice.checksum] = "0".repeat(64);
-  await assert.rejects(
-    () => assertHkidsTemplateAvailable("invoice"),
-    (error) => {
-      assert.equal(error.code, "HKIDS_TEMPLATE_CHECKSUM_MISMATCH");
-      assert.equal(error.details.templateId, "hkids-invoice-reference");
-      return true;
-    }
-  );
-});
-
-// A fresh clone has no template at all. The refusal must name the variable to
-// set, because "missing" is the normal first answer, not an exceptional one.
-test("a missing template names the variable to set", async (t) => {
-  const restore = process.env[HKIDS_TEMPLATE_VARIABLES.invoice.path];
-  process.env[HKIDS_TEMPLATE_VARIABLES.invoice.path] = join("nowhere", "aucun-gabarit.pdf");
-  t.after(() => {
-    if (restore === undefined) {
-      delete process.env[HKIDS_TEMPLATE_VARIABLES.invoice.path];
-    } else {
-      process.env[HKIDS_TEMPLATE_VARIABLES.invoice.path] = restore;
-    }
-  });
-
-  await assert.rejects(
-    () => assertHkidsTemplateAvailable("invoice"),
-    (error) => {
-      assert.equal(error.code, "HKIDS_TEMPLATE_MISSING");
-      assert.equal(error.details.pathVariable, "HKIDS_INVOICE_TEMPLATE_PATH");
-      assert.match(error.message, /HKIDS_INVOICE_TEMPLATE_PATH/);
-      return true;
-    }
-  );
-});
-
 test("the fixed H-KIDS identity is the one the renderers draw", () => {
   assert.equal(HKIDS_FIXED_IDENTITY.companyName, "H KIDS");
   assert.ok(HKIDS_FIXED_IDENTITY.legalLine.includes("ICE:002635757000066"));
-  assert.deepEqual([...HKIDS_FIXED_IDENTITY.deliveryNoteColumns], ["Image", "Désignation", "Qté", "Pu HT", "Total HT"]);
-  assert.deepEqual([...HKIDS_FIXED_IDENTITY.invoiceColumns], ["Désignation", "Qté", "Unité", "Pu Brut", "TVA", "Pu TTC", "Total HT", "Total TTC"]);
-  assert.equal(HKIDS_FIXED_IDENTITY.invoiceColumns.includes("Image"), false);
+  // The register address, as on the purchase orders and quotes; the old shop
+  // address of the templates must not come back.
+  assert.deepEqual([...HKIDS_FIXED_IDENTITY.addressLines], ["Adresse : DOUAR HARAKAT N 2153", "TASSELTANT SAADA MARRAKECH"]);
+  assert.doesNotMatch(HKIDS_FIXED_IDENTITY.addressLines.join(" "), /Mazar/);
+  assert.deepEqual([...HKIDS_FIXED_IDENTITY.deliveryNoteColumns], ["Désignation", "Qté", "Prix unitaire HT", "Montant HT"]);
+  assert.deepEqual([...HKIDS_FIXED_IDENTITY.invoiceColumns], ["Désignation", "Qté", "Unité", "PU HT", "TVA", "PU TTC", "Total HT", "Total TTC"]);
   assert.equal(HKIDS_FIXED_IDENTITY.footerMention, "Les produits H KIDS deviennent la propriété du client uniquement après le règlement intégral de la facture.");
-  assert.equal(templateLockFor("invoice", {}).id, "hkids-invoice-reference");
 });
 
 // --- validation -------------------------------------------------------------
@@ -217,16 +152,14 @@ test("an unconfigured font resolves to a file that exists on this machine", asyn
 
 // --- rendering --------------------------------------------------------------
 
-test("PDF renderer keeps official page counts and Unicode-capable generated text", async (t) => {
-  await useSyntheticHkidsTemplates(t);
-
+test("invoice and delivery note are drawn without a template, on one page, with Unicode-capable text", async () => {
   const invoice = validateAndPrepareDocument(INVOICE);
   const invoicePdf = await PDFDocument.load(await renderHkidsPdf(invoice));
   assert.equal(invoicePdf.getPageCount(), 1);
 
   const delivery = validateAndPrepareDocument(DELIVERY_NOTE);
   const deliveryPdf = await PDFDocument.load(await renderHkidsPdf(delivery));
-  assert.equal(deliveryPdf.getPageCount(), 3);
+  assert.equal(deliveryPdf.getPageCount(), 1);
 
   const renderedBytes = await renderHkidsPdf(invoice);
   assert.equal(Buffer.from(renderedBytes).includes(Buffer.from("/ToUnicode")), true);
@@ -235,20 +168,6 @@ test("PDF renderer keeps official page counts and Unicode-capable generated text
     assert.equal(JSON.stringify(invoice).includes(expected), true, expected);
   }
   assert.equal(JSON.stringify(invoice).includes("?"), false);
-});
-
-// A template of the wrong shape is a configuration mistake, and the renderer
-// says so instead of producing a document with pages missing.
-test("a template with the wrong page count is refused", async (t) => {
-  const { paths } = await useSyntheticHkidsTemplates(t);
-  const wrongShape = await PDFDocument.create();
-  wrongShape.addPage([595.56, 842.04]);
-  await writeFile(paths.invoice, Buffer.from(await wrongShape.save({ useObjectStreams: false })));
-
-  await assert.rejects(
-    () => renderHkidsPdf(validateAndPrepareDocument(INVOICE)),
-    /must contain 2 pages/
-  );
 });
 
 function hasValidation(error, field, code) {

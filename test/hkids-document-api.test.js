@@ -6,7 +6,6 @@ import test from "node:test";
 import { PDFDocument } from "pdf-lib";
 import { HkidsDocumentService, InMemoryRepository, HKIDS_ACTIVE_PAYMENT_TERMS } from "../src/index.js";
 import { buildAuthenticatedApi } from "../test-support/api-auth.js";
-import { useSyntheticHkidsTemplates } from "../test-support/hkids-templates.js";
 
 // The client is invented, like every name in this file. A committed fixture is
 // read by anyone who clones the repository, so it must never carry the name or
@@ -28,10 +27,7 @@ const NOMINAL = Object.freeze({
   note: "Référence règlement propriété totalité"
 });
 
-// The reference templates are configuration, not repository content, so each
-// test builds a blank one and points the variables at it.
 async function createApi(t) {
-  const { paths } = await useSyntheticHkidsTemplates(t);
   const repository = new InMemoryRepository();
   const outputDir = await mkdtemp(join(tmpdir(), "hkids-documents-"));
   const { app, inject } = await buildAuthenticatedApi({ repository, documentOutputDir: outputDir });
@@ -39,11 +35,11 @@ async function createApi(t) {
     await app.close();
     await rm(outputDir, { recursive: true, force: true });
   });
-  return { inject, repository, outputDir, paths };
+  return { inject, repository, outputDir };
 }
 
 test("preview validates and returns all document data without writing final files", async (t) => {
-  const { inject, outputDir, paths } = await createApi(t);
+  const { inject, outputDir } = await createApi(t);
   const response = await inject({ method: "POST", url: "/api/documents/preview", payload: NOMINAL });
   const body = JSON.parse(response.body);
 
@@ -55,8 +51,8 @@ test("preview validates and returns all document data without writing final file
   assert.equal(body.document.totals.totalHt, 7300);
   assert.equal(body.document.totals.tva, 1460);
   assert.equal(body.document.totals.totalTtc, 8760);
-  assert.equal(body.template.id, "hkids-invoice-reference");
-  assert.equal(body.template.path, paths.invoice, "the configured template is the one used");
+  assert.equal(body.template.id, "hkids-invoice-builtin", "drawn in code, no template file");
+  assert.equal(body.template.path, null);
   assert.ok(body.previewToken);
   assert.deepEqual(await readdir(outputDir), []);
 });
@@ -107,29 +103,3 @@ test("generate revalidates, stores PDF and DOCX metadata, and download returns f
   assert.match(docxDownload.headers["content-type"], /officedocument/);
 });
 
-// Without a configured template there is nothing to render onto. The refusal has
-// to say which variable to set: a fresh clone has no template at all, so this is
-// the normal first answer rather than an exceptional one.
-test("a missing template is refused with the name of the variable to set", async (t) => {
-  const repository = new InMemoryRepository();
-  const { app, inject } = await buildAuthenticatedApi({ repository });
-  t.after(() => app.close());
-
-  const restore = process.env.HKIDS_INVOICE_TEMPLATE_PATH;
-  process.env.HKIDS_INVOICE_TEMPLATE_PATH = join(tmpdir(), "aucun-gabarit-a-cet-endroit.pdf");
-  t.after(() => {
-    if (restore === undefined) {
-      delete process.env.HKIDS_INVOICE_TEMPLATE_PATH;
-    } else {
-      process.env.HKIDS_INVOICE_TEMPLATE_PATH = restore;
-    }
-  });
-
-  const response = await inject({ method: "POST", url: "/api/documents/preview", payload: NOMINAL });
-  const body = JSON.parse(response.body);
-
-  assert.equal(response.statusCode, 500);
-  assert.equal(body.details.code, "HKIDS_TEMPLATE_MISSING");
-  assert.equal(body.details.pathVariable, "HKIDS_INVOICE_TEMPLATE_PATH");
-  assert.match(body.error, /HKIDS_INVOICE_TEMPLATE_PATH/);
-});

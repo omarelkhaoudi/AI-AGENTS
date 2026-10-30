@@ -6,12 +6,6 @@ import { roundMoney } from "./document-calculations.js";
 // again. Orders generated afterwards are found on disk by the service.
 export const HKIDS_ISSUED_PURCHASE_ORDER_NUMBERS = Object.freeze(["160", "161", "162", "163"]);
 
-// The company address of the register, printed in the purchase order header.
-export const HKIDS_PURCHASE_ORDER_ADDRESS_LINES = Object.freeze([
-  "Adresse : DOUAR HARAKAT N 2153",
-  "TASSELTANT SAADA MARRAKECH"
-]);
-
 // The plans a purchase order may state. The free-text 50/50 refusal that guards
 // delivery notes and invoices exists so old terms are not copied by accident;
 // here the plan is picked explicitly for each order, so 50/50 is one of them.

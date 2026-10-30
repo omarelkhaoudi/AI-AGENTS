@@ -89,22 +89,13 @@ http://127.0.0.1:3100/app/
 
 ### Documents H-KIDS
 
-Les gabarits H-KIDS officiels ne sont pas versionnés dans Git. Pour une utilisation réelle, Hiba doit fournir des gabarits vierges officiels, puis renseigner leurs chemins absolus dans `.env`.
-
-Pour une validation technique sans document officiel, générer les gabarits DEV :
-
-```powershell
-npm.cmd run dev:templates
-```
-
-La commande crée des PDF locaux dans `assets/documents/hkids-local/`, dossier ignoré par Git, puis affiche les deux lignes à copier dans `.env` :
-
-```env
-HKIDS_INVOICE_TEMPLATE_PATH="...\assets\documents\hkids-local\facture_reference.pdf"
-HKIDS_DELIVERY_NOTE_TEMPLATE_PATH="...\assets\documents\hkids-local\bon_livraison_reference.pdf"
-```
-
-Ces gabarits DEV servent uniquement à tester preview, génération et téléchargement. Ils ne remplacent pas les gabarits officiels H-KIDS et ne doivent pas être envoyés à un client. Les anciens PDF H-KIDS contenant des données clients ne doivent jamais être réutilisés.
+Toutes les pièces H-KIDS — **facture, bon de livraison et bon de commande** — sont
+dessinées par le code, dans le design adopté avec les bons de commande et les
+devis : logo et coordonnées de la société (adresse du registre, DOUAR HARAKAT N
+2153 TASSELTANT SAADA MARRAKECH), titre et objet, tableau à en-tête vert, totaux
+sur bandeau vert, conditions de règlement, puis selon la pièce un bloc « Bon pour
+accord » (commande) ou « Réception de la livraison » (BL). **Aucun gabarit n'est
+à fournir** : seuls le logo du dépôt et une police `.ttf` sont nécessaires.
 
 ---
 
@@ -603,36 +594,16 @@ supposez pas, exécutez-le.
 
 ## 10. Génération des documents H-KIDS
 
-Le projet génère deux documents sur les gabarits officiels H-KIDS : **facture**
-et **bon de livraison**, chacun en **PDF et en Word**.
+Le projet génère trois pièces : **facture**, **bon de livraison** et **bon de
+commande**, chacune en **PDF et en Word**.
 
-> 🔴 **Les deux gabarits ne sont pas livrés avec le dépôt.** Les originaux
-> étaient des documents réels remplis, portant le nom d'une cliente, sa commande
-> et ses montants. Ils ont été retirés. **L'entreprise doit fournir ses propres
-> gabarits vierges**, puis les nommer dans `.env` :
->
-> ```text
-> HKIDS_INVOICE_TEMPLATE_PATH="/chemin/absolu/facture_vierge.pdf"        # 2 pages
-> HKIDS_DELIVERY_NOTE_TEMPLATE_PATH="/chemin/absolu/bl_vierge.pdf"       # 3 pages
-> ```
->
-> Sans eux, l'aperçu et la génération s'arrêtent sur `HKIDS_TEMPLATE_MISSING`,
-> avec un message nommant la variable à renseigner. Le reste du projet n'en
-> dépend pas.
-
-**Pour tester la chaîne complète en attendant les gabarits officiels**, le
-projet sait fabriquer des gabarits de développement :
-
-```powershell
-npm.cmd run dev:templates
-```
-
-Deux PDF vierges au bon nombre de pages sont écrits dans
-`assets/documents/hkids-local/`, un répertoire **ignoré par Git**, et la commande
-affiche les deux lignes à coller dans `.env`. Chaque page porte la mention
-**« GABARIT DE DEVELOPPEMENT - SANS VALEUR OFFICIELLE - NE PAS TRANSMETTRE A UN
-CLIENT »**, qui se retrouve sur tout document produit. Ce ne sont **pas** des
-gabarits H-KIDS : ils n'ont ni en-tête, ni mentions légales, ni habillage.
+Toutes les pièces H-KIDS — **facture, bon de livraison et bon de commande** — sont
+dessinées par le code, dans le design adopté avec les bons de commande et les
+devis : logo et coordonnées de la société (adresse du registre, DOUAR HARAKAT N
+2153 TASSELTANT SAADA MARRAKECH), titre et objet, tableau à en-tête vert, totaux
+sur bandeau vert, conditions de règlement, puis selon la pièce un bloc « Bon pour
+accord » (commande) ou « Réception de la livraison » (BL). **Aucun gabarit n'est
+à fournir** : seuls le logo du dépôt et une police `.ttf` sont nécessaires.
 
 Trois garanties structurent cette fonctionnalité :
 
@@ -640,9 +611,8 @@ Trois garanties structurent cette fonctionnalité :
    ne tombe pas juste arrête la génération et nomme le problème.
 2. **Un aperçu avant tout.** La génération exige un jeton d'aperçu qui
    correspond exactement à ce qui a été relu.
-3. **Le gabarit peut être verrouillé** par un condensat SHA-256, renseigné dans
-   `HKIDS_INVOICE_TEMPLATE_CHECKSUM` / `HKIDS_DELIVERY_NOTE_TEMPLATE_CHECKSUM`.
-   Le verrou est facultatif : sans lui, la génération fonctionne et le dit.
+3. **Un numéro de bon de commande n'est jamais attribué deux fois** : la série
+   reprend après les bons émis à la main, et un numéro déjà pris est refusé.
 
 Depuis le cockpit : section **Documents H-KIDS**, remplir, **Aperçu**, relire,
 puis **Valider et générer**. Les deux fichiers apparaissent en téléchargement.
@@ -656,7 +626,7 @@ répertoire **ignoré par Git** : ces documents portent des données client.
 > variable à renseigner — il n'utilise jamais une police de remplacement
 > silencieuse. Voir [§14](#14-dépannage).
 
-Variables, verrous et messages d'erreur :
+Variables et messages d'erreur :
 [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md), section « Documents H-KIDS ».
 
 ---
@@ -747,7 +717,7 @@ scripts/            Seeds, jetons, lint, build, scan de secrets, ingestion
 prisma/             schema.prisma et 6 migrations
 test/               La suite complete
 docs/               Documentation
-assets/documents/   Logo H-KIDS. Les gabarits PDF ne sont PAS versionnes.
+assets/documents/   Logo H-KIDS (les pièces sont dessinées par le code).
   generated/        Documents produits — ignore par Git
 ```
 
@@ -827,29 +797,6 @@ Deux issues : corriger l'URL, ou **vider complètement** `DATABASE_URL` pour
 choisir explicitement le mode mémoire. Une valeur vide ou faite d'espaces est
 acceptée comme « pas de base ».
 
-### Gabarit H-KIDS absent
-
-```text
-Le template H-KIDS hkids-invoice-reference est introuvable. Renseignez
-HKIDS_INVOICE_TEMPLATE_PATH avec le chemin d'un gabarit fourni par l'entreprise.
-```
-
-C'est **l'état normal d'un dépôt fraîchement cloné** : les gabarits ne sont pas
-versionnés. Renseignez `HKIDS_INVOICE_TEMPLATE_PATH` et
-`HKIDS_DELIVERY_NOTE_TEMPLATE_PATH` avec des chemins absolus vers les gabarits
-vierges fournis par l'entreprise — 2 pages pour la facture, 3 pour le bon de
-livraison. Voir [§10](#10-génération-des-documents-h-kids).
-
-Message voisin :
-
-```text
-Le template H-KIDS ... ne correspond pas au checksum attendu.
-```
-
-Un verrou SHA-256 est configuré et le fichier ne lui correspond plus. Corrigez
-le fichier, ou mettez le condensat à jour, ou videz la variable de checksum pour
-retirer le verrou.
-
 ### Police PDF absente
 
 ```text
@@ -923,7 +870,7 @@ pas du JSON), `N8N_REQUEST_TIMEOUT`, `N8N_REQUEST_FAILED`.
 | Validation humaine | ✅ 3 niveaux, approbation obligatoire pour toute action non `read_analyze` |
 | Audit | ✅ Événements structurés, causes sans message brut |
 | Director §31 | ✅ Les 10 rubriques |
-| Documents H-KIDS | 🟡 Moteur complet et testé — **les gabarits doivent être fournis par l'entreprise** |
+| Documents H-KIDS | ✅ Facture, BL et bon de commande dessinés dans le design H-KIDS, PDF + Word |
 | Interface | 🟡 Cockpit fonctionnel, volontairement minimal — **pas de saisie de jeton** |
 | Planificateur LLM | 🟡 Implémenté derrière une interface, **désactivé par défaut** |
 | n8n / workflows | 🟡 Implémenté et testé hors ligne, **désactivé par défaut, jamais validé par un appel réel** |

@@ -1004,7 +1004,7 @@ function renderDocumentPreview(payload) {
       <table class="document-table">
         <thead><tr>${
           invoice
-            ? "<th>Désignation</th><th>Qté</th><th>Unité</th><th>Pu Brut</th><th>TVA</th><th>Pu TTC</th><th>Total HT</th><th>Total TTC</th>"
+            ? "<th>Désignation</th><th>Qté</th><th>Unité</th><th>PU HT</th><th>TVA</th><th>PU TTC</th><th>Total HT</th><th>Total TTC</th>"
             : "<th>Désignation</th><th>Qté</th><th>Prix unitaire HT</th><th>Montant HT</th>"
         }</tr></thead>
         <tbody>${document.items.map((item) => `

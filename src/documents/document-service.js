@@ -4,10 +4,9 @@ import { join, resolve } from "node:path";
 import { validateAndPrepareDocument, DocumentValidationError } from "./document-validation.js";
 import { HKIDS_DOCUMENT_TYPES } from "./document-schema.js";
 import { renderHkidsPdf } from "./pdf-renderer.js";
-import { renderPurchaseOrderPdf } from "./purchase-order-renderer.js";
 import { isPurchaseOrderNumberUsed, nextPurchaseOrderNumber } from "./purchase-order.js";
 import { renderHkidsDocx } from "./docx-renderer.js";
-import { assertHkidsTemplateAvailable } from "./hkids-template.js";
+import { documentLayoutFor } from "./hkids-template.js";
 
 export class DocumentGenerationError extends Error {
   constructor(message, code, details = {}) {
@@ -58,9 +57,7 @@ export class HkidsDocumentService {
 
     await mkdir(this.outputDir, { recursive: true });
     const stem = safeFileStem(document);
-    const pdfBuffer = document.documentType === HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER
-      ? await renderPurchaseOrderPdf(document)
-      : await renderHkidsPdf(document);
+    const pdfBuffer = await renderHkidsPdf(document);
     const docxBuffer = await renderHkidsDocx(document);
     const pdfStorageKey = resolve(this.outputDir, `${stem}.pdf`);
     const docxStorageKey = resolve(this.outputDir, `${stem}.docx`);
@@ -184,21 +181,10 @@ function checksumBuffer(buffer) {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
-// The purchase order has no template file; this descriptor stands in for one so
-// the preview hash and the response keep the same shape for every type.
+// Every type is drawn in code now; the layout descriptor keeps the place the
+// template descriptor had, so the preview hash and the responses keep their shape.
 async function templateFor(documentType) {
-  if (documentType !== HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER) {
-    return assertHkidsTemplateAvailable(documentType);
-  }
-  return Object.freeze({
-    id: "hkids-purchase-order-builtin",
-    path: null,
-    sizeBytes: null,
-    checksum: null,
-    expectedChecksum: null,
-    locked: false,
-    expectedPageCount: null
-  });
+  return documentLayoutFor(documentType);
 }
 
 const PURCHASE_ORDER_FILE_PREFIX = "bon_commande";
@@ -217,12 +203,6 @@ export function normalizeDocumentError(error) {
   if (error instanceof DocumentGenerationError) {
     const statusCode = error.code === "DOCUMENT_NOT_FOUND" ? 404 : 409;
     return { statusCode, body: { error: error.message, details: { code: error.code, ...error.details } } };
-  }
-  if (error?.code === "HKIDS_TEMPLATE_MISSING") {
-    return { statusCode: 500, body: { error: error.message, details: { code: error.code, ...error.details } } };
-  }
-  if (error?.code === "HKIDS_TEMPLATE_CHECKSUM_MISMATCH") {
-    return { statusCode: 500, body: { error: error.message, details: { code: error.code, ...error.details } } };
   }
   return null;
 }

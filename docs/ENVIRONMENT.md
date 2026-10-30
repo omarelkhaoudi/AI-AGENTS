@@ -117,55 +117,19 @@ le premier dit où les enregistrements sont rangés, le second d'où ils viennen
 
 ## Documents H-KIDS
 
-### Les gabarits — obligatoires pour générer
+### Le design
 
-| Variable | Défaut | Obligatoire | Rôle |
-| --- | --- | --- | --- |
-| `HKIDS_INVOICE_TEMPLATE_PATH` | `assets/documents/hkids/facture_reference.pdf` | **oui, pour générer une facture** | Chemin absolu du gabarit PDF de facture, 2 pages. |
-| `HKIDS_DELIVERY_NOTE_TEMPLATE_PATH` | `assets/documents/hkids/bon_livraison_reference.pdf` | **oui, pour générer un BL** | Chemin absolu du gabarit PDF de bon de livraison, 3 pages. |
-| `HKIDS_INVOICE_TEMPLATE_CHECKSUM` | vide | non | Verrou SHA-256 du gabarit de facture. |
-| `HKIDS_DELIVERY_NOTE_TEMPLATE_CHECKSUM` | vide | non | Verrou SHA-256 du gabarit de bon de livraison. |
+Toutes les pièces H-KIDS — **facture, bon de livraison et bon de commande** — sont
+dessinées par le code, dans le design adopté avec les bons de commande et les
+devis : logo et coordonnées de la société (adresse du registre, DOUAR HARAKAT N
+2153 TASSELTANT SAADA MARRAKECH), titre et objet, tableau à en-tête vert, totaux
+sur bandeau vert, conditions de règlement, puis selon la pièce un bloc « Bon pour
+accord » (commande) ou « Réception de la livraison » (BL). **Aucun gabarit n'est
+à fournir** : seuls le logo du dépôt et une police `.ttf` sont nécessaires.
 
-> 🔴 **Les deux gabarits ne sont pas livrés avec le dépôt.** Les originaux
-> étaient des documents réels remplis, portant le nom d'une cliente, sa commande
-> et ses montants — encore sélectionnables sous les zones que le générateur
-> masque. Ils ont été retirés. **L'entreprise doit fournir ses propres gabarits
-> vierges** avant que la génération produise quoi que ce soit.
-
-Les chemins par défaut pointent vers `assets/documents/hkids/`, un répertoire qui
-n'existe plus. Sans configuration, l'aperçu et la génération s'arrêtent sur
-`HKIDS_TEMPLATE_MISSING`, et le message **nomme la variable à renseigner**.
-
-Les coordonnées de mise en page sont calibrées sur la géométrie des documents
-H-KIDS. Un gabarit d'un autre format rendra mal plutôt que d'échouer bruyamment,
-sauf si son nombre de pages diffère — auquel cas il est refusé.
-
-### Tester sans les gabarits officiels
-
-```powershell
-npm.cmd run dev:templates
-```
-
-Écrit deux PDF vierges dans `assets/documents/hkids-local/` — répertoire **ignoré
-par Git** — et affiche les deux lignes de configuration à coller dans `.env`.
-Chaque page porte la mention **« GABARIT DE DEVELOPPEMENT - SANS VALEUR
-OFFICIELLE - NE PAS TRANSMETTRE A UN CLIENT »**, qui apparaît sur tout document
-généré à partir d'eux.
-
-Ces gabarits servent uniquement à vérifier que la chaîne aperçu → génération →
-téléchargement fonctionne. **Ils ne remplacent pas les gabarits officiels** : un
-document produit à partir d'eux n'a ni en-tête, ni mentions légales, ni
-habillage H-KIDS. Ils ne doivent pas être envoyés à un client, et les anciens
-PDF H-KIDS contenant des données clients ne doivent jamais être réutilisés.
-
-### Le verrou de checksum
-
-Il n'a pas disparu avec les gabarits : il est devenu **facultatif**.
-
-| Configuration | Comportement |
-| --- | --- |
-| Chemin seul | Aucun verrou. Le descriptif renvoie `locked: false` plutôt que de prétendre le contraire. |
-| Chemin + checksum | Verrou actif : un octet changé et la génération s'arrête sur `HKIDS_TEMPLATE_CHECKSUM_MISMATCH`. |
+Les anciennes variables `HKIDS_INVOICE_TEMPLATE_PATH`,
+`HKIDS_DELIVERY_NOTE_TEMPLATE_PATH` et leurs `_CHECKSUM` ne sont plus lues ; une
+valeur restée dans un `.env` est sans effet.
 
 ### Les polices
 
@@ -173,7 +137,7 @@ Il n'a pas disparu avec les gabarits : il est devenu **facultatif**.
 | --- | --- | --- | --- |
 | `HKIDS_DOCUMENT_FONT_PATH` | sondage automatique | non\* | Chemin absolu d'un `.ttf` pour le texte normal. |
 | `HKIDS_DOCUMENT_BOLD_FONT_PATH` | sondage automatique | non\* | Chemin absolu d'un `.ttf` pour le gras. |
-| `HKIDS_LOGO_PATH` | `assets/documents/hkids-logo.jpg` | non | Logo inséré dans le document Word. |
+| `HKIDS_LOGO_PATH` | `assets/documents/hkids-logo.jpg` | non | Logo inséré dans le PDF et le document Word. |
 
 \* **Nécessaires uniquement si le sondage automatique ne trouve rien.**
 
@@ -192,7 +156,7 @@ répond, la génération s'arrête en nommant la variable. Une variable renseign
 est honorée telle quelle ou refusée si le fichier n'est pas lisible — jamais
 remplacée par un candidat sondé.
 
-Une valeur **vide** vaut « non configurée » pour les six variables : copier
+Une valeur **vide** vaut « non configurée » pour les trois variables : copier
 `.env.example` sans y toucher est sans effet.
 
 

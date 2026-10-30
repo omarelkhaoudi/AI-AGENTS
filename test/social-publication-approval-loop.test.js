@@ -16,8 +16,12 @@ import { buildAuthenticatedApi } from "../test-support/api-auth.js";
 // M2.3 closes the loop between Hiba's decision and the publication it was taken
 // on. Everything here runs against the real API, the real approval system and
 // the real state machine: no network, no connector, nothing published.
-const SLOT = "2026-10-20T09:00:00.000Z";
-const WINDOW = Object.freeze({ from: "2026-10-19", to: "2026-10-21" });
+// Relative to today: a new publication can only be planned in the future, so a
+// fixed date would expire and fail the suite on its own.
+const SLOT_DAY = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 20));
+const SLOT = new Date(SLOT_DAY.getTime() + 9 * 3600000).toISOString();
+const isoDay = (offset) => new Date(SLOT_DAY.getTime() + offset * 86400000).toISOString().slice(0, 10);
+const WINDOW = Object.freeze({ from: isoDay(-1), to: isoDay(1) });
 
 async function submitted(overrides = {}) {
   const repository = new InMemoryRepository();

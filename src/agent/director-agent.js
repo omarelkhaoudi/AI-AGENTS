@@ -3,6 +3,7 @@ import { calculateDocumentTotals, roundMoney } from "../documents/document-calcu
 import { HKIDS_DOCUMENT_TYPES } from "../documents/document-schema.js";
 import { DocumentValidationError } from "../documents/document-validation.js";
 import { HKIDS_FIXED_IDENTITY } from "../documents/hkids-template.js";
+import { createCatalogueLoader, searchCatalogue } from "./catalogue.js";
 
 // The Director as a conversational agent. Hiba writes the way she would to an
 // assistant — "fais-moi un devis pour Meriem, un lit nuage à 3000 DH" — and a
@@ -71,6 +72,19 @@ const TOOLS = Object.freeze([
   },
   {
     type: "function",
+    name: "chercher_catalogue",
+    description: "Cherche un ou plusieurs produits dans le catalogue H-KIDS et renvoie leur nom exact, leur description et leur prix TTC de base. À appeler pour chaque produit demandé dont le prix n'a pas été donné.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        recherche: { type: "string", description: "Le produit tel que nommé par l'utilisatrice, par exemple « lit nuage »." }
+      },
+      required: ["recherche"]
+    }
+  },
+  {
+    type: "function",
     name: "point_entreprise",
     description: "Interroge l'équipe d'agents (commercial, finance, production, achats, RH, marketing, SAV, juridique) et renvoie la situation : ce qui va bien, retards, encaissements, achats, risques, décisions. À utiliser pour toute question sur l'état de l'entreprise.",
     parameters: {
@@ -93,7 +107,8 @@ function instructions(today) {
     "",
     "Règles :",
     "- Un prix donné sans précision est TTC (prix_ttc = true). « 3000 DH » ou « 3000dhs » = 3000 DH TTC.",
-    "- Ne jamais inventer un client, une adresse, un prix ou une quantité. Si le nom ou l'adresse du client (au moins la ville) manque, ou si un prix manque, pose UNE question courte qui demande tout ce qui manque, puis attends la réponse.",
+    "- Prix non donné : appelle chercher_catalogue pour ce produit. Un seul produit correspond → utilise son nom exact (désignation) et son prix TTC, et précise dans ta réponse que c'est le prix catalogue. Plusieurs correspondent → demande lequel en les citant avec leur prix. Aucun → demande le prix. Un prix donné par l'utilisatrice l'emporte toujours sur le catalogue.",
+    "- Ne jamais inventer un client, une adresse, un prix ou une quantité. Si le nom ou l'adresse du client (au moins la ville) manque, ou si un prix manque et n'est pas au catalogue, pose UNE question courte qui demande tout ce qui manque, puis attends la réponse.",
     "- Quantité non précisée = 1.",
     "- Conditions de paiement : 60/20/20 par défaut (60 % à la commande, 20 % avant livraison, 20 % après installation). 50/50 seulement pour un bon de commande et si on te le demande.",
     "- Une facture doit citer son devis ou son bon de livraison : demande le numéro s'il n'est pas donné.",
@@ -119,7 +134,9 @@ export class DirectorAgentError extends Error {
 export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, client });
+  const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
+  const loadCatalogue = createCatalogueLoader(cataloguePath ? { path: cataloguePath } : {});
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -128,6 +145,7 @@ export function createDirectorAgent({
   client = null,
   documentService,
   runDirectorRequest,
+  loadCatalogue = async () => ({ available: false, catalogue: [] }),
   clock = () => new Date(),
   clientFactory = defaultClientFactory
 } = {}) {
@@ -171,7 +189,7 @@ export function createDirectorAgent({
           break;
         }
         for (const call of calls) {
-          const result = await runTool(call, { documentService, runDirectorRequest, clock, userId, outcome });
+          const result = await runTool(call, { documentService, runDirectorRequest, loadCatalogue, clock, userId, outcome });
           items.push({ type: "function_call_output", call_id: call.call_id, output: JSON.stringify(result) });
         }
       }
@@ -228,6 +246,9 @@ async function runTool(call, context) {
   try {
     if (call.name === "preparer_document") {
       return await prepareDocument(args, context);
+    }
+    if (call.name === "chercher_catalogue") {
+      return await lookUpCatalogue(args, context);
     }
     if (call.name === "point_entreprise") {
       return await companyPoint(args, context);
@@ -309,6 +330,28 @@ async function prepareDocument(args, { documentService, clock, outcome }) {
     echeances: (document.payment?.instalments ?? []).map((part) => `${part.percent} % ${part.due} : ${part.amount} DH`),
     conditions: document.payment?.terms ?? null,
     statut: "Aperçu prêt : l'utilisatrice doit cliquer « Valider et générer » dans le cockpit."
+  };
+}
+
+async function lookUpCatalogue(args, { loadCatalogue }) {
+  const { available, catalogue } = await loadCatalogue();
+  if (!available || catalogue.length === 0) {
+    return { ok: false, erreur: "Le catalogue H-KIDS n'est pas encore renseigné : demander le prix à l'utilisatrice." };
+  }
+  const matches = searchCatalogue(catalogue, text(args.recherche));
+  if (matches.length === 0) {
+    return { ok: true, produits: [], remarque: "Aucun produit du catalogue ne correspond : demander le prix." };
+  }
+  return {
+    ok: true,
+    produits: matches.map((entry) => ({
+      reference: entry.reference || null,
+      produit: entry.name,
+      description: entry.description || null,
+      prix_ttc: entry.priceTtc,
+      unite: entry.unit,
+      remarque: entry.note || null
+    }))
   };
 }
 

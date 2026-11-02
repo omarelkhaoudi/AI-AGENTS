@@ -15,3 +15,6 @@ assets/documents/generated/
 # them, and the path is named by HKIDS_INVOICE_TEMPLATE_PATH and
 # HKIDS_DELIVERY_NOTE_TEMPLATE_PATH in .env.
 assets/documents/hkids-local/
+
+# Company data read by the agents (catalogue, prices). The repository is public.
+data/

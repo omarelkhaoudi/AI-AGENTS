@@ -72,6 +72,9 @@
           <button type="button" class="nav-item" data-view="quotes">
             <svg class="i" aria-hidden="true"><use href="#i-receipt"/></svg><span class="nav-label">Devis</span>
           </button>
+          <button type="button" class="nav-item" data-view="file">
+            <svg class="i" aria-hidden="true"><use href="#i-package"/></svg><span class="nav-label">Dossier</span>
+          </button>
           <button type="button" class="nav-item" data-view="team">
             <svg class="i" aria-hidden="true"><use href="#i-users"/></svg><span class="nav-label">Équipe IA</span>
           </button>
@@ -359,6 +362,78 @@
             <h3>Aucune préparation lancée</h3>
             <p>Choisissez un cas ou saisissez une référence produit.</p>
           </div>
+        </section>
+
+        <!-- Dossier commercial -->
+        <section class="view" data-view-panel="file" hidden aria-labelledby="file-title">
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Devis → facture → bon de livraison</p>
+                <h2 id="file-title">Dossier commercial H-KIDS</h2>
+                <p>Devis, facture, bon de livraison et annexes, calculés par le backend. Rien n'est envoyé au client depuis cette page.</p>
+              </div>
+            </div>
+            <form id="file-form" class="form-sections">
+              <fieldset class="form-grid">
+                <legend>Client</legend>
+                <div class="field">
+                  <label for="file-client">Client</label>
+                  <input id="file-client" name="clientName">
+                </div>
+                <div class="field field-span-2">
+                  <label for="file-address">Adresse client</label>
+                  <input id="file-address" name="clientAddress">
+                </div>
+              </fieldset>
+              <fieldset class="form-grid">
+                <legend>Conditions</legend>
+                <div class="field">
+                  <label for="file-date">Date du devis</label>
+                  <input id="file-date" name="quoteDate" placeholder="06/09/2026">
+                </div>
+                <div class="field">
+                  <label for="file-payment-method">Moyen de paiement</label>
+                  <input id="file-payment-method" name="paymentMethod" value="virement bancaire">
+                </div>
+                <div class="field">
+                  <label for="file-payment-rule">Échéancier</label>
+                  <select id="file-payment-rule" name="paymentScheduleRuleId">
+                    <option value="">Aucun échéancier</option>
+                    <option value="hkids-60-20-20-2026" selected>60 / 20 / 20 — standard</option>
+                    <option value="hkids-50-30-20-exception">50 / 30 / 20 — exception</option>
+                    <option value="hkids-40-40-20-exception">40 / 40 / 20 — exception</option>
+                    <option value="hkids-100-exception">100 % à la commande — exception</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="file-discount-percent">Remise exceptionnelle (%)</label>
+                  <input id="file-discount-percent" name="discountPercent" placeholder="vide si aucune remise">
+                </div>
+                <div class="field field-span-2">
+                  <label for="file-discount-lines">Lignes remisées (index séparés par des virgules)</label>
+                  <input id="file-discount-lines" name="discountLines" placeholder="0,2,3">
+                </div>
+              </fieldset>
+              <fieldset class="form-grid">
+                <legend>Contenu</legend>
+                <div class="field field-wide">
+                  <label for="file-items">Lignes du dossier (JSON)</label>
+                  <textarea id="file-items" class="code" name="items" rows="6"></textarea>
+                </div>
+              </fieldset>
+              <div class="form-footer">
+                <p id="file-state" class="state-line" role="status">Prêt.</p>
+                <button type="submit" class="primary">Consulter le dossier</button>
+              </div>
+            </form>
+          </section>
+          <section class="panel">
+            <div id="file-summary" class="empty">Aucun dossier consulté.</div>
+            <div id="file-deliverables"></div>
+            <div id="file-missing"></div>
+            <div id="file-files"></div>
+          </section>
         </section>
 
         <!-- Équipe IA -->

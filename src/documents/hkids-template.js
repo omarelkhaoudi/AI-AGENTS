@@ -42,9 +42,62 @@ export function documentTitleFor(type) {
   return HKIDS_DOCUMENT_TYPE_LABELS[type] ?? null;
 }
 
+/**
+ * The upstream document an invoice points at, and how to label it.
+ *
+ * Two flows exist. The historical invoice follows a delivery note; the invoice
+ * of a commercial file follows a quote. Printing "Référence BL" whatever the
+ * document carried put that label on a quote number, which is simply wrong.
+ *
+ * The quote is looked at first because it is the upstream document of the
+ * newer flow; an invoice carrying only a delivery note reference keeps its
+ * historical label. Returns null when the invoice references nothing: no
+ * reference is ever invented, and none is substituted for another.
+ */
+export function invoiceUpstreamReference(document) {
+  const quote = typeof document?.quoteReference === "string" ? document.quoteReference.trim() : "";
+  if (quote !== "") {
+    return Object.freeze({ field: "quoteReference", label: "Référence devis", value: quote });
+  }
+
+  const deliveryNote = typeof document?.deliveryNoteReference === "string"
+    ? document.deliveryNoteReference.trim()
+    : "";
+  if (deliveryNote !== "") {
+    return Object.freeze({ field: "deliveryNoteReference", label: "Référence BL", value: deliveryNote });
+  }
+
+  return null;
+}
+
+/**
+ * The documents a delivery note refers back to.
+ *
+ * The delivery note of a commercial file carries both: the quote the order came
+ * from, and the invoice it is billed on. Only the references the document
+ * actually holds are returned, so a missing one prints nothing rather than an
+ * empty label, and none is ever invented.
+ */
+export function deliveryNoteReferences(document) {
+  const references = [];
+
+  const quote = typeof document?.quoteReference === "string" ? document.quoteReference.trim() : "";
+  if (quote !== "") {
+    references.push(Object.freeze({ field: "quoteReference", label: "Référence devis", value: quote }));
+  }
+
+  const invoice = typeof document?.invoiceReference === "string" ? document.invoiceReference.trim() : "";
+  if (invoice !== "") {
+    references.push(Object.freeze({ field: "invoiceReference", label: "Référence facture", value: invoice }));
+  }
+
+  return Object.freeze(references);
+}
+
 export function referenceLabelFor(document) {
   if (document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE) {
-    return `Référence BL: ${document.deliveryNoteReference}`;
+    const upstream = invoiceUpstreamReference(document);
+    return upstream ? `${upstream.label}: ${upstream.value}` : "";
   }
   return document.reference ? `Référence: ${document.reference}` : "";
 }

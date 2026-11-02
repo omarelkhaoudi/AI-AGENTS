@@ -2,8 +2,14 @@ import { constants } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import { PDFDocument, rgb } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
-import { HKIDS_DOCUMENT_TYPES } from "./document-schema.js";
-import { HKIDS_FIXED_IDENTITY, HKIDS_LOGO_PATH, documentTitleFor } from "./hkids-template.js";
+import { DELIVERY_NOTE_PROFILES, HKIDS_DOCUMENT_TYPES } from "./document-schema.js";
+import {
+  HKIDS_FIXED_IDENTITY,
+  HKIDS_LOGO_PATH,
+  deliveryNoteReferences,
+  documentTitleFor,
+  invoiceUpstreamReference
+} from "./hkids-template.js";
 import { parseReferenceImage } from "./purchase-order.js";
 
 // pdf-lib embeds a real font file, so rendering needs a .ttf that exists on the
@@ -143,6 +149,29 @@ const TABLE_LAYOUTS = Object.freeze({
       { label: "Total HT", key: "amountHt", right: 489 },
       { label: "Total TTC", key: "totalTtc", right: R - 6 }
     ])
+  }),
+  // An invoice discounted by a fixed amount states its lines in HT only:
+  // invoiceShowsLineTaxes says why.
+  invoiceHtOnly: Object.freeze({
+    size: 8,
+    headerSize: 7.4,
+    designation: { label: "Désignation", x: L + 6, width: 220 },
+    columns: Object.freeze([
+      { label: "Qté", key: "quantity", right: 300 },
+      { label: "Unité", key: "unit", right: 345 },
+      { label: "PU HT", key: "unitPriceHt", right: 440 },
+      { label: "Total HT", key: "netAmountHt", right: R - 6 }
+    ])
+  }),
+  // A delivery note that states only the goods: no price anywhere.
+  goodsOnly: Object.freeze({
+    size: 8.5,
+    headerSize: 7.8,
+    designation: { label: "Désignation", x: L + 6, width: 330 },
+    columns: Object.freeze([
+      { label: "Qté", key: "quantity", right: 440 },
+      { label: "Unité", key: "unit", right: R - 6 }
+    ])
   })
 });
 
@@ -168,9 +197,15 @@ export async function renderHkidsPdf(document, {
 
   drawFirstPageHeader(writer, document);
   drawItems(writer, document);
-  drawTotals(writer, document);
+  if (document.totals) {
+    drawTotals(writer, document);
+  } else {
+    drawDeliveryNoteReferences(writer, document);
+  }
   drawSpecifications(writer, document);
-  drawPaymentTerms(writer, document);
+  if (document.payment) {
+    drawPaymentTerms(writer, document);
+  }
   drawClosing(writer, document);
 
   const { image } = parseReferenceImage(document.referenceImage);
@@ -260,15 +295,31 @@ function drawFirstPageHeader(w, document) {
   w.y = 236;
 }
 
+// The label follows the reference the invoice actually carries: a quote for the
+// commercial file, a delivery note for the historical flow.
 function referenceLine(document) {
-  if (document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE && document.deliveryNoteReference) {
-    return `Référence BL : ${String(document.deliveryNoteReference).replace(/^BL\s*n°?\s*/i, "")}`;
+  if (document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE) {
+    const upstream = invoiceUpstreamReference(document);
+    if (!upstream) {
+      return null;
+    }
+    const value = upstream.field === "deliveryNoteReference"
+      ? String(upstream.value).replace(/^BL\s*n°?\s*/i, "")
+      : upstream.value;
+    return `${upstream.label} : ${value}`;
   }
   return document.reference ? `Référence : ${document.reference}` : null;
 }
 
 function tableLayout(document) {
-  return document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE ? TABLE_LAYOUTS.invoice : TABLE_LAYOUTS.standard;
+  if (document.documentType === HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE
+    && document.deliveryNoteProfile === DELIVERY_NOTE_PROFILES.GOODS_ONLY) {
+    return TABLE_LAYOUTS.goodsOnly;
+  }
+  if (document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE) {
+    return invoiceShowsLineTaxes(document) ? TABLE_LAYOUTS.invoice : TABLE_LAYOUTS.invoiceHtOnly;
+  }
+  return TABLE_LAYOUTS.standard;
 }
 
 function drawTableHeader(w, layout) {
@@ -309,14 +360,25 @@ function cellValue(item, key) {
   if (key === "unit") {
     return item.unit || "—";
   }
+  // A line rebated on its own states its net; otherwise net and gross agree.
+  if (key === "netAmountHt" || key === "amountHt") {
+    return formatMoney(item.netAmountHt ?? item.amountHt);
+  }
   return formatMoney(item[key]);
 }
 
+// A discounted invoice states the gross, the rebate and the net before the tax,
+// as the quote does. Every figure is the engine's: nothing here adds anything.
 function drawTotals(w, document) {
-  w.ensure(80);
+  const totals = document.totals;
+  const discountLabel = invoiceDiscountLabel(document);
+  const tvaPercent = Math.round(Number(totals.tvaRate ?? document.tvaRate ?? 0.2) * 100);
+  const rows = discountLabel
+    ? [["TOTAL BRUT HT", totals.totalBrutHt], [discountLabel, totals.totalDiscount], ["TOTAL NET HT", totals.totalHt], [`TOTAL TVA ${tvaPercent} %`, totals.tva]]
+    : [["TOTAL HT", totals.totalHt], [`TOTAL TVA ${tvaPercent} %`, totals.tva]];
+  w.ensure(44 + rows.length * 18);
   const labelX = 340;
-  const tvaPercent = Math.round(Number(document.totals.tvaRate ?? document.tvaRate ?? 0.2) * 100);
-  for (const [label, value] of [["TOTAL HT", document.totals.totalHt], [`TVA ${tvaPercent} %`, document.totals.tva]]) {
+  for (const [label, value] of rows) {
     w.text(label, labelX, w.y + 12, { size: 9, isBold: true });
     w.text(formatMoney(value), R - 10, w.y + 12, { size: 9, align: "right" });
     w.y += 18;
@@ -325,6 +387,24 @@ function drawTotals(w, document) {
   w.text("TOTAL TTC", labelX, w.y + 19, { size: 10.5, isBold: true, color: COLORS.white });
   w.text(formatMoney(document.totals.totalTtc), R - 10, w.y + 20, { size: 12.5, isBold: true, color: COLORS.white, align: "right" });
   w.y += 46;
+}
+
+// What a delivery note with no price says instead of amounts: the documents
+// it refers back to, and when the goods are due, exactly as the document says.
+function drawDeliveryNoteReferences(w, document) {
+  const lines = deliveryNoteReferences(document).map((reference) => `${reference.label} : ${reference.value}`);
+  if (document.deliveryDateText) {
+    lines.push(document.deliveryDateText);
+  }
+  if (lines.length === 0) {
+    return;
+  }
+  w.ensure(lines.length * 16 + 10);
+  for (const line of lines) {
+    w.text(line, L, w.y + 10, { size: 9, isBold: !line.startsWith("Date") });
+    w.y += 16;
+  }
+  w.y += 12;
 }
 
 function drawSpecifications(w, document) {
@@ -459,6 +539,45 @@ function logoPath() {
 
 function titleCase(value) {
   return String(value ?? "").toLowerCase().replace(/^./, (letter) => letter.toUpperCase());
+}
+
+/**
+ * How a document's rebate is named on its totals. One wording for the quote and
+ * the invoice, the PDF and the Word file: "REMISE 5 %" for a percentage, the
+ * rebate's own label for a fixed amount, and "REMISE" otherwise.
+ */
+export function discountRowLabel(discount) {
+  if (discount?.percent) {
+    return `REMISE ${discount.percent} %`;
+  }
+  const label = typeof discount?.label === "string" ? discount.label.trim() : "";
+  return isFixedDiscount(discount) && label !== "" ? label.toLocaleUpperCase("fr-FR") : "REMISE";
+}
+
+function isFixedDiscount(discount) {
+  const amount = discount?.fixedAmount;
+  return amount !== undefined && amount !== null && amount !== "";
+}
+
+/**
+ * Whether an invoice prints a TVA and a TTC on each of its lines. It does,
+ * except when its rebate is a fixed amount: that rebate is taken off the total
+ * and on no line, so the lines' TTC would add up to more than the invoice
+ * charges. The lines then state their HT, and the tax is stated once, on the net.
+ */
+export function invoiceShowsLineTaxes(document) {
+  return !(document?.documentType === HKIDS_DOCUMENT_TYPES.INVOICE && isFixedDiscount(document.discount));
+}
+
+/**
+ * The label of the rebate row of an invoice, or null when the invoice carries
+ * no rebate. Shared with the Word renderer so both files say the same thing.
+ */
+export function invoiceDiscountLabel(document) {
+  if (document?.documentType !== HKIDS_DOCUMENT_TYPES.INVOICE || !(Number(document.totals?.totalDiscount) > 0)) {
+    return null;
+  }
+  return discountRowLabel(document.discount);
 }
 
 export function formatMoney(value) {

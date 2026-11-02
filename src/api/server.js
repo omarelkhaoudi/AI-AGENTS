@@ -26,6 +26,7 @@ import { assertCapability } from "../security/authorization.js";
 import { createSecurityConfig } from "../security/security-config.js";
 import { createApiTokenMaterial, hashApiTokenSecret } from "../security/api-token.js";
 import { HkidsDocumentService, normalizeDocumentError } from "../documents/document-service.js";
+import { createCommercialFileService, normalizeCommercialFileError } from "../documents/commercial-file-service.js";
 
 // The one outbound tool. It is never routed by a planner, so the only way to
 // raise it is the dedicated endpoint below, and the only way to send it is a
@@ -65,6 +66,9 @@ export function buildApi({
   const directoryMemory = businessMemory ?? createBusinessMemoryRepository();
   const securityConfig = security ?? foundationConfig.security ?? createSecurityConfig();
   const hkidsDocuments = documentService ?? new HkidsDocumentService({ repository, outputDir: documentOutputDir });
+  // Writes to the same directory as the document service, so both kinds of
+  // produced file land where the generated documents already live.
+  const commercialFiles = createCommercialFileService({ repository, outputDir: documentOutputDir });
 
   const app = Fastify({ logger, bodyLimit: securityConfig.bodyLimitBytes });
   let seedPromise = null;
@@ -492,6 +496,37 @@ export function buildApi({
           return reply.code(normalized.statusCode).send(normalized.body);
         }
         return sendDomainError(reply, "Document generation failed.", error);
+      }
+    });
+
+    // A commercial file is composed from the request, like the document routes
+    // above: there is no store of files to select from, and giving one an
+    // identifier would settle a lifecycle nobody has specified.
+    app.post("/api/commercial-files/preview", writeRouteOptions(), async (request, reply) => {
+      try {
+        return reply.code(200).send(await commercialFiles.describe(request.body));
+      } catch (error) {
+        const normalized = normalizeCommercialFileError(error) ?? normalizeDocumentError(error);
+        if (normalized) {
+          return reply.code(normalized.statusCode).send(normalized.body);
+        }
+        return sendDomainError(reply, "Commercial file preview failed.", error);
+      }
+    });
+
+    app.post("/api/commercial-files/render", writeRouteOptions(), async (request, reply) => {
+      try {
+        const { deliverable, ...file } = request.body ?? {};
+        return reply.code(201).send(await commercialFiles.render(file, {
+          deliverable,
+          createdById: request.principal.userId
+        }));
+      } catch (error) {
+        const normalized = normalizeCommercialFileError(error) ?? normalizeDocumentError(error);
+        if (normalized) {
+          return reply.code(normalized.statusCode).send(normalized.body);
+        }
+        return sendDomainError(reply, "Commercial file rendering failed.", error);
       }
     });
 

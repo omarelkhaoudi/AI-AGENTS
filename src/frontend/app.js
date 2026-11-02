@@ -1135,6 +1135,7 @@ const COCKPIT_VIEWS = Object.freeze({
   approvals: "Validations",
   documents: "Documents H-KIDS",
   quotes: "Préparation de devis",
+  file: "Dossier commercial",
   team: "Équipe IA"
 });
 
@@ -1226,6 +1227,188 @@ document.querySelector("#theme-toggle").addEventListener("click", () => {
   const index = THEMES.findIndex((entry) => entry.id === currentTheme);
   currentTheme = applyTheme(THEMES[(index + 1) % THEMES.length].id);
 });
+
+// --- commercial file ---------------------------------------------------------
+//
+// A presentation layer and nothing else. Every amount shown here comes from the
+// API answer; this file never adds, multiplies or takes a percentage, and it
+// never sends anything to a customer.
+const fileForm = document.querySelector("#file-form");
+const fileClient = document.querySelector("#file-client");
+const fileAddress = document.querySelector("#file-address");
+const fileDate = document.querySelector("#file-date");
+const filePaymentMethod = document.querySelector("#file-payment-method");
+const filePaymentRule = document.querySelector("#file-payment-rule");
+const fileDiscountPercent = document.querySelector("#file-discount-percent");
+const fileDiscountLines = document.querySelector("#file-discount-lines");
+const fileItems = document.querySelector("#file-items");
+const fileState = document.querySelector("#file-state");
+const fileSummary = document.querySelector("#file-summary");
+const fileDeliverables = document.querySelector("#file-deliverables");
+const fileMissing = document.querySelector("#file-missing");
+const fileFiles = document.querySelector("#file-files");
+
+fileForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await describeCommercialFile();
+});
+
+// The exact body the API expects, so a render request repeats the file the user
+// just read rather than a second version of it.
+function collectCommercialFileInput() {
+  const percent = Number(fileDiscountPercent.value);
+  const indexes = fileDiscountLines.value
+    .split(",")
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isInteger(value));
+
+  return {
+    client: { name: fileClient.value, address: fileAddress.value },
+    items: JSON.parse(fileItems.value),
+    paymentMethod: filePaymentMethod.value,
+    paymentScheduleRuleId: filePaymentRule.value || null,
+    dates: { quoteDate: fileDate.value },
+    // A discount is sent only when one was asked for. An empty field is not a
+    // discount of zero, and an unnamed line is not every line.
+    discount: Number.isFinite(percent) && percent > 0 && indexes.length > 0
+      ? { percent, appliesToIndexes: indexes, label: "Remise exceptionnelle" }
+      : null
+  };
+}
+
+async function describeCommercialFile() {
+  fileState.textContent = "Consultation du dossier...";
+  try {
+    const payload = await postJson("/api/commercial-files/preview", collectCommercialFileInput());
+    renderCommercialFile(payload);
+    fileState.textContent = "Dossier consulté.";
+  } catch (error) {
+    fileSummary.className = "";
+    fileSummary.innerHTML = card("Erreur dossier", escapeHtml(error.message), "warning");
+    fileDeliverables.innerHTML = "";
+    fileMissing.innerHTML = "";
+    fileFiles.innerHTML = "";
+    fileState.textContent = error.message;
+  }
+}
+
+function renderCommercialFile(payload) {
+  const totals = payload.file.totals;
+  fileSummary.className = "";
+  fileSummary.innerHTML = `
+    <ul class="summary-list">
+      ${totals.totalDiscount > 0 ? `<li><strong>Total brut HT</strong><span>${escapeHtml(formatDh(totals.totalBrutHt))}</span></li>` : ""}
+      ${totals.totalDiscount > 0 ? `<li><strong>Remise</strong><span>${escapeHtml(formatDh(totals.totalDiscount))}</span></li>` : ""}
+      <li><strong>Total HT</strong><span>${escapeHtml(formatDh(totals.totalHt))}</span></li>
+      <li><strong>TVA</strong><span>${escapeHtml(formatDh(totals.tva))}</span></li>
+      <li><strong>Total TTC</strong><span>${escapeHtml(formatDh(totals.totalTtc))}</span></li>
+    </ul>
+    ${renderCommercialSchedule(payload.file.schedule)}
+  `;
+  renderCommercialDeliverables(payload.deliverables);
+  renderCommercialMissingInformation(payload.missingInformation);
+  fileFiles.innerHTML = "";
+}
+
+function renderCommercialSchedule(schedule) {
+  if (!schedule) {
+    return card("Échéancier", "Aucun échéancier choisi pour ce dossier.", "warning");
+  }
+  return `
+    <h3>Échéancier</h3>
+    <ul class="summary-list">
+      ${schedule.installments.map((entry) => `
+        <li>
+          <strong>${escapeHtml(String(entry.percent))} %</strong>
+          <span>${escapeHtml(formatDh(entry.amountTtc))}</span>
+          <span class="muted">${escapeHtml(entry.condition)}</span>
+        </li>
+      `).join("")}
+    </ul>
+  `;
+}
+
+// Client-facing and internal are kept visibly apart: the point of the split is
+// that nobody sends an internal working paper to a customer by accident.
+function renderCommercialDeliverables(deliverables) {
+  const group = (audience) => deliverables
+    .filter((entry) => entry.audience === audience)
+    .map((entry) => `
+      <li>
+        <strong>${escapeHtml(entry.label)}</strong>
+        <span class="tag ${entry.audience === "client" ? "ok" : ""}">${entry.audience === "client" ? "CLIENT" : "INTERNE"}</span>
+        ${entry.audienceConfirmed ? "" : '<span class="tag warning">destinataire à confirmer</span>'}
+        ${entry.rendering.available
+          ? `<button type="button" class="secondary" data-render="${escapeHtml(entry.kind)}">Générer</button>`
+          : `<span class="muted">${escapeHtml(entry.rendering.reason)}</span>`}
+      </li>
+    `).join("");
+
+  fileDeliverables.innerHTML = `
+    <h3>Documents client</h3>
+    <ul class="summary-list">${group("client")}</ul>
+    <h3>Livrables internes</h3>
+    <ul class="summary-list">${group("internal")}</ul>
+  `;
+
+  fileDeliverables.querySelectorAll("[data-render]").forEach((button) => {
+    button.addEventListener("click", () => generateCommercialDeliverable(button.dataset.render));
+  });
+}
+
+// Reported, never filled in.
+function renderCommercialMissingInformation(missing) {
+  if (!missing || missing.length === 0) {
+    fileMissing.innerHTML = "";
+    return;
+  }
+  fileMissing.innerHTML = `
+    <h3>Informations manquantes</h3>
+    <ul class="summary-list">
+      ${missing.map((entry) => `
+        <li>
+          <strong>${escapeHtml(entry.label)}</strong>
+          <span class="muted">${escapeHtml(entry.message)}</span>
+          ${entry.critical ? '<span class="tag warning">bloquante</span>' : ""}
+        </li>
+      `).join("")}
+    </ul>
+  `;
+}
+
+async function generateCommercialDeliverable(deliverable) {
+  fileState.textContent = "Génération en cours...";
+  try {
+    const payload = await postJson("/api/commercial-files/render", {
+      ...collectCommercialFileInput(),
+      deliverable
+    });
+    fileFiles.innerHTML = `
+      <h3>${escapeHtml(payload.deliverable.label)}</h3>
+      <ul class="summary-list">
+        ${["pdf", "docx"].map((format) => `
+          <li>
+            <strong>${format.toUpperCase()}</strong>
+            <button type="button" class="link-button" data-download-url="${escapeHtml(payload.files[format].downloadUrl)}" data-download-name="${escapeHtml(payload.files[format].name)}">${escapeHtml(payload.files[format].name)}</button>
+          </li>
+        `).join("")}
+      </ul>
+    `;
+    fileFiles.querySelectorAll("[data-download-url]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        try {
+          await downloadGeneratedDocument(button.dataset.downloadUrl, button.dataset.downloadName);
+        } catch (error) {
+          fileState.textContent = error.message;
+        }
+      });
+    });
+    fileState.textContent = "Document généré. Aucun envoi client n'a été effectué.";
+  } catch (error) {
+    fileFiles.innerHTML = card("Erreur génération", escapeHtml(error.message), "warning");
+    fileState.textContent = error.message;
+  }
+}
 
 // Last, because it is the only part that runs rather than declares. It used to
 // sit above the declarations, where the top level await suspended evaluation

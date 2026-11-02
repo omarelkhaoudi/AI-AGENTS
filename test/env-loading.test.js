@@ -132,6 +132,22 @@ test("the server entry point loads the file before it reads the environment", as
   );
 });
 
+test("the Prisma config loads the file before resolving DATABASE_URL", async () => {
+  const source = await readFile("prisma.config.js", "utf8");
+  assert.match(source, /import \{ loadDotEnvIfPresent \} from "\.\/src\/load-dotenv\.js";/);
+
+  const code = source
+    .split(/\r?\n/)
+    .filter((line) => !line.trimStart().startsWith("//"))
+    .join("\n");
+  const load = code.indexOf("loadDotEnvIfPresent();");
+  const databaseUrl = code.indexOf('env("DATABASE_URL")');
+
+  assert.ok(load > 0, "Prisma config must load the local environment file");
+  assert.ok(databaseUrl > 0, "Prisma config must resolve DATABASE_URL");
+  assert.ok(load < databaseUrl, "DATABASE_URL must be resolved after loading .env");
+});
+
 // The loader moved out of scripts/ so the server could use it. The seed scripts
 // must have moved with it, or npm run db:seed stops seeing DATABASE_URL.
 test("the seed scripts load the file from its new home", async () => {

@@ -75,8 +75,9 @@ test("the Director shows its plan, has the agents work it, checks coherence, and
   const body = JSON.parse((await inject({ method: "POST", url: "/api/agent/chat", payload: { message: "Qu'est-ce qui bloque cette semaine ?" } })).body);
 
   assert.equal(body.plan.objective, "Savoir ce qui bloque cette semaine");
-  assert.deepEqual(body.plan.steps.map((step) => [step.agent, step.status]), [["finance", "done"], ["production", "not_run"]],
+  assert.deepEqual(body.plan.steps.map((step) => [step.agent, step.status]), [["finance", "in_progress"], ["production", "todo"]],
     "a step only counts as done once its agent has answered");
+  assert.match(body.plan.steps[0].result, /12000 MAD/, "the step keeps what the agent found");
   assert.equal(body.alerts[0].code, "PRODUCTION_WITHOUT_DEPOSIT");
   assert.match(body.reply, /sans acompte/);
 });

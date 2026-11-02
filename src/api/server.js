@@ -24,6 +24,7 @@ import { applyPublicationApprovalDecision, isPublicationApproval } from "../soci
 import { ToolExecutionService, ToolExecutionServiceError } from "../tools/execution-service.js";
 import { createMvpToolRegistry } from "../tools/mvp-tools.js";
 import { CONSISTENCY_DOMAINS, checkConsistency } from "../agent/consistency.js";
+import { PlanStoreError, createMemoryPlanStore } from "../agent/plan-store.js";
 import { authenticatePrincipal, extractBearerToken } from "../security/authentication.js";
 import { assertCapability } from "../security/authorization.js";
 import { createSecurityConfig } from "../security/security-config.js";
@@ -60,6 +61,9 @@ export function buildApi({
   // A stand-in for the OpenAI client, for tests: the agent is then built by
   // the server itself, with the real team tools behind it.
   agentClient = null,
+  // Where the Director's action plans are kept. The server process passes a
+  // file store; a test gets a store of its own in memory.
+  planStore = null,
   documentOutputDir = null,
   // A seam, not a feature: the derived idempotency key names a day, and a test
   // cannot cross a day boundary by waiting for one.
@@ -134,12 +138,14 @@ export function buildApi({
     }
     return checkConsistency(records);
   };
+  const plans = planStore ?? createMemoryPlanStore();
   const agent = directorAgent ?? createDirectorAgentFromEnv({
     documentService: hkidsDocuments,
     runDirectorRequest,
     toolRegistry: teamToolRegistry,
     executeTool: executeTeamTool,
     checkCoherence: checkTeamCoherence,
+    planStore: plans,
     client: agentClient
   });
   // Writes to the same directory as the document service, so both kinds of
@@ -435,6 +441,43 @@ export function buildApi({
       configured: agent.isConfigured(),
       model: agent.model
     }));
+
+    app.get("/api/plans", readRouteOptions(), async (request) => {
+      const status = ["active", "done", "abandoned"].includes(request.query?.status) ? request.query.status : null;
+      return { plans: await plans.list({ status }) };
+    });
+
+    // Hiba can move a step herself from the cockpit; the journal says it was her.
+    app.patch("/api/plans/:id/steps/:index", writeRouteOptions(), async (request, reply) => {
+      try {
+        const plan = await plans.updateStep(request.params.id, Number(request.params.index), {
+          status: typeof request.body?.status === "string" ? request.body.status : null,
+          result: typeof request.body?.result === "string" && request.body.result.trim() !== "" ? request.body.result.trim() : null,
+          by: request.principal.userId ?? "direction"
+        });
+        return reply.code(200).send({ plan });
+      } catch (error) {
+        if (error instanceof PlanStoreError) {
+          return reply.code(error.code === "PLAN_NOT_FOUND" ? 404 : 400).send({ error: error.message, details: { code: error.code } });
+        }
+        return sendDomainError(reply, "Plan update failed.", error);
+      }
+    });
+
+    app.post("/api/plans/:id/close", writeRouteOptions(), async (request, reply) => {
+      try {
+        const status = { terminer: "done", abandonner: "abandoned", reouvrir: "active" }[request.body?.action];
+        if (!status) {
+          return reply.code(400).send({ error: "action must be terminer, abandonner or reouvrir." });
+        }
+        return reply.code(200).send({ plan: await plans.close(request.params.id, status, { by: request.principal.userId ?? "direction" }) });
+      } catch (error) {
+        if (error instanceof PlanStoreError) {
+          return reply.code(404).send({ error: error.message, details: { code: error.code } });
+        }
+        return sendDomainError(reply, "Plan update failed.", error);
+      }
+    });
 
     app.post("/api/agent/chat", writeRouteOptions(), async (request, reply) => {
       try {

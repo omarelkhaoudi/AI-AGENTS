@@ -4,6 +4,7 @@ import { createN8nClientFromConfig } from "./integrations/n8n-runtime.js";
 import { loadDotEnvIfPresent } from "./load-dotenv.js";
 import { createRepository } from "./persistence/repository-factory.js";
 import { createMvpToolRegistry } from "./tools/mvp-tools.js";
+import { createFilePlanStore } from "./agent/plan-store.js";
 
 // The first statement, because everything below reads process.env: the port, the
 // configuration, the repository factory and the workflow client. Without this the
@@ -28,7 +29,11 @@ const toolRegistry = workflowClient
   ? createMvpToolRegistry({ repository, workflowClient })
   : null;
 
-const app = buildApi({ repository, config, toolRegistry });
+// The Director's action plans are kept in data/ (ignored by git), so they
+// survive a restart and can be followed over several days.
+const planStore = createFilePlanStore(process.env.HKIDS_PLANS_PATH ? { path: process.env.HKIDS_PLANS_PATH } : {});
+
+const app = buildApi({ repository, config, toolRegistry, planStore });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.once(signal, async () => {

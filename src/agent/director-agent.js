@@ -6,6 +6,7 @@ import { HKIDS_FIXED_IDENTITY } from "../documents/hkids-template.js";
 import { createCatalogueLoader, searchCatalogue } from "./catalogue.js";
 import { SPECIALISTS, SPECIALIST_IDS, runSpecialist } from "./agent-team.js";
 import { WHATSAPP_MESSAGE_TOOL, draftWhatsAppMessage } from "./whatsapp.js";
+import { STEP_LABELS, createMemoryPlanStore } from "./plan-store.js";
 
 // The Director as a conversational agent. Hiba writes the way she would to an
 // assistant — "fais-moi un devis pour Meriem, un lit nuage à 3000 DH" — and a
@@ -54,13 +55,71 @@ const PLAN_TOOL = Object.freeze({
           additionalProperties: false,
           properties: {
             agent: { type: "string", enum: [...SPECIALIST_IDS, "director"] },
-            tache: { type: "string" }
+            tache: { type: "string" },
+            echeance: { type: "string", description: "Date limite AAAA-MM-JJ pour une étape qui ne se fait pas tout de suite, sinon chaîne vide." }
           },
-          required: ["agent", "tache"]
+          required: ["agent", "tache", "echeance"]
         }
       }
     },
     required: ["objectif", "strategie", "priorites", "etapes"]
+  }
+});
+
+const LIST_PLANS_TOOL = Object.freeze({
+  type: "function",
+  name: "lister_plans",
+  description: "Liste les plans d'action conservés, avec leur avancement, les étapes à faire, en retard ou bloquées. À appeler dès que la direction parle d'un plan existant (« où en est… », « on continue », « suivi ») ou d'un fait qui fait avancer un plan.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      statut: { type: "string", enum: ["active", "done", "all"], description: "active = plans en cours (par défaut)." }
+    },
+    required: ["statut"]
+  }
+});
+
+const ADJUST_PLAN_TOOL = Object.freeze({
+  type: "function",
+  name: "ajuster_plan",
+  description: "Met à jour un plan conservé : statut et résultat d'étapes, nouvelles échéances, nouvelles étapes, note au journal, clôture.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      numero: { type: "integer", description: "Le numéro du plan." },
+      etapes: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            etape: { type: "integer", description: "Numéro de l'étape (1, 2, 3…)." },
+            statut: { type: "string", enum: ["todo", "in_progress", "done", "blocked", ""] },
+            resultat: { type: "string" },
+            echeance: { type: "string", description: "AAAA-MM-JJ, ou chaîne vide." }
+          },
+          required: ["etape", "statut", "resultat", "echeance"]
+        }
+      },
+      nouvelles_etapes: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            agent: { type: "string", enum: [...SPECIALIST_IDS, "director"] },
+            tache: { type: "string" },
+            echeance: { type: "string" }
+          },
+          required: ["agent", "tache", "echeance"]
+        }
+      },
+      note: { type: "string", description: "Ce qui s'est passé, pour le journal du plan. Chaîne vide si rien." },
+      cloture: { type: "string", enum: ["", "terminer", "abandonner", "reouvrir"] }
+    },
+    required: ["numero", "etapes", "nouvelles_etapes", "note", "cloture"]
   }
 });
 
@@ -141,6 +200,8 @@ const TOOLS = Object.freeze([
   },
   WHATSAPP_MESSAGE_TOOL,
   PLAN_TOOL,
+  LIST_PLANS_TOOL,
+  ADJUST_PLAN_TOOL,
   COHERENCE_TOOL,
   {
     type: "function",
@@ -175,6 +236,11 @@ function instructions(today) {
     "- Après preparer_document : annonce le document (type, numéro, client, total TTC, échéances le cas échéant) en 2 ou 3 lignes, puis dis de vérifier l'aperçu et de cliquer « Valider et générer ». Ne prétends jamais qu'il est déjà envoyé au client.",
     "- Si l'outil renvoie des erreurs, explique simplement ce qui manque et demande-le.",
     "- Méthode de travail OBLIGATOIRE pour toute question sur la situation, les urgences, les risques, les décisions, ou qui demande un ou plusieurs agents : 1) TOUJOURS commencer par etablir_plan_action (objectif, stratégie, priorités, étapes agent + tâche) ; 2) exécuter les étapes avec deleguer_a_un_agent (les étapes indépendantes en même temps) ou point_entreprise pour un point global ; 3) synthèse qui suit le plan, puis les incohérences signalées par l'outil, puis ce qui demande une décision. Seules exceptions : une salutation, ou un document à préparer.",
+    "- Les plans sont CONSERVÉS et suivis dans le temps. Quand la direction parle d'un plan existant ou d'un fait qui le fait avancer (« où en est le plan », « on continue », « l'acompte Atlas est arrivé », « le fournisseur a livré »), appelle lister_plans puis : relance les étapes encore à faire avec deleguer_a_un_agent (l'étape de l'agent se met à jour seule), mets à jour avec ajuster_plan (fait, bloqué, nouvelle échéance, nouvelles étapes, note), et réponds avec l'avancement (x/y étapes, en retard, bloquées) et la prochaine action. Ne crée pas un nouveau plan pour un sujet qui a déjà un plan en cours : ajuste-le.",
+    "- Statut des étapes : après le travail d'un agent, son étape passe « en cours ». Marque-la « fait » avec ajuster_plan SEULEMENT si la tâche est entièrement accomplie par ce travail (une analyse, une liste, un calcul). Une action réelle (message envoyé, appel, paiement reçu, commande passée, livraison) reste « en cours » tant que la direction n'a pas confirmé qu'elle a eu lieu. Ne dis jamais « fait » pour un brouillon préparé. Un plan est « proposé » à la direction, jamais « validé » par toi.",
+    "- Quand la direction t'annonce qu'une action a eu lieu (« l'acompte est arrivé », « j'ai envoyé le message », « le fournisseur a livré »), c'est une confirmation : marque tout de suite les étapes correspondantes « fait » avec ajuster_plan, sans demander de preuve, et note le fait au journal. Ne refais pas travailler un agent sur une étape que la direction vient de confirmer ; ne fais travailler que les étapes que cette nouvelle débloque.",
+    "- N'écris jamais qu'une chose « est lancée », « est faite » ou « a eu lieu » si ni la direction ni une donnée ne l'a confirmé : c'est « prêt à lancer » ou « proposé ».",
+    "- En créant un plan, donne une échéance réaliste aux étapes qui ne se font pas tout de suite (relance client sous 48 h, livraison fournisseur…). Marque toi-même tes étapes « director » avec ajuster_plan quand elles sont faites.",
     "- Signale toujours les incohérences renvoyées par verifier_coherence, avec les agents concernés et l'action proposée ; ne les invente jamais.",
     "- Tu diriges une équipe d'agents : Commercial, Finance, Production, Achats, RH, Marketing, Community Manager, SAV, Juridique. Pour une question ou une tâche métier (relances clients, encaissements, retards atelier, quoi commander, réclamations…), délègue avec deleguer_a_un_agent à l'agent concerné — à plusieurs en parallèle si besoin — puis fais la synthèse. Garde les brouillons qu'ils ont rédigés (messages, listes de commande) tels quels dans ta réponse.",
     "- Pour le point complet de l'entreprise (« fais-moi le point », « la situation aujourd'hui »), après le plan, appelle point_entreprise puis résume l'essentiel en 5 lignes maximum, les urgences d'abord.",
@@ -198,12 +264,12 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, planStore = undefined, client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
   const loadCatalogue = createCatalogueLoader(cataloguePath ? { path: cataloguePath } : {});
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, planStore, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -216,6 +282,7 @@ export function createDirectorAgent({
   toolRegistry = null,
   executeTool = null,
   checkCoherence = null,
+  planStore = createMemoryPlanStore(),
   clock = () => new Date(),
   clientFactory = defaultClientFactory
 } = {}) {
@@ -242,7 +309,7 @@ export function createDirectorAgent({
       const items = conversations.get(id) ?? [];
       items.push({ role: "user", content: text });
 
-      const outcome = { documents: [], directorResponse: null, agentRuns: [], messages: [], plan: null, alerts: null };
+      const outcome = { documents: [], directorResponse: null, agentRuns: [], messages: [], plan: null, planId: null, alerts: null };
       let reply = "";
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
         const response = await callModel(resolvedClient, {
@@ -266,7 +333,9 @@ export function createDirectorAgent({
             userId,
             outcome,
             team: { client: resolvedClient, model, toolRegistry, executeTool },
-            checkCoherence
+            checkCoherence,
+            planStore,
+            userId
           })));
         calls.forEach((call, index) => {
           items.push({ type: "function_call_output", call_id: call.call_id, output: JSON.stringify(results[index]) });
@@ -281,7 +350,7 @@ export function createDirectorAgent({
         directorResponse: outcome.directorResponse,
         agentRuns: Object.freeze(outcome.agentRuns),
         messages: Object.freeze(outcome.messages),
-        plan: outcome.plan ? planWithProgress(outcome.plan, outcome.agentRuns) : null,
+        plan: outcome.planId ? await planStore.get(outcome.planId) : null,
         alerts: outcome.alerts
       });
     }
@@ -344,7 +413,13 @@ async function runTool(call, context) {
       return await lookUpCatalogue(args, context);
     }
     if (call.name === PLAN_TOOL.name) {
-      return recordPlan(args, context.outcome);
+      return await recordPlan(args, context);
+    }
+    if (call.name === LIST_PLANS_TOOL.name) {
+      return await listPlans(args, context);
+    }
+    if (call.name === ADJUST_PLAN_TOOL.name) {
+      return await adjustPlan(args, context);
     }
     if (call.name === COHERENCE_TOOL.name) {
       return await runCoherence(context);
@@ -459,36 +534,117 @@ async function delegate(args, context) {
     prepareMessage: (messageArgs, agentId) => recordMessage(messageArgs, agentId, outcome)
   });
   outcome.agentRuns.push(run);
+  await markAgentStepDone(run, context);
   return { ok: true, agent: run.label, outils_utilises: run.tools, reponse: run.answer };
 }
 
-function recordPlan(args, outcome) {
-  const steps = (Array.isArray(args.etapes) ? args.etapes : [])
+function planSteps(steps) {
+  return (Array.isArray(steps) ? steps : [])
     .filter((step) => text(step.tache) !== "")
-    .map((step) => ({ agent: SPECIALISTS[step.agent] || step.agent === "director" ? step.agent : "director", task: text(step.tache) }));
+    .map((step) => ({
+      agent: SPECIALISTS[step.agent] || step.agent === "director" ? step.agent : "director",
+      task: text(step.tache),
+      dueDate: /^\d{4}-\d{2}-\d{2}$/.test(text(step.echeance)) ? text(step.echeance) : null
+    }));
+}
+
+async function recordPlan(args, { planStore, outcome, userId }) {
+  const steps = planSteps(args.etapes);
   if (steps.length === 0) {
     return { ok: false, erreur: "Un plan doit avoir au moins une étape." };
   }
-  outcome.plan = {
+  const plan = await planStore.create({
     objective: text(args.objectif),
     strategy: text(args.strategie),
     priorities: (Array.isArray(args.priorites) ? args.priorites : []).map(text).filter(Boolean).slice(0, 3),
-    steps
-  };
-  return { ok: true, statut: "Plan affiché à la direction. Exécute maintenant les étapes." };
+    steps,
+    createdBy: userId
+  });
+  outcome.planId = plan.id;
+  return { ok: true, plan_numero: plan.number, statut: "Plan enregistré et affiché à la direction. Exécute maintenant les étapes." };
 }
 
-// A step is done once the agent it names has answered; the Director's own
-// steps are done when the answer is given.
-function planWithProgress(plan, runs) {
-  const answered = new Set(runs.map((run) => run.agent));
-  return Object.freeze({
-    ...plan,
-    steps: Object.freeze(plan.steps.map((step) => Object.freeze({
-      ...step,
-      status: step.agent === "director" || answered.has(step.agent) ? "done" : "not_run"
-    })))
-  });
+function describePlan(plan) {
+  return {
+    numero: plan.number,
+    objectif: plan.objective,
+    statut: plan.status,
+    avancement: `${plan.progress.done}/${plan.progress.total} étapes (${plan.progress.percent} %)`,
+    en_retard: plan.progress.overdue,
+    bloquees: plan.progress.blocked,
+    cree_le: plan.createdAt.slice(0, 10),
+    etapes: plan.steps.map((step) => ({
+      etape: step.index,
+      agent: step.agent,
+      tache: step.task,
+      statut: STEP_LABELS[step.status],
+      echeance: step.dueDate,
+      en_retard: step.overdue,
+      resultat: step.result ? step.result.slice(0, 300) : null
+    })),
+    derniers_evenements: plan.journal.slice(-4).map((entry) => `${entry.at.slice(0, 10)} : ${entry.text}`)
+  };
+}
+
+async function listPlans(args, { planStore }) {
+  const status = args.statut === "all" ? null : args.statut === "done" ? "done" : "active";
+  const plans = await planStore.list({ status });
+  return { ok: true, nombre: plans.length, plans: plans.slice(0, 8).map(describePlan) };
+}
+
+async function adjustPlan(args, { planStore, outcome, userId }) {
+  let plan = await planStore.get(String(args.numero));
+  if (!plan) {
+    return { ok: false, erreur: `Aucun plan n° ${args.numero}.` };
+  }
+  const by = "director";
+  for (const change of Array.isArray(args.etapes) ? args.etapes : []) {
+    plan = await planStore.updateStep(plan.id, change.etape, {
+      status: change.statut || null,
+      result: text(change.resultat) || null,
+      dueDate: /^\d{4}-\d{2}-\d{2}$/.test(text(change.echeance)) ? text(change.echeance) : null,
+      by
+    });
+  }
+  const added = planSteps(args.nouvelles_etapes);
+  if (added.length > 0) {
+    plan = await planStore.addSteps(plan.id, added, { by });
+  }
+  if (text(args.note)) {
+    plan = await planStore.addNote(plan.id, text(args.note), { by });
+  }
+  const closing = { terminer: "done", abandonner: "abandoned", reouvrir: "active" }[args.cloture];
+  if (closing) {
+    plan = await planStore.close(plan.id, closing, { by, reason: text(args.note) });
+  }
+  outcome.planId = plan.id;
+  return { ok: true, plan: describePlan(plan), demande_par: userId ?? null };
+}
+
+// When an agent has worked on a step of the current plan, the step moves to
+// "en cours" and keeps what the agent found. It is not "fait": an agent only
+// prepares, and a follow-up drafted is not a follow-up sent. The Director marks
+// it done when the task was an analysis the agent completed, Hiba when the real
+// action happened. A plan picked up from an earlier day is the current one when
+// it is the only plan still waiting on that agent.
+async function markAgentStepDone(run, { planStore, outcome }) {
+  if (!outcome.planId) {
+    const waiting = (await planStore.list({ status: "active" }))
+      .filter((plan) => plan.steps.some((step) => step.agent === run.agent && step.status !== "done"));
+    if (waiting.length !== 1) {
+      return;
+    }
+    outcome.planId = waiting[0].id;
+  }
+  const plan = await planStore.get(outcome.planId);
+  const step = plan?.steps.find((candidate) => candidate.agent === run.agent && candidate.status !== "done");
+  if (step) {
+    await planStore.updateStep(plan.id, step.index, {
+      status: step.status === "todo" ? "in_progress" : null,
+      result: run.answer.slice(0, 600),
+      by: run.agent
+    });
+  }
 }
 
 // The cross-checks run once per turn, as soon as the team is put to work, and

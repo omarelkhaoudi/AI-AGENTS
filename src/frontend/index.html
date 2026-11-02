@@ -61,6 +61,10 @@
           <button type="button" class="nav-item" data-view="director" aria-current="page">
             <svg class="i" aria-hidden="true"><use href="#i-layout"/></svg><span class="nav-label">Briefing</span>
           </button>
+          <button type="button" class="nav-item" data-view="plans">
+            <svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span class="nav-label">Plans</span>
+            <span class="nav-badge" id="plans-count" hidden>0</span>
+          </button>
           <button type="button" class="nav-item" data-view="approvals">
             <svg class="i" aria-hidden="true"><use href="#i-shield"/></svg><span class="nav-label">Validations</span>
             <span class="nav-badge" id="approval-count" hidden>0</span>
@@ -195,6 +199,20 @@
             </summary>
             <div id="agent-results" class="agent-grid"></div>
           </details>
+        </section>
+
+        <!-- Plans -->
+        <section class="view" data-view-panel="plans" hidden aria-labelledby="plans-title">
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <h2 id="plans-title">Plans d'action</h2>
+                <p>Les plans du Director, suivis jour après jour. Changez le statut d'une étape ici, ou dites simplement au Director ce qui a avancé.</p>
+              </div>
+              <button type="button" class="secondary" id="refresh-plans"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Rafraîchir</button>
+            </div>
+            <div id="plans-list" class="plans-list"></div>
+          </section>
         </section>
 
         <!-- Validations -->

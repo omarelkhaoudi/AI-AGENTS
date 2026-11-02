@@ -2227,6 +2227,163 @@ button.whatsapp-button:hover {
   margin-left: 4px;
 }
 
+.late {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.plan-card header .eyebrow a {
+  color: var(--brand);
+  text-decoration: none;
+}
+
+.plans-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.plan-track {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.plan-track.done,
+.plan-track.abandoned {
+  opacity: 0.75;
+}
+
+.plan-track header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.plan-track header .eyebrow {
+  margin-bottom: 2px;
+}
+
+.plan-track h3 {
+  font-size: 16px;
+}
+
+.plan-track header p {
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+.progress {
+  height: 8px;
+  margin-top: 14px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.progress span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--sage), var(--brand));
+  transition: width 0.4s var(--ease);
+}
+
+.progress-label {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.track-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.track-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.track-steps li.done {
+  border-color: color-mix(in srgb, var(--good) 35%, transparent);
+}
+
+.track-steps li.blocked {
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: var(--danger-soft);
+}
+
+.track-steps li > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.track-steps strong {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.track-steps small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.track-steps details {
+  margin-top: 6px;
+  font-size: 12.5px;
+}
+
+.track-steps details summary,
+.journal summary {
+  color: var(--brand);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.track-steps details p {
+  margin-top: 6px;
+  color: var(--ink-2);
+}
+
+.track-steps select {
+  width: auto;
+  min-width: 112px;
+  padding: 6px 8px;
+  font-size: 12.5px;
+}
+
+.journal {
+  margin-top: 12px;
+}
+
+.journal ul {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding-left: 16px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+
+.journal small {
+  color: var(--muted);
+}
+
 /* ================= Responsive ================= */
 
 @media (max-width: 1180px) {

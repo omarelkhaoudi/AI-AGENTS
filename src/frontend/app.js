@@ -202,6 +202,9 @@ async function sendToAgent(message) {
     pending.remove?.();
     appendBubble("agent", formatAgentText(response.reply), response.documents ?? [], response.agentRuns ?? [], response.messages ?? [], { plan: response.plan, alerts: response.alerts });
     uiState.textContent = "Réponse reçue.";
+    if (response.plan) {
+      refreshPlans();
+    }
     if (response.directorResponse) {
       state.current = { ...response.directorResponse, receivedAt: Date.now() };
       state.history = [state.current, ...state.history].slice(0, 8);
@@ -252,7 +255,7 @@ function planCard(plan) {
       <header>
         <span class="doc-icon">${icon("route")}</span>
         <div>
-          <span class="eyebrow">Plan d'action</span>
+          <span class="eyebrow">Plan d'action${plan.number ? ` n° ${escapeHtml(String(plan.number))}` : ""} · <a href="#plans">suivre dans Plans</a></span>
           <strong>${escapeHtml(plan.objective)}</strong>
         </div>
         <span class="tag ${done === plan.steps.length ? "ok" : "warning"}">${done}/${plan.steps.length} étapes</span>
@@ -263,13 +266,130 @@ function planCard(plan) {
         ${plan.steps.map((step) => `
           <li class="${step.status === "done" ? "done" : ""}">
             ${avatar(step.agent)}
-            <span>${escapeHtml(step.task)}</span>
-            <span class="step-status ${step.status === "done" ? "done" : "wait"}">${icon(step.status === "done" ? "check" : "clock")}</span>
+            <span>${escapeHtml(step.task)}${step.dueDate ? ` <small class="${step.overdue ? "late" : "muted"}">· avant le ${escapeHtml(formatIsoDay(step.dueDate))}</small>` : ""}</span>
+            <span class="tag ${STEP_TONES[step.status] ?? ""}">${escapeHtml(STEP_STATUS_LABELS[step.status] ?? step.status)}</span>
           </li>
         `).join("")}
       </ul>
     </article>
   `;
+}
+
+const STEP_STATUS_LABELS = Object.freeze({ todo: "À faire", in_progress: "En cours", done: "Fait", blocked: "Bloqué" });
+const STEP_TONES = Object.freeze({ todo: "", in_progress: "info", done: "ok", blocked: "danger" });
+const PLAN_STATUS_LABELS = Object.freeze({ active: "En cours", done: "Terminé", abandoned: "Abandonné" });
+
+function formatIsoDay(value) {
+  const [year, month, day] = String(value).split("-");
+  return day && month ? `${day}/${month}/${year}` : value;
+}
+
+// --- Plans view ---------------------------------------------------------------
+const plansList = document.querySelector("#plans-list");
+const plansCount = document.querySelector("#plans-count");
+document.querySelector("#refresh-plans").addEventListener("click", () => refreshPlans());
+
+async function refreshPlans() {
+  try {
+    const response = await fetch("/api/plans", { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("Impossible de charger les plans.");
+    }
+    renderPlans((await response.json()).plans ?? []);
+  } catch (error) {
+    plansList.innerHTML = card("Plans indisponibles", escapeHtml(error.message), "warning");
+  }
+}
+
+function renderPlans(plans) {
+  const active = plans.filter((plan) => plan.status === "active");
+  plansCount.textContent = String(active.length);
+  plansCount.hidden = active.length === 0;
+  if (plans.length === 0) {
+    plansList.innerHTML = `
+      <div class="all-clear">
+        <span class="badge">${icon("route")}</span>
+        <h3>Aucun plan pour le moment</h3>
+        <p>Demandez au Director « Qu'est-ce qui risque de bloquer cette semaine ? » : il établit un plan et le suit ici.</p>
+      </div>
+    `;
+    return;
+  }
+  plansList.innerHTML = [...active, ...plans.filter((plan) => plan.status !== "active")].map((plan) => `
+    <article class="plan-track ${plan.status}" data-plan-id="${escapeHtml(plan.id)}">
+      <header>
+        <div>
+          <span class="eyebrow">Plan n° ${escapeHtml(String(plan.number))} · créé le ${escapeHtml(formatIsoDay(plan.createdAt.slice(0, 10)))}</span>
+          <h3>${escapeHtml(plan.objective)}</h3>
+          ${plan.strategy ? `<p class="muted">${escapeHtml(plan.strategy)}</p>` : ""}
+        </div>
+        <span class="tag ${plan.status === "active" ? "info" : plan.status === "done" ? "ok" : ""}">${escapeHtml(PLAN_STATUS_LABELS[plan.status] ?? plan.status)}</span>
+      </header>
+      <div class="progress" title="${plan.progress.done}/${plan.progress.total} étapes">
+        <span style="width:${plan.progress.percent}%"></span>
+      </div>
+      <p class="progress-label">
+        ${plan.progress.done}/${plan.progress.total} étapes faites
+        ${plan.progress.overdue > 0 ? `· <span class="late">${plan.progress.overdue} en retard</span>` : ""}
+        ${plan.progress.blocked > 0 ? `· <span class="late">${plan.progress.blocked} bloquée(s)</span>` : ""}
+      </p>
+      <ul class="track-steps">
+        ${plan.steps.map((step) => `
+          <li class="${step.status}">
+            ${avatar(step.agent)}
+            <div>
+              <strong>${escapeHtml(step.task)}</strong>
+              <small>${escapeHtml(formatAgent(step.agent))}${step.dueDate ? ` · avant le <span class="${step.overdue ? "late" : ""}">${escapeHtml(formatIsoDay(step.dueDate))}</span>` : ""}</small>
+              ${step.result ? `<details><summary>Résultat</summary><p>${formatAgentText(step.result)}</p></details>` : ""}
+            </div>
+            <select data-step="${step.index}" aria-label="Statut de l'étape ${step.index}" ${plan.status !== "active" ? "disabled" : ""}>
+              ${Object.entries(STEP_STATUS_LABELS).map(([value, label]) => `<option value="${value}" ${value === step.status ? "selected" : ""}>${label}</option>`).join("")}
+            </select>
+          </li>
+        `).join("")}
+      </ul>
+      <details class="journal">
+        <summary>Journal du plan</summary>
+        <ul>${[...plan.journal].reverse().map((entry) => `<li><small>${escapeHtml(formatIsoDay(entry.at.slice(0, 10)))} ${escapeHtml(entry.at.slice(11, 16))}</small> ${escapeHtml(entry.text)}</li>`).join("")}</ul>
+      </details>
+      <div class="doc-actions">
+        ${plan.status === "active"
+          ? `<button type="button" class="secondary" data-close="terminer">${icon("check")}Terminer le plan</button><button type="button" class="danger" data-close="abandonner">${icon("x")}Abandonner</button>`
+          : `<button type="button" class="secondary" data-close="reouvrir">${icon("refresh")}Rouvrir</button>`}
+      </div>
+    </article>
+  `).join("");
+
+  plansList.querySelectorAll("[data-plan-id]").forEach((article) => {
+    const id = article.dataset.planId;
+    article.querySelectorAll("select[data-step]").forEach((select) => {
+      select.addEventListener("change", async () => {
+        await sendPlanChange(`/api/plans/${id}/steps/${select.dataset.step}`, "PATCH", { status: select.value });
+      });
+    });
+    article.querySelectorAll("[data-close]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await sendPlanChange(`/api/plans/${id}/close`, "POST", { action: button.dataset.close });
+      });
+    });
+  });
+}
+
+async function sendPlanChange(url, method, body) {
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: { "content-type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      throw new Error((await response.json()).error ?? "La mise à jour a échoué.");
+    }
+    showToast("Plan mis à jour.");
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshPlans();
 }
 
 // What the cross-checks between the trades found. Computed from the data,
@@ -1430,6 +1550,7 @@ function formatDh(value) {
 const COCKPIT_VIEWS = Object.freeze({
   director: "Briefing du jour",
   approvals: "Validations",
+  plans: "Plans d'action",
   documents: "Documents H-KIDS",
   quotes: "Préparation de devis",
   file: "Dossier commercial",
@@ -1438,6 +1559,9 @@ const COCKPIT_VIEWS = Object.freeze({
 
 function showView(name) {
   const view = Object.hasOwn(COCKPIT_VIEWS, name ?? "") ? name : "director";
+  if (view === "plans") {
+    refreshPlans();
+  }
   document.querySelector("#director-title").textContent = COCKPIT_VIEWS[view];
   document.querySelectorAll("[data-view-panel]").forEach((panel) => {
     panel.hidden = panel.dataset.viewPanel !== view;
@@ -1720,5 +1844,6 @@ currentTheme = applyTheme(readStoredTheme());
 renderGreeting();
 renderAgentRoster([]);
 await checkAgentStatus();
+refreshPlans();
 renderHistory();
 await refreshApprovals();

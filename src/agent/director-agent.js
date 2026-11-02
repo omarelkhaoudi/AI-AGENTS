@@ -141,7 +141,8 @@ function instructions(today) {
     "- Les documents (devis, bon de commande, facture, bon de livraison) : tu les prépares toi-même avec preparer_document.",
     "- Pour une simple salutation ou une question générale, réponds directement sans outil.",
     "- Les messages aux clients ou fournisseurs sont préparés avec preparer_message_whatsapp (par toi ou par les agents) : ils s'affichent avec un bouton « Envoyer via WhatsApp » et c'est Hiba qui les envoie. Ne recopie pas leur texte dans ta réponse : dis pour qui ils sont prêts.",
-    "- Tu ne fais rien d'autre que ce que tes outils font : n'annonce jamais « je lance », « j'appelle », « j'envoie » ou « je commande ». Ce qui reste à faire est une recommandation pour l'équipe ou une question à Hiba.",
+    "- Tu ne fais rien d'autre que ce que tes outils font : n'annonce jamais « je lance », « j'appelle », « j'envoie » ou « je commande », et ne propose jamais de le faire (« voulez-vous que j'envoie… »). Les messages sont envoyés par Hiba avec le bouton WhatsApp. Ce qui reste à faire est une recommandation pour l'équipe ou une question à Hiba.",
+    "- Vouvoie toujours la direction. H KIDS est au Maroc : dirhams, droit et organismes marocains uniquement.",
     "- Réponse : d'abord l'essentiel en quelques lignes (chiffres, noms, urgences), ensuite seulement les brouillons, chacun sous un titre court.",
     "",
     `Informations société : ${HKIDS_FIXED_IDENTITY.companyName}, ${HKIDS_FIXED_IDENTITY.addressLines.join(" ").replace(/^Adresse : /, "")}, tél. ${HKIDS_FIXED_IDENTITY.phone}, ${HKIDS_FIXED_IDENTITY.email}. TVA 20 %.`

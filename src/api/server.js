@@ -23,6 +23,7 @@ import {
 import { applyPublicationApprovalDecision, isPublicationApproval } from "../social/publication-service.js";
 import { ToolExecutionService, ToolExecutionServiceError } from "../tools/execution-service.js";
 import { createMvpToolRegistry } from "../tools/mvp-tools.js";
+import { CONSISTENCY_DOMAINS, checkConsistency } from "../agent/consistency.js";
 import { authenticatePrincipal, extractBearerToken } from "../security/authentication.js";
 import { assertCapability } from "../security/authorization.js";
 import { createSecurityConfig } from "../security/security-config.js";
@@ -123,11 +124,22 @@ export function buildApi({
       return { ok: false, erreur: error.message, code: error.code ?? null };
     }
   };
+  // The Director's cross-check reads the trades together from the same source
+  // the tools read, and reports only its findings.
+  const checkTeamCoherence = async () => {
+    const source = directoryMemory.getBusinessDataSource?.()?.recordSource;
+    const records = {};
+    for (const domain of CONSISTENCY_DOMAINS) {
+      records[domain] = await directoryMemory.listBusinessRecords({ domain, agentId: "director", ...(source ? { source } : {}) });
+    }
+    return checkConsistency(records);
+  };
   const agent = directorAgent ?? createDirectorAgentFromEnv({
     documentService: hkidsDocuments,
     runDirectorRequest,
     toolRegistry: teamToolRegistry,
     executeTool: executeTeamTool,
+    checkCoherence: checkTeamCoherence,
     client: agentClient
   });
   // Writes to the same directory as the document service, so both kinds of

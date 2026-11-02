@@ -35,6 +35,42 @@ const PAYMENT_RULES = Object.freeze({
   "50/50": "hkids-po-50-50"
 });
 
+const PLAN_TOOL = Object.freeze({
+  type: "function",
+  name: "etablir_plan_action",
+  description: "Présente à la direction le plan d'action AVANT de faire travailler l'équipe : l'objectif, les priorités et, pour chaque étape, l'agent et sa tâche. Le plan s'affiche dans le cockpit et son avancement est suivi.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      objectif: { type: "string", description: "Ce que la direction veut obtenir, en une phrase." },
+      strategie: { type: "string", description: "Comment l'atteindre, en une ou deux phrases." },
+      priorites: { type: "array", items: { type: "string" }, description: "Les priorités, de la plus urgente à la moins urgente (3 au plus)." },
+      etapes: {
+        type: "array",
+        minItems: 1,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            agent: { type: "string", enum: [...SPECIALIST_IDS, "director"] },
+            tache: { type: "string" }
+          },
+          required: ["agent", "tache"]
+        }
+      }
+    },
+    required: ["objectif", "strategie", "priorites", "etapes"]
+  }
+});
+
+const COHERENCE_TOOL = Object.freeze({
+  type: "function",
+  name: "verifier_coherence",
+  description: "Croise les données de tous les métiers (devis, commandes, atelier, paiements, achats) et renvoie les incohérences : production sans acompte, achat pour une commande livrée, commande sans devis accepté, livré mais impayé… À appeler pour tout point de situation, toute question d'urgences et après avoir fait travailler plusieurs agents.",
+  parameters: { type: "object", additionalProperties: false, properties: {} }
+});
+
 const TOOLS = Object.freeze([
   {
     type: "function",
@@ -104,6 +140,8 @@ const TOOLS = Object.freeze([
     }
   },
   WHATSAPP_MESSAGE_TOOL,
+  PLAN_TOOL,
+  COHERENCE_TOOL,
   {
     type: "function",
     name: "point_entreprise",
@@ -136,8 +174,10 @@ function instructions(today) {
     "- Le numéro du document est attribué automatiquement ; ne le demande que si l'outil dit qu'il est inconnu.",
     "- Après preparer_document : annonce le document (type, numéro, client, total TTC, échéances le cas échéant) en 2 ou 3 lignes, puis dis de vérifier l'aperçu et de cliquer « Valider et générer ». Ne prétends jamais qu'il est déjà envoyé au client.",
     "- Si l'outil renvoie des erreurs, explique simplement ce qui manque et demande-le.",
+    "- Méthode de travail OBLIGATOIRE pour toute question sur la situation, les urgences, les risques, les décisions, ou qui demande un ou plusieurs agents : 1) TOUJOURS commencer par etablir_plan_action (objectif, stratégie, priorités, étapes agent + tâche) ; 2) exécuter les étapes avec deleguer_a_un_agent (les étapes indépendantes en même temps) ou point_entreprise pour un point global ; 3) synthèse qui suit le plan, puis les incohérences signalées par l'outil, puis ce qui demande une décision. Seules exceptions : une salutation, ou un document à préparer.",
+    "- Signale toujours les incohérences renvoyées par verifier_coherence, avec les agents concernés et l'action proposée ; ne les invente jamais.",
     "- Tu diriges une équipe d'agents : Commercial, Finance, Production, Achats, RH, Marketing, Community Manager, SAV, Juridique. Pour une question ou une tâche métier (relances clients, encaissements, retards atelier, quoi commander, réclamations…), délègue avec deleguer_a_un_agent à l'agent concerné — à plusieurs en parallèle si besoin — puis fais la synthèse. Garde les brouillons qu'ils ont rédigés (messages, listes de commande) tels quels dans ta réponse.",
-    "- Pour le point complet de l'entreprise (« fais-moi le point », « la situation aujourd'hui »), appelle point_entreprise puis résume l'essentiel en 5 lignes maximum, les urgences d'abord.",
+    "- Pour le point complet de l'entreprise (« fais-moi le point », « la situation aujourd'hui »), après le plan, appelle point_entreprise puis résume l'essentiel en 5 lignes maximum, les urgences d'abord.",
     "- Les documents (devis, bon de commande, facture, bon de livraison) : tu les prépares toi-même avec preparer_document.",
     "- Pour une simple salutation ou une question générale, réponds directement sans outil.",
     "- Les messages aux clients ou fournisseurs sont préparés avec preparer_message_whatsapp (par toi ou par les agents) : ils s'affichent avec un bouton « Envoyer via WhatsApp » et c'est Hiba qui les envoie. Ne recopie pas leur texte dans ta réponse : dis pour qui ils sont prêts.",
@@ -158,12 +198,12 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
   const loadCatalogue = createCatalogueLoader(cataloguePath ? { path: cataloguePath } : {});
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -175,6 +215,7 @@ export function createDirectorAgent({
   loadCatalogue = async () => ({ available: false, catalogue: [] }),
   toolRegistry = null,
   executeTool = null,
+  checkCoherence = null,
   clock = () => new Date(),
   clientFactory = defaultClientFactory
 } = {}) {
@@ -201,7 +242,7 @@ export function createDirectorAgent({
       const items = conversations.get(id) ?? [];
       items.push({ role: "user", content: text });
 
-      const outcome = { documents: [], directorResponse: null, agentRuns: [], messages: [] };
+      const outcome = { documents: [], directorResponse: null, agentRuns: [], messages: [], plan: null, alerts: null };
       let reply = "";
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
         const response = await callModel(resolvedClient, {
@@ -224,7 +265,8 @@ export function createDirectorAgent({
             clock,
             userId,
             outcome,
-            team: { client: resolvedClient, model, toolRegistry, executeTool }
+            team: { client: resolvedClient, model, toolRegistry, executeTool },
+            checkCoherence
           })));
         calls.forEach((call, index) => {
           items.push({ type: "function_call_output", call_id: call.call_id, output: JSON.stringify(results[index]) });
@@ -238,7 +280,9 @@ export function createDirectorAgent({
         documents: Object.freeze(outcome.documents),
         directorResponse: outcome.directorResponse,
         agentRuns: Object.freeze(outcome.agentRuns),
-        messages: Object.freeze(outcome.messages)
+        messages: Object.freeze(outcome.messages),
+        plan: outcome.plan ? planWithProgress(outcome.plan, outcome.agentRuns) : null,
+        alerts: outcome.alerts
       });
     }
   });
@@ -299,14 +343,20 @@ async function runTool(call, context) {
     if (call.name === "chercher_catalogue") {
       return await lookUpCatalogue(args, context);
     }
+    if (call.name === PLAN_TOOL.name) {
+      return recordPlan(args, context.outcome);
+    }
+    if (call.name === COHERENCE_TOOL.name) {
+      return await runCoherence(context);
+    }
     if (call.name === WHATSAPP_MESSAGE_TOOL.name) {
       return recordMessage(args, "director", context.outcome);
     }
     if (call.name === "deleguer_a_un_agent") {
-      return await delegate(args, context);
+      return withCoherence(await delegate(args, context), context);
     }
     if (call.name === "point_entreprise") {
-      return await companyPoint(args, context);
+      return withCoherence(await companyPoint(args, context), context);
     }
     return { ok: false, erreur: `Outil inconnu : ${call.name}` };
   } catch (error) {
@@ -410,6 +460,63 @@ async function delegate(args, context) {
   });
   outcome.agentRuns.push(run);
   return { ok: true, agent: run.label, outils_utilises: run.tools, reponse: run.answer };
+}
+
+function recordPlan(args, outcome) {
+  const steps = (Array.isArray(args.etapes) ? args.etapes : [])
+    .filter((step) => text(step.tache) !== "")
+    .map((step) => ({ agent: SPECIALISTS[step.agent] || step.agent === "director" ? step.agent : "director", task: text(step.tache) }));
+  if (steps.length === 0) {
+    return { ok: false, erreur: "Un plan doit avoir au moins une étape." };
+  }
+  outcome.plan = {
+    objective: text(args.objectif),
+    strategy: text(args.strategie),
+    priorities: (Array.isArray(args.priorites) ? args.priorites : []).map(text).filter(Boolean).slice(0, 3),
+    steps
+  };
+  return { ok: true, statut: "Plan affiché à la direction. Exécute maintenant les étapes." };
+}
+
+// A step is done once the agent it names has answered; the Director's own
+// steps are done when the answer is given.
+function planWithProgress(plan, runs) {
+  const answered = new Set(runs.map((run) => run.agent));
+  return Object.freeze({
+    ...plan,
+    steps: Object.freeze(plan.steps.map((step) => Object.freeze({
+      ...step,
+      status: step.agent === "director" || answered.has(step.agent) ? "done" : "not_run"
+    })))
+  });
+}
+
+// The cross-checks run once per turn, as soon as the team is put to work, and
+// their findings travel with that tool's answer for the Director to report.
+async function withCoherence(result, context) {
+  if (!result.ok || context.outcome.alerts !== null || typeof context.checkCoherence !== "function") {
+    return result;
+  }
+  const coherence = await runCoherence(context);
+  return { ...result, verification_coherence: coherence };
+}
+
+async function runCoherence({ checkCoherence, outcome }) {
+  if (typeof checkCoherence !== "function") {
+    return { ok: false, erreur: "La vérification de cohérence n'est pas disponible." };
+  }
+  const findings = await checkCoherence();
+  outcome.alerts = findings;
+  return {
+    ok: true,
+    nombre: findings.length,
+    incoherences: findings.map((entry) => ({
+      gravite: entry.severity,
+      constat: entry.fact,
+      agents_concernes: entry.agents,
+      action_proposee: entry.action
+    }))
+  };
 }
 
 function recordMessage(args, agent, outcome) {

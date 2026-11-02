@@ -200,7 +200,7 @@ async function sendToAgent(message) {
     const response = await postJson("/api/agent/chat", { message: text, conversationId: agentState.conversationId });
     agentState.conversationId = response.conversationId;
     pending.remove?.();
-    appendBubble("agent", formatAgentText(response.reply), response.documents ?? [], response.agentRuns ?? [], response.messages ?? []);
+    appendBubble("agent", formatAgentText(response.reply), response.documents ?? [], response.agentRuns ?? [], response.messages ?? [], { plan: response.plan, alerts: response.alerts });
     uiState.textContent = "Réponse reçue.";
     if (response.directorResponse) {
       state.current = { ...response.directorResponse, receivedAt: Date.now() };
@@ -218,15 +218,17 @@ async function sendToAgent(message) {
   }
 }
 
-function appendBubble(kind, html, documents = [], runs = [], messages = []) {
+function appendBubble(kind, html, documents = [], runs = [], messages = [], { plan = null, alerts = null } = {}) {
   const bubble = document.createElement("div");
   bubble.className = `bubble ${kind}`;
   bubble.innerHTML = `
     ${kind.startsWith("agent") ? avatar("director") : ""}
     <div class="bubble-body">
+      ${plan ? planCard(plan) : ""}
       ${runs.length > 0 ? teamStrip(runs) : ""}
       <div class="bubble-text">${html}</div>
       ${documents.map((entry, index) => documentCard(entry, index)).join("")}
+      ${Array.isArray(alerts) ? alertsCard(alerts) : ""}
       ${messages.map((draft) => messageCard(draft)).join("")}
     </div>
   `;
@@ -240,6 +242,58 @@ function appendBubble(kind, html, documents = [], runs = [], messages = []) {
   });
   bubble.scrollIntoView?.({ behavior: "smooth", block: "end" });
   return bubble;
+}
+
+// The Director's action plan: what it set out to do, and how far it got.
+function planCard(plan) {
+  const done = plan.steps.filter((step) => step.status === "done").length;
+  return `
+    <article class="plan-card">
+      <header>
+        <span class="doc-icon">${icon("route")}</span>
+        <div>
+          <span class="eyebrow">Plan d'action</span>
+          <strong>${escapeHtml(plan.objective)}</strong>
+        </div>
+        <span class="tag ${done === plan.steps.length ? "ok" : "warning"}">${done}/${plan.steps.length} étapes</span>
+      </header>
+      ${plan.strategy ? `<p class="plan-strategy"><b>Stratégie :</b> ${escapeHtml(plan.strategy)}</p>` : ""}
+      ${plan.priorities.length > 0 ? `<ol class="plan-priorities">${plan.priorities.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ol>` : ""}
+      <ul class="plan-steps">
+        ${plan.steps.map((step) => `
+          <li class="${step.status === "done" ? "done" : ""}">
+            ${avatar(step.agent)}
+            <span>${escapeHtml(step.task)}</span>
+            <span class="step-status ${step.status === "done" ? "done" : "wait"}">${icon(step.status === "done" ? "check" : "clock")}</span>
+          </li>
+        `).join("")}
+      </ul>
+    </article>
+  `;
+}
+
+// What the cross-checks between the trades found. Computed from the data,
+// never written by the model.
+function alertsCard(alerts) {
+  if (alerts.length === 0) {
+    return `<article class="alerts-card ok"><header>${icon("check-circle")}<strong>Aucune incohérence entre les métiers</strong></header></article>`;
+  }
+  return `
+    <article class="alerts-card">
+      <header>${icon("alert")}<strong>${escapeHtml(String(alerts.length))} incohérence(s) détectée(s) entre les métiers</strong></header>
+      <ul>
+        ${alerts.map((alert) => `
+          <li class="${alert.severity === "high" ? "high" : ""}">
+            <p>${escapeHtml(alert.fact)}</p>
+            <div class="alert-meta">
+              ${alert.agents.map((agent) => avatar(agent)).join("")}
+              <span>${escapeHtml(alert.action)}</span>
+            </div>
+          </li>
+        `).join("")}
+      </ul>
+    </article>
+  `;
 }
 
 const MESSAGE_KIND_LABELS = Object.freeze({

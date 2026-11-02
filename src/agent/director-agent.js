@@ -4,6 +4,7 @@ import { HKIDS_DOCUMENT_TYPES } from "../documents/document-schema.js";
 import { DocumentValidationError } from "../documents/document-validation.js";
 import { HKIDS_FIXED_IDENTITY } from "../documents/hkids-template.js";
 import { createCatalogueLoader, searchCatalogue } from "./catalogue.js";
+import { SPECIALISTS, SPECIALIST_IDS, runSpecialist } from "./agent-team.js";
 
 // The Director as a conversational agent. Hiba writes the way she would to an
 // assistant — "fais-moi un devis pour Meriem, un lit nuage à 3000 DH" — and a
@@ -85,6 +86,24 @@ const TOOLS = Object.freeze([
   },
   {
     type: "function",
+    name: "deleguer_a_un_agent",
+    description: "Confie une mission à un agent spécialisé de l'équipe, qui lit ses propres données, travaille et répond (analyse, recommandations, brouillons de messages ou de commandes). Appelle plusieurs agents en même temps quand la demande touche plusieurs métiers.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        agent: {
+          type: "string",
+          enum: SPECIALIST_IDS,
+          description: SPECIALIST_IDS.map((id) => `${id} = ${SPECIALISTS[id].label} (${SPECIALISTS[id].mission})`).join(" ; ")
+        },
+        mission: { type: "string", description: "Ce que l'agent doit faire, précis et complet (il ne voit pas la conversation)." }
+      },
+      required: ["agent", "mission"]
+    }
+  },
+  {
+    type: "function",
     name: "point_entreprise",
     description: "Interroge l'équipe d'agents (commercial, finance, production, achats, RH, marketing, SAV, juridique) et renvoie la situation : ce qui va bien, retards, encaissements, achats, risques, décisions. À utiliser pour toute question sur l'état de l'entreprise.",
     parameters: {
@@ -115,8 +134,12 @@ function instructions(today) {
     "- Le numéro du document est attribué automatiquement ; ne le demande que si l'outil dit qu'il est inconnu.",
     "- Après preparer_document : annonce le document (type, numéro, client, total TTC, échéances le cas échéant) en 2 ou 3 lignes, puis dis de vérifier l'aperçu et de cliquer « Valider et générer ». Ne prétends jamais qu'il est déjà envoyé au client.",
     "- Si l'outil renvoie des erreurs, explique simplement ce qui manque et demande-le.",
-    "- Pour toute question sur la situation de l'entreprise (point du jour, urgences, encaissements, retards, achats, relances…), appelle point_entreprise puis résume l'essentiel en 5 lignes maximum, les urgences d'abord.",
+    "- Tu diriges une équipe d'agents : Commercial, Finance, Production, Achats, RH, Marketing, Community Manager, SAV, Juridique. Pour une question ou une tâche métier (relances clients, encaissements, retards atelier, quoi commander, réclamations…), délègue avec deleguer_a_un_agent à l'agent concerné — à plusieurs en parallèle si besoin — puis fais la synthèse. Garde les brouillons qu'ils ont rédigés (messages, listes de commande) tels quels dans ta réponse.",
+    "- Pour le point complet de l'entreprise (« fais-moi le point », « la situation aujourd'hui »), appelle point_entreprise puis résume l'essentiel en 5 lignes maximum, les urgences d'abord.",
+    "- Les documents (devis, bon de commande, facture, bon de livraison) : tu les prépares toi-même avec preparer_document.",
     "- Pour une simple salutation ou une question générale, réponds directement sans outil.",
+    "- Tu ne fais rien d'autre que ce que tes outils font : n'annonce jamais « je lance », « j'appelle », « j'envoie » ou « je commande ». Ce qui reste à faire est une recommandation pour l'équipe ou une question à Hiba.",
+    "- Réponse : d'abord l'essentiel en quelques lignes (chiffres, noms, urgences), ensuite seulement les brouillons, chacun sous un titre court.",
     "",
     `Informations société : ${HKIDS_FIXED_IDENTITY.companyName}, ${HKIDS_FIXED_IDENTITY.addressLines.join(" ").replace(/^Adresse : /, "")}, tél. ${HKIDS_FIXED_IDENTITY.phone}, ${HKIDS_FIXED_IDENTITY.email}. TVA 20 %.`
   ].join("\n");
@@ -131,12 +154,12 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
   const loadCatalogue = createCatalogueLoader(cataloguePath ? { path: cataloguePath } : {});
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -146,6 +169,8 @@ export function createDirectorAgent({
   documentService,
   runDirectorRequest,
   loadCatalogue = async () => ({ available: false, catalogue: [] }),
+  toolRegistry = null,
+  executeTool = null,
   clock = () => new Date(),
   clientFactory = defaultClientFactory
 } = {}) {
@@ -172,7 +197,7 @@ export function createDirectorAgent({
       const items = conversations.get(id) ?? [];
       items.push({ role: "user", content: text });
 
-      const outcome = { documents: [], directorResponse: null };
+      const outcome = { documents: [], directorResponse: null, agentRuns: [] };
       let reply = "";
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
         const response = await callModel(resolvedClient, {
@@ -188,10 +213,18 @@ export function createDirectorAgent({
           reply = outputText(response);
           break;
         }
-        for (const call of calls) {
-          const result = await runTool(call, { documentService, runDirectorRequest, loadCatalogue, clock, userId, outcome });
-          items.push({ type: "function_call_output", call_id: call.call_id, output: JSON.stringify(result) });
-        }
+        const results = await Promise.all(calls.map((call) => runTool(call, {
+            documentService,
+            runDirectorRequest,
+            loadCatalogue,
+            clock,
+            userId,
+            outcome,
+            team: { client: resolvedClient, model, toolRegistry, executeTool }
+          })));
+        calls.forEach((call, index) => {
+          items.push({ type: "function_call_output", call_id: call.call_id, output: JSON.stringify(results[index]) });
+        });
       }
 
       conversations.set(id, items.slice(-MAX_CONVERSATION_ITEMS));
@@ -199,7 +232,8 @@ export function createDirectorAgent({
         conversationId: id,
         reply: reply || "Je n'ai pas pu formuler de réponse. Pouvez-vous reformuler ?",
         documents: Object.freeze(outcome.documents),
-        directorResponse: outcome.directorResponse
+        directorResponse: outcome.directorResponse,
+        agentRuns: Object.freeze(outcome.agentRuns)
       });
     }
   });
@@ -210,9 +244,19 @@ async function defaultClientFactory({ apiKey }) {
   return new OpenAI({ apiKey });
 }
 
+// GPT-5 and the o-series reason before answering; on these tasks a long
+// reasoning only makes Hiba wait. OPENAI_REASONING_EFFORT overrides the level.
+const REASONING_EFFORT = ["minimal", "low", "medium", "high"].includes(process.env.OPENAI_REASONING_EFFORT)
+  ? process.env.OPENAI_REASONING_EFFORT
+  : "low";
+
+function withReasoning(payload) {
+  return /^(gpt-5|o\d)/.test(String(payload.model)) ? { ...payload, reasoning: { effort: REASONING_EFFORT } } : payload;
+}
+
 async function callModel(client, payload) {
   try {
-    return await client.responses.create(payload);
+    return await client.responses.create(withReasoning(payload));
   } catch (cause) {
     const status = cause?.status ?? null;
     const message = status === 401
@@ -249,6 +293,9 @@ async function runTool(call, context) {
     }
     if (call.name === "chercher_catalogue") {
       return await lookUpCatalogue(args, context);
+    }
+    if (call.name === "deleguer_a_un_agent") {
+      return await delegate(args, context);
     }
     if (call.name === "point_entreprise") {
       return await companyPoint(args, context);
@@ -331,6 +378,29 @@ async function prepareDocument(args, { documentService, clock, outcome }) {
     conditions: document.payment?.terms ?? null,
     statut: "Aperçu prêt : l'utilisatrice doit cliquer « Valider et générer » dans le cockpit."
   };
+}
+
+async function delegate(args, context) {
+  const { team, clock, outcome } = context;
+  if (!SPECIALISTS[args.agent]) {
+    return { ok: false, erreur: "Agent inconnu." };
+  }
+  if (!team.toolRegistry || typeof team.executeTool !== "function") {
+    return { ok: false, erreur: "L'équipe d'agents n'est pas disponible." };
+  }
+  const run = await runSpecialist({
+    agentId: args.agent,
+    mission: text(args.mission),
+    callModel: (payload) => callModel(team.client, payload),
+    model: team.model,
+    today: formatDate(clock()),
+    toolRegistry: team.toolRegistry,
+    executeTool: team.executeTool,
+    prepareDocumentTool: TOOLS[0],
+    prepareDocument: (documentArgs) => prepareDocument(documentArgs, context)
+  });
+  outcome.agentRuns.push(run);
+  return { ok: true, agent: run.label, outils_utilises: run.tools, reponse: run.answer };
 }
 
 async function lookUpCatalogue(args, { loadCatalogue }) {

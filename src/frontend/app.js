@@ -200,7 +200,7 @@ async function sendToAgent(message) {
     const response = await postJson("/api/agent/chat", { message: text, conversationId: agentState.conversationId });
     agentState.conversationId = response.conversationId;
     pending.remove?.();
-    appendBubble("agent", formatAgentText(response.reply), response.documents ?? []);
+    appendBubble("agent", formatAgentText(response.reply), response.documents ?? [], response.agentRuns ?? []);
     uiState.textContent = "Réponse reçue.";
     if (response.directorResponse) {
       state.current = { ...response.directorResponse, receivedAt: Date.now() };
@@ -218,12 +218,13 @@ async function sendToAgent(message) {
   }
 }
 
-function appendBubble(kind, html, documents = []) {
+function appendBubble(kind, html, documents = [], runs = []) {
   const bubble = document.createElement("div");
   bubble.className = `bubble ${kind}`;
   bubble.innerHTML = `
     ${kind.startsWith("agent") ? avatar("director") : ""}
     <div class="bubble-body">
+      ${runs.length > 0 ? teamStrip(runs) : ""}
       <div class="bubble-text">${html}</div>
       ${documents.map((entry, index) => documentCard(entry, index)).join("")}
     </div>
@@ -235,6 +236,23 @@ function appendBubble(kind, html, documents = []) {
   });
   bubble.scrollIntoView?.({ behavior: "smooth", block: "end" });
   return bubble;
+}
+
+// Which agents worked on the answer, what they read, and what each one said.
+function teamStrip(runs) {
+  return `
+    <div class="team-strip">
+      ${runs.map((run) => `
+        <details class="team-run">
+          <summary>
+            ${avatar(run.agent)}
+            <span><strong>${escapeHtml(formatAgent(run.agent))}</strong><small>${escapeHtml(run.tools.length > 0 ? `a lu : ${run.tools.join(", ")}` : "a répondu")}</small></span>
+          </summary>
+          <div class="team-answer">${formatAgentText(run.answer)}</div>
+        </details>
+      `).join("")}
+    </div>
+  `;
 }
 
 // The model may answer with **bold** and line breaks; nothing else is rendered.

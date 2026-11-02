@@ -1995,6 +1995,61 @@ legend {
   display: none;
 }
 
+.team-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.team-run {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.team-run summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.team-run summary::-webkit-details-marker {
+  display: none;
+}
+
+.team-run summary span {
+  display: flex;
+  flex-direction: column;
+}
+
+.team-run summary small {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.team-run summary::after {
+  content: "Voir sa réponse";
+  margin-left: auto;
+  color: var(--brand);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.team-run[open] summary::after {
+  content: "Masquer";
+}
+
+.team-answer {
+  padding: 4px 14px 12px 52px;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
 /* ================= Responsive ================= */
 
 @media (max-width: 1180px) {

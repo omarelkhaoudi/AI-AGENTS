@@ -22,6 +22,7 @@ import {
 } from "../security/approval-flow.js";
 import { applyPublicationApprovalDecision, isPublicationApproval } from "../social/publication-service.js";
 import { ToolExecutionService, ToolExecutionServiceError } from "../tools/execution-service.js";
+import { createMvpToolRegistry } from "../tools/mvp-tools.js";
 import { authenticatePrincipal, extractBearerToken } from "../security/authentication.js";
 import { assertCapability } from "../security/authorization.js";
 import { createSecurityConfig } from "../security/security-config.js";
@@ -55,6 +56,9 @@ export function buildApi({
   businessMemory = null,
   documentService = null,
   directorAgent = null,
+  // A stand-in for the OpenAI client, for tests: the agent is then built by
+  // the server itself, with the real team tools behind it.
+  agentClient = null,
   documentOutputDir = null,
   // A seam, not a feature: the derived idempotency key names a day, and a test
   // cannot cross a day boundary by waiting for one.
@@ -84,7 +88,48 @@ export function buildApi({
     });
     return createDirectorDemoResponse(orchestratedRequest, await createBusinessDirectory(directoryMemory));
   };
-  const agent = directorAgent ?? createDirectorAgentFromEnv({ documentService: hkidsDocuments, runDirectorRequest });
+  // The specialised agents read through the same tools, permissions and audit
+  // as the planner. A tool call by an agent is recorded under a request of its
+  // own, so the trail says which agent read what, and when.
+  const teamToolRegistry = toolRegistry ?? createMvpToolRegistry({ repository, businessMemory: directoryMemory });
+  const teamExecutionService = new ToolExecutionService({ repository, toolRegistry: teamToolRegistry });
+  const executeTeamTool = async (agentId, toolId) => {
+    try {
+      if (seedAgents) {
+        await runSeedOnce({
+          repository,
+          getSeedPromise: () => seedPromise,
+          setSeedPromise: (promise) => {
+            seedPromise = promise;
+          }
+        });
+      }
+      const agentRecord = await repository.getAgent(agentId);
+      const request = await repository.createRequest({
+        title: `Mission ${agentId} : ${toolId}`,
+        source: "agent_team",
+        payload: { agentId, toolId }
+      });
+      const execution = await teamExecutionService.execute({
+        agentId,
+        agentPermissions: agentRecord?.permissions ?? [],
+        toolId,
+        input: { requestId: request.id },
+        requestId: request.id,
+        metadata: { source: "agent_team" }
+      });
+      return { ok: true, donnees: execution.output?.result ?? null };
+    } catch (error) {
+      return { ok: false, erreur: error.message, code: error.code ?? null };
+    }
+  };
+  const agent = directorAgent ?? createDirectorAgentFromEnv({
+    documentService: hkidsDocuments,
+    runDirectorRequest,
+    toolRegistry: teamToolRegistry,
+    executeTool: executeTeamTool,
+    client: agentClient
+  });
   // Writes to the same directory as the document service, so both kinds of
   // produced file land where the generated documents already live.
   const commercialFiles = createCommercialFileService({ repository, outputDir: documentOutputDir });

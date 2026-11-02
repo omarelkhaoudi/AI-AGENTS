@@ -101,6 +101,36 @@ export class HkidsDocumentService {
     return nextPurchaseOrderNumber(await this.#generatedPurchaseOrderNumbers());
   }
 
+  // The next free number of any type, read from the documents already issued:
+  // the ones issued by hand before the generator existed, and every file this
+  // service wrote. Null when nothing is known for the type, so the caller asks
+  // instead of starting a series at an invented number.
+  async nextDocumentNumber(documentType) {
+    if (documentType === HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER) {
+      return this.nextPurchaseOrderNumber();
+    }
+    const prefix = FILE_PREFIXES[documentType];
+    if (!prefix) {
+      return null;
+    }
+    const used = (await this.#outputNames())
+      .map((name) => Number(new RegExp(`^${prefix}_HKIDS_(\d+)_`).exec(name)?.[1]))
+      .filter((number) => Number.isInteger(number) && number > 0);
+    const highest = Math.max(ISSUED_BY_HAND[documentType] ?? 0, ...used, 0);
+    return highest > 0 ? String(highest + 1) : null;
+  }
+
+  async #outputNames() {
+    try {
+      return await readdir(this.outputDir);
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
+      return [];
+    }
+  }
+
   // Generated orders are read back from the output directory, which survives a
   // restart, so a number handed out once is never handed out again.
   async #generatedPurchaseOrderNumbers() {
@@ -189,10 +219,21 @@ async function templateFor(documentType) {
 
 const PURCHASE_ORDER_FILE_PREFIX = "bon_commande";
 
+const FILE_PREFIXES = Object.freeze({
+  [HKIDS_DOCUMENT_TYPES.QUOTE]: "devis",
+  [HKIDS_DOCUMENT_TYPES.INVOICE]: "facture",
+  [HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE]: "bon_livraison",
+  [HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER]: PURCHASE_ORDER_FILE_PREFIX
+});
+
+// The highest number issued by hand before the generator, per series. Quotes
+// 160 to 163 were written by hand; the purchase orders have their own register.
+const ISSUED_BY_HAND = Object.freeze({
+  [HKIDS_DOCUMENT_TYPES.QUOTE]: 163
+});
+
 function safeFileStem(document) {
-  const prefix = document.documentType === "invoice"
-    ? "facture"
-    : document.documentType === HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER ? PURCHASE_ORDER_FILE_PREFIX : "bon_livraison";
+  const prefix = FILE_PREFIXES[document.documentType] ?? "document";
   return `${prefix}_HKIDS_${document.documentNumber}_${document.date}`.replace(/[^a-zA-Z0-9_-]+/g, "_");
 }
 

@@ -97,14 +97,14 @@ voicePlaceholder.dataset.externalConnectionsEnabled = String(VOICE_INTERFACE.ext
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  await submitDirectorRequest(messageInput.value);
+  await askDirector(messageInput.value);
 });
 
 // Ctrl+Enter (Cmd+Enter on a Mac) sends from the composer.
 messageInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
     event.preventDefault();
-    submitDirectorRequest(messageInput.value);
+    askDirector(messageInput.value);
   }
 });
 
@@ -113,7 +113,7 @@ document.querySelectorAll("[data-scenario]").forEach((button) => {
   button.addEventListener("click", () => {
     messageInput.value = button.dataset.scenario;
     messageInput.focus();
-    submitDirectorRequest(messageInput.value);
+    askDirector(messageInput.value);
   });
 });
 
@@ -146,6 +146,167 @@ async function resolveApiToken() {
 
 async function authHeaders() {
   return { authorization: `Bearer ${await resolveApiToken()}` };
+}
+
+// The Director answers as a conversational agent when the server has one
+// configured; otherwise the cockpit keeps the keyword Director it always had.
+const agentState = { enabled: false, conversationId: null, busy: false };
+const agentPanel = document.querySelector("#agent-panel");
+const agentThread = document.querySelector("#agent-thread");
+
+const DOCUMENT_LABELS = Object.freeze({
+  quote: "Devis",
+  purchase_order: "Bon de commande",
+  invoice: "Facture",
+  delivery_note: "Bon de livraison"
+});
+
+async function askDirector(message) {
+  if (agentState.enabled) {
+    await sendToAgent(message);
+    return;
+  }
+  await submitDirectorRequest(message);
+}
+
+async function checkAgentStatus() {
+  try {
+    const response = await fetch("/api/agent/status", { headers: await authHeaders() });
+    agentState.enabled = response.ok && (await response.json()).configured === true;
+  } catch {
+    agentState.enabled = false;
+  }
+  if (agentState.enabled) {
+    messageInput.value = "";
+    messageInput.placeholder = "Ex. : Fais-moi un devis pour Meriem, un lit nuage à 3000 DH";
+    uiState.textContent = "Director IA connecté. Écrivez votre demande comme à un assistant.";
+  }
+}
+
+async function sendToAgent(message) {
+  const text = message.trim();
+  if (!text || agentState.busy) {
+    return;
+  }
+  agentState.busy = true;
+  agentPanel.hidden = false;
+  appendBubble("user", escapeHtml(text));
+  messageInput.value = "";
+  const pending = appendBubble("agent pending", '<span class="typing"><i></i><i></i><i></i></span>');
+  sendButton.disabled = true;
+  sendButton.className = "primary send-button is-loading";
+  uiState.textContent = "Le Director réfléchit…";
+  try {
+    const response = await postJson("/api/agent/chat", { message: text, conversationId: agentState.conversationId });
+    agentState.conversationId = response.conversationId;
+    pending.remove?.();
+    appendBubble("agent", formatAgentText(response.reply), response.documents ?? []);
+    uiState.textContent = "Réponse reçue.";
+    if (response.directorResponse) {
+      state.current = { ...response.directorResponse, receivedAt: Date.now() };
+      state.history = [state.current, ...state.history].slice(0, 8);
+      renderCurrent(state.current);
+    }
+  } catch (error) {
+    pending.remove?.();
+    appendBubble("agent error", escapeHtml(error.message));
+    uiState.textContent = error.message;
+  } finally {
+    agentState.busy = false;
+    sendButton.disabled = false;
+    sendButton.className = "primary send-button";
+  }
+}
+
+function appendBubble(kind, html, documents = []) {
+  const bubble = document.createElement("div");
+  bubble.className = `bubble ${kind}`;
+  bubble.innerHTML = `
+    ${kind.startsWith("agent") ? avatar("director") : ""}
+    <div class="bubble-body">
+      <div class="bubble-text">${html}</div>
+      ${documents.map((entry, index) => documentCard(entry, index)).join("")}
+    </div>
+  `;
+  agentThread.appendChild(bubble);
+  bubble.querySelectorAll("[data-validate]").forEach((button) => {
+    const entry = documents[Number(button.dataset.validate)];
+    button.addEventListener("click", () => validateAgentDocument(entry, button));
+  });
+  bubble.scrollIntoView?.({ behavior: "smooth", block: "end" });
+  return bubble;
+}
+
+// The model may answer with **bold** and line breaks; nothing else is rendered.
+function formatAgentText(reply) {
+  return escapeHtml(reply)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\n/g, "<br>");
+}
+
+function documentCard(entry, index) {
+  const preview = entry.preview.document;
+  const instalments = preview.payment?.instalments ?? [];
+  return `
+    <article class="doc-card">
+      <header>
+        <span class="doc-icon">${icon("file")}</span>
+        <div>
+          <strong>${escapeHtml(DOCUMENT_LABELS[preview.documentType] ?? preview.documentType)} n° ${escapeHtml(preview.documentNumber)}</strong>
+          <span>${escapeHtml(preview.client.name)} · ${escapeHtml(preview.client.address)} · ${escapeHtml(preview.date)}</span>
+        </div>
+        <span class="tag warning doc-status">À valider</span>
+      </header>
+      <table class="document-table">
+        <thead><tr><th>Désignation</th><th>Qté</th><th>Montant HT</th></tr></thead>
+        <tbody>${preview.items.map((item) => `<tr><td>${escapeHtml(item.designation)}</td><td>${escapeHtml(String(item.quantity))}</td><td>${escapeHtml(formatDh(item.netAmountHt ?? item.amountHt))}</td></tr>`).join("")}</tbody>
+      </table>
+      <ul class="doc-totals">
+        <li><span>Total HT</span><strong>${escapeHtml(formatDh(preview.totals.totalHt))}</strong></li>
+        <li><span>TVA 20 %</span><strong>${escapeHtml(formatDh(preview.totals.tva))}</strong></li>
+        <li class="grand"><span>Total TTC</span><strong>${escapeHtml(formatDh(preview.totals.totalTtc))}</strong></li>
+      </ul>
+      ${instalments.length > 0
+        ? `<p class="muted">${instalments.map((part) => `${escapeHtml(String(part.percent))} % ${escapeHtml(part.due)} : ${escapeHtml(formatDh(part.amount))}`).join(" · ")}</p>`
+        : preview.payment?.terms ? `<p class="muted">${escapeHtml(preview.payment.terms)}</p>` : ""}
+      <div class="doc-actions">
+        <button type="button" class="primary" data-validate="${index}">${icon("check")}Valider et générer</button>
+        <span class="muted">Pour corriger, dites-le simplement au Director.</span>
+      </div>
+      <div class="doc-files"></div>
+    </article>
+  `;
+}
+
+// Generation is the same confirmed step as in the documents panel: the preview
+// token the agent obtained, and her explicit confirmation.
+async function validateAgentDocument(entry, button) {
+  const card = button.closest(".doc-card");
+  const files = card.querySelector(".doc-files");
+  const status = card.querySelector(".doc-status");
+  button.disabled = true;
+  button.textContent = "Génération…";
+  try {
+    const payload = await postJson("/api/documents/generate", {
+      ...entry.input,
+      previewToken: entry.preview.previewToken,
+      userConfirmation: true
+    });
+    status.className = "tag ok doc-status";
+    status.textContent = "Généré";
+    button.remove();
+    files.innerHTML = ["pdf", "docx"].map((format) => `
+      <button type="button" class="secondary" data-download-url="${escapeHtml(payload.files[format].downloadUrl)}" data-download-name="${escapeHtml(payload.files[format].name)}">${icon("file")}${format === "pdf" ? "Télécharger le PDF" : "Télécharger le Word"}</button>
+    `).join("");
+    files.querySelectorAll("[data-download-url]").forEach((link) => {
+      link.addEventListener("click", () => downloadGeneratedDocument(link.dataset.downloadUrl, link.dataset.downloadName).catch((error) => showToast(error.message, "warn")));
+    });
+    showToast(`${DOCUMENT_LABELS[entry.input.documentType] ?? "Document"} n° ${entry.input.documentNumber} généré.`);
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = "Valider et générer";
+    files.innerHTML = `<p class="muted">${escapeHtml(error.message)}</p>`;
+  }
 }
 
 async function submitDirectorRequest(message) {
@@ -1422,5 +1583,6 @@ showView(globalThis.location?.hash?.slice(1));
 currentTheme = applyTheme(readStoredTheme());
 renderGreeting();
 renderAgentRoster([]);
+await checkAgentStatus();
 renderHistory();
 await refreshApprovals();

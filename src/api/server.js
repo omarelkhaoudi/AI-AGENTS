@@ -1,3 +1,4 @@
+import { DirectorAgentError, createDirectorAgentFromEnv } from "../agent/director-agent.js";
 import Fastify from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import { readFile } from "node:fs/promises";
@@ -53,6 +54,7 @@ export function buildApi({
   security = null,
   businessMemory = null,
   documentService = null,
+  directorAgent = null,
   documentOutputDir = null,
   // A seam, not a feature: the derived idempotency key names a day, and a test
   // cannot cross a day boundary by waiting for one.
@@ -66,6 +68,23 @@ export function buildApi({
   const directoryMemory = businessMemory ?? createBusinessMemoryRepository();
   const securityConfig = security ?? foundationConfig.security ?? createSecurityConfig();
   const hkidsDocuments = documentService ?? new HkidsDocumentService({ repository, outputDir: documentOutputDir });
+  // The conversational Director. Its "point entreprise" tool runs the same
+  // orchestration as POST /api/director/requests, so both answer alike.
+  const runDirectorRequest = async ({ message, userId }) => {
+    const orchestratedRequest = await createAndOrchestrateRequest({
+      request: { message, createdById: userId, source: "director_agent" },
+      repository,
+      planner: selectedPlanner,
+      toolRegistry,
+      seedAgents,
+      getSeedPromise: () => seedPromise,
+      setSeedPromise: (promise) => {
+        seedPromise = promise;
+      }
+    });
+    return createDirectorDemoResponse(orchestratedRequest, await createBusinessDirectory(directoryMemory));
+  };
+  const agent = directorAgent ?? createDirectorAgentFromEnv({ documentService: hkidsDocuments, runDirectorRequest });
   // Writes to the same directory as the document service, so both kinds of
   // produced file land where the generated documents already live.
   const commercialFiles = createCommercialFileService({ repository, outputDir: documentOutputDir });
@@ -352,6 +371,27 @@ export function buildApi({
         return reply.code(201).send(createDirectorDemoResponse(orchestratedRequest, directory));
       } catch (error) {
         return sendDomainError(reply, "Director request failed.", error);
+      }
+    });
+
+    app.get("/api/agent/status", readRouteOptions(), async () => ({
+      configured: agent.isConfigured(),
+      model: agent.model
+    }));
+
+    app.post("/api/agent/chat", writeRouteOptions(), async (request, reply) => {
+      try {
+        return reply.code(200).send(await agent.chat({
+          message: request.body?.message,
+          conversationId: typeof request.body?.conversationId === "string" ? request.body.conversationId : null,
+          userId: request.principal.userId
+        }));
+      } catch (error) {
+        if (error instanceof DirectorAgentError) {
+          const statusCode = error.code === "AGENT_MESSAGE_EMPTY" ? 400 : 503;
+          return reply.code(statusCode).send({ error: error.message, details: { code: error.code, ...error.details } });
+        }
+        return sendDomainError(reply, "Director agent failed.", error);
       }
     });
 

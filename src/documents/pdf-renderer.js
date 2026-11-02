@@ -10,7 +10,7 @@ import {
   documentTitleFor,
   invoiceUpstreamReference
 } from "./hkids-template.js";
-import { parseReferenceImage } from "./purchase-order.js";
+import { computeInstalments, parseReferenceImage, purchaseOrderPaymentPlan } from "./purchase-order.js";
 
 // pdf-lib embeds a real font file, so rendering needs a .ttf that exists on the
 // machine doing the rendering. The two variables below are the way to name one.
@@ -429,7 +429,7 @@ function drawSpecifications(w, document) {
 // An order states its plan as instalments with their amounts; the other types
 // state the terms as written, as before.
 function drawPaymentTerms(w, document) {
-  const instalments = document.payment.instalments ?? [];
+  const instalments = document.payment.instalments ?? quoteInstalments(document);
   const termLines = instalments.length > 0
     ? instalments.map((instalment) => `${instalment.percent} % ${instalment.due} : ${formatMoney(instalment.amount)}.`)
     : document.payment.terms ? w.wrap(document.payment.terms, R - L, 9) : [];
@@ -455,11 +455,23 @@ function drawPaymentTerms(w, document) {
   }
 }
 
+// A quote states what each instalment of its plan will be, as the quotes H-KIDS
+// sent by hand did; the figures come from the same plan and the same rounding as
+// a purchase order's.
+function quoteInstalments(document) {
+  if (document.documentType !== HKIDS_DOCUMENT_TYPES.QUOTE) {
+    return [];
+  }
+  const plan = purchaseOrderPaymentPlan(document.payment?.termsRule);
+  return plan ? computeInstalments(plan, document.totals.totalTtc) : [];
+}
+
 // What closes the document depends on what it is for: the client agrees to an
 // order, receives a delivery, and settles an invoice, which needs no signature.
 function drawClosing(w, document) {
   const block = {
     [HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER]: { title: "BON POUR ACCORD", left: "Pour H KIDS", right: "Le client", leftSign: "Signature / Cachet :", rightSign: "Signature :" },
+    [HKIDS_DOCUMENT_TYPES.QUOTE]: { title: "BON POUR ACCORD", left: "Pour H KIDS", right: "Le client", leftSign: "Signature / Cachet :", rightSign: "Date et signature :" },
     [HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE]: { title: "RÉCEPTION DE LA LIVRAISON", left: "Livré par H KIDS", right: "Reçu par le client", leftSign: "Signature / Cachet :", rightSign: "Date et signature :" }
   }[document.documentType];
 

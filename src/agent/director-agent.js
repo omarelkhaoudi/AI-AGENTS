@@ -5,6 +5,7 @@ import { DocumentValidationError } from "../documents/document-validation.js";
 import { HKIDS_FIXED_IDENTITY } from "../documents/hkids-template.js";
 import { createCatalogueLoader, searchCatalogue } from "./catalogue.js";
 import { SPECIALISTS, SPECIALIST_IDS, runSpecialist } from "./agent-team.js";
+import { WHATSAPP_MESSAGE_TOOL, draftWhatsAppMessage } from "./whatsapp.js";
 
 // The Director as a conversational agent. Hiba writes the way she would to an
 // assistant — "fais-moi un devis pour Meriem, un lit nuage à 3000 DH" — and a
@@ -102,6 +103,7 @@ const TOOLS = Object.freeze([
       required: ["agent", "mission"]
     }
   },
+  WHATSAPP_MESSAGE_TOOL,
   {
     type: "function",
     name: "point_entreprise",
@@ -138,6 +140,7 @@ function instructions(today) {
     "- Pour le point complet de l'entreprise (« fais-moi le point », « la situation aujourd'hui »), appelle point_entreprise puis résume l'essentiel en 5 lignes maximum, les urgences d'abord.",
     "- Les documents (devis, bon de commande, facture, bon de livraison) : tu les prépares toi-même avec preparer_document.",
     "- Pour une simple salutation ou une question générale, réponds directement sans outil.",
+    "- Les messages aux clients ou fournisseurs sont préparés avec preparer_message_whatsapp (par toi ou par les agents) : ils s'affichent avec un bouton « Envoyer via WhatsApp » et c'est Hiba qui les envoie. Ne recopie pas leur texte dans ta réponse : dis pour qui ils sont prêts.",
     "- Tu ne fais rien d'autre que ce que tes outils font : n'annonce jamais « je lance », « j'appelle », « j'envoie » ou « je commande ». Ce qui reste à faire est une recommandation pour l'équipe ou une question à Hiba.",
     "- Réponse : d'abord l'essentiel en quelques lignes (chiffres, noms, urgences), ensuite seulement les brouillons, chacun sous un titre court.",
     "",
@@ -197,7 +200,7 @@ export function createDirectorAgent({
       const items = conversations.get(id) ?? [];
       items.push({ role: "user", content: text });
 
-      const outcome = { documents: [], directorResponse: null, agentRuns: [] };
+      const outcome = { documents: [], directorResponse: null, agentRuns: [], messages: [] };
       let reply = "";
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
         const response = await callModel(resolvedClient, {
@@ -233,7 +236,8 @@ export function createDirectorAgent({
         reply: reply || "Je n'ai pas pu formuler de réponse. Pouvez-vous reformuler ?",
         documents: Object.freeze(outcome.documents),
         directorResponse: outcome.directorResponse,
-        agentRuns: Object.freeze(outcome.agentRuns)
+        agentRuns: Object.freeze(outcome.agentRuns),
+        messages: Object.freeze(outcome.messages)
       });
     }
   });
@@ -293,6 +297,9 @@ async function runTool(call, context) {
     }
     if (call.name === "chercher_catalogue") {
       return await lookUpCatalogue(args, context);
+    }
+    if (call.name === WHATSAPP_MESSAGE_TOOL.name) {
+      return recordMessage(args, "director", context.outcome);
     }
     if (call.name === "deleguer_a_un_agent") {
       return await delegate(args, context);
@@ -397,10 +404,33 @@ async function delegate(args, context) {
     toolRegistry: team.toolRegistry,
     executeTool: team.executeTool,
     prepareDocumentTool: TOOLS[0],
-    prepareDocument: (documentArgs) => prepareDocument(documentArgs, context)
+    prepareDocument: (documentArgs) => prepareDocument(documentArgs, context),
+    prepareMessage: (messageArgs, agentId) => recordMessage(messageArgs, agentId, outcome)
   });
   outcome.agentRuns.push(run);
   return { ok: true, agent: run.label, outils_utilises: run.tools, reponse: run.answer };
+}
+
+function recordMessage(args, agent, outcome) {
+  const result = draftWhatsAppMessage(args, { agent });
+  if (!result.ok) {
+    return result;
+  }
+  // One message per recipient and purpose: when the Director rewrites what an
+  // agent drafted, the newer text replaces the older one instead of doubling it.
+  const key = `${result.draft.recipient.toLowerCase()}|${result.draft.kind}`;
+  const existing = outcome.messages.findIndex((draft) => `${draft.recipient.toLowerCase()}|${draft.kind}` === key);
+  if (existing >= 0) {
+    outcome.messages.splice(existing, 1, result.draft);
+  } else {
+    outcome.messages.push(result.draft);
+  }
+  return {
+    ok: true,
+    destinataire: result.draft.recipient,
+    numero_connu: result.draft.phone !== null,
+    statut: "Message prêt dans le cockpit : Hiba l'envoie avec le bouton WhatsApp."
+  };
 }
 
 async function lookUpCatalogue(args, { loadCatalogue }) {

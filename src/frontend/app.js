@@ -200,7 +200,7 @@ async function sendToAgent(message) {
     const response = await postJson("/api/agent/chat", { message: text, conversationId: agentState.conversationId });
     agentState.conversationId = response.conversationId;
     pending.remove?.();
-    appendBubble("agent", formatAgentText(response.reply), response.documents ?? [], response.agentRuns ?? []);
+    appendBubble("agent", formatAgentText(response.reply), response.documents ?? [], response.agentRuns ?? [], response.messages ?? []);
     uiState.textContent = "Réponse reçue.";
     if (response.directorResponse) {
       state.current = { ...response.directorResponse, receivedAt: Date.now() };
@@ -218,7 +218,7 @@ async function sendToAgent(message) {
   }
 }
 
-function appendBubble(kind, html, documents = [], runs = []) {
+function appendBubble(kind, html, documents = [], runs = [], messages = []) {
   const bubble = document.createElement("div");
   bubble.className = `bubble ${kind}`;
   bubble.innerHTML = `
@@ -227,15 +227,79 @@ function appendBubble(kind, html, documents = [], runs = []) {
       ${runs.length > 0 ? teamStrip(runs) : ""}
       <div class="bubble-text">${html}</div>
       ${documents.map((entry, index) => documentCard(entry, index)).join("")}
+      ${messages.map((draft) => messageCard(draft)).join("")}
     </div>
   `;
   agentThread.appendChild(bubble);
+  bubble.querySelectorAll("[data-whatsapp]").forEach((button) => {
+    button.addEventListener("click", () => openWhatsApp(button));
+  });
   bubble.querySelectorAll("[data-validate]").forEach((button) => {
     const entry = documents[Number(button.dataset.validate)];
     button.addEventListener("click", () => validateAgentDocument(entry, button));
   });
   bubble.scrollIntoView?.({ behavior: "smooth", block: "end" });
   return bubble;
+}
+
+const MESSAGE_KIND_LABELS = Object.freeze({
+  relance_devis: "Relance devis",
+  relance_paiement: "Relance paiement",
+  retard: "Retard",
+  commande_fournisseur: "Commande fournisseur",
+  sav: "SAV",
+  autre: "Message"
+});
+
+// A message an agent drafted. Nothing is sent from here: the button opens
+// WhatsApp with the number and the text filled in, and Hiba presses Send there.
+// Both stay editable until then.
+function messageCard(draft) {
+  return `
+    <article class="msg-card">
+      <header>
+        ${avatar(draft.agent)}
+        <div>
+          <strong>${escapeHtml(draft.recipient)}</strong>
+          <span>${escapeHtml(MESSAGE_KIND_LABELS[draft.kind] ?? "Message")} · préparé par ${escapeHtml(formatAgent(draft.agent))}</span>
+        </div>
+        <span class="tag ${draft.phone ? "ok" : "warning"} msg-status">${draft.phone ? "Prêt" : "Numéro à compléter"}</span>
+      </header>
+      <label class="msg-field">Numéro WhatsApp
+        <input class="msg-phone" value="${escapeHtml(draft.phone ? `+${draft.phone}` : "")}" placeholder="06 12 34 56 78">
+      </label>
+      <textarea class="msg-text" rows="${Math.min(10, Math.max(3, draft.message.split("\n").length + 1))}">${escapeHtml(draft.message)}</textarea>
+      <div class="doc-actions">
+        <button type="button" class="whatsapp-button" data-whatsapp>${icon("send")}Envoyer via WhatsApp</button>
+        <span class="muted">S'ouvre dans WhatsApp : vous relisez, puis vous appuyez sur Envoyer.</span>
+      </div>
+    </article>
+  `;
+}
+
+// Same rule as the server: a Moroccan 06/07/05 number gets its 212 prefix.
+function whatsAppNumber(value) {
+  const digits = String(value ?? "").replace(/[^\d+]/g, "").replace(/^\+/, "").replace(/^00/, "");
+  if (/^0[5-7]\d{8}$/.test(digits)) {
+    return `212${digits.slice(1)}`;
+  }
+  return /^[1-9]\d{7,14}$/.test(digits) ? digits : null;
+}
+
+function openWhatsApp(button) {
+  const card = button.closest(".msg-card");
+  const number = whatsAppNumber(card.querySelector(".msg-phone").value);
+  const status = card.querySelector(".msg-status");
+  if (!number) {
+    status.className = "tag warning msg-status";
+    status.textContent = "Numéro à compléter";
+    card.querySelector(".msg-phone").focus();
+    return;
+  }
+  const text = card.querySelector(".msg-text").value;
+  globalThis.open?.(`https://wa.me/${number}?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+  status.className = "tag ok msg-status";
+  status.textContent = "Ouvert dans WhatsApp";
 }
 
 // Which agents worked on the answer, what they read, and what each one said.

@@ -10,6 +10,8 @@
 // Nothing is sent or executed from here: drafts are text for Hiba to use, and a
 // document is a preview she validates.
 
+import { WHATSAPP_MESSAGE_TOOL } from "./whatsapp.js";
+
 export const MAX_SPECIALIST_ROUNDS = 5;
 const MAX_TOOL_OUTPUT_CHARS = 7000;
 
@@ -19,6 +21,7 @@ const COMMON_RULES = [
   "Utilise tes outils pour lire les données avant de répondre ; ne jamais inventer un client, un montant, une date ou un fournisseur. Si une donnée manque, dis-le clairement.",
   "Si les données viennent de la démonstration (source demo), signale-le en une phrase.",
   "Tu ne peux rien envoyer ni payer : tu prépares. Un message est un brouillon que Hiba enverra elle-même ; une décision sensible est une proposition.",
+  "Chaque message à envoyer à un client ou à un fournisseur (relance, rappel de paiement, retard, commande…) : appelle preparer_message_whatsapp, un appel par destinataire, avec le texte exact. Dans ta réponse, dis seulement pour qui tu l'as préparé.",
   "N'annonce jamais une action que tu ne peux pas faire toi-même (« je lance », « j'appelle », « j'envoie », « je passe commande ») : formule-la comme une recommandation pour l'équipe."
 ];
 
@@ -119,7 +122,8 @@ export async function runSpecialist({
   toolRegistry,
   executeTool,
   prepareDocumentTool,
-  prepareDocument
+  prepareDocument,
+  prepareMessage = null
 }) {
   const specialist = SPECIALISTS[agentId];
   const readTools = readToolsFor(agentId, toolRegistry);
@@ -130,7 +134,8 @@ export async function runSpecialist({
       description: tool.description,
       parameters: { type: "object", additionalProperties: false, properties: {} }
     })),
-    ...(specialist.canPrepareDocuments ? [prepareDocumentTool] : [])
+    ...(specialist.canPrepareDocuments ? [prepareDocumentTool] : []),
+    ...(prepareMessage ? [WHATSAPP_MESSAGE_TOOL] : [])
   ];
 
   const items = [{ role: "user", content: mission }];
@@ -153,7 +158,9 @@ export async function runSpecialist({
     for (const call of calls) {
       used.push(call.name);
       let result;
-      if (call.name === prepareDocumentTool.name && specialist.canPrepareDocuments) {
+      if (call.name === WHATSAPP_MESSAGE_TOOL.name && prepareMessage) {
+        result = prepareMessage(parseArguments(call.arguments), agentId);
+      } else if (call.name === prepareDocumentTool.name && specialist.canPrepareDocuments) {
         result = await prepareDocument(parseArguments(call.arguments));
       } else if (readTools.some((tool) => tool.id === call.name)) {
         result = await executeTool(agentId, call.name);

@@ -2050,6 +2050,61 @@ legend {
   line-height: 1.55;
 }
 
+.msg-card {
+  margin-top: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-left: 4px solid #25d366;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.msg-card header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.msg-card header div {
+  flex: 1;
+  min-width: 0;
+}
+
+.msg-card header strong {
+  display: block;
+}
+
+.msg-card header span:not(.tag) {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.msg-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 260px;
+  margin-bottom: 8px;
+}
+
+.msg-text {
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+button.whatsapp-button {
+  border-color: #1da851;
+  background: #25d366;
+  color: #08331a;
+}
+
+button.whatsapp-button:hover {
+  border-color: #1da851;
+  background: #1ebe5b;
+}
+
 /* ================= Responsive ================= */
 
 @media (max-width: 1180px) {

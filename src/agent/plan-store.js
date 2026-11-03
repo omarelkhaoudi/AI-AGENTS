@@ -87,7 +87,8 @@ function createPlanStore({ load, save, clock }) {
   }
 
   return Object.freeze({
-    async create({ objective, strategy = "", priorities = [], steps = [], createdBy = null, request = "" }) {
+    // target, when the plan pursues a figure: { indicator, amount, currency, from, to }.
+    async create({ objective, strategy = "", priorities = [], steps = [], createdBy = null, request = "", target = null }) {
       return exclusive(async () => {
         const plans = await load();
         const createdAt = now();
@@ -98,6 +99,7 @@ function createPlanStore({ load, save, clock }) {
           strategy,
           priorities,
           request,
+          target,
           status: "active",
           createdAt,
           updatedAt: createdAt,

@@ -56,34 +56,46 @@ test("without a catalogue file the agent is told to ask for the price", async ()
   assert.equal((await load()).available, false);
 });
 
-test("asked for a quote without a price, the agent prices it from the catalogue", async (t) => {
+test("asked for a quote without a price, the Commercial prices it from the catalogue", async (t) => {
   const path = await catalogueFile(t);
   const outputDir = await mkdtemp(join(tmpdir(), "hkids-agent-cat-"));
   t.after(() => rm(outputDir, { recursive: true, force: true }));
 
   const calls = [];
-  const turns = [
-    { output: [{ type: "function_call", name: "chercher_catalogue", call_id: "c1", arguments: JSON.stringify({ recherche: "lit nuage" }) }] },
-    { output: [{ type: "function_call", name: "preparer_document", call_id: "c2", arguments: JSON.stringify({
+  const call = (name, args, id) => ({ output: [{ type: "function_call", name, call_id: id, arguments: JSON.stringify(args) }] });
+  const director = [
+    call("deleguer_a_un_agent", { agent: "commercial", mission: "Devis pour Meriem Exemple, Marrakech : 1 lit nuage, prix catalogue." }, "d1"),
+    { output_text: "Le Commercial a préparé le devis au prix catalogue : 3 000 DH TTC.", output: [] }
+  ];
+  const commercial = [
+    call("chercher_catalogue", { recherche: "lit nuage" }, "c1"),
+    call("preparer_document", {
       type: "devis", client_nom: "Meriem Exemple", client_adresse: "Marrakech", objet: "Lit nuage",
       lignes: [{ designation: "Lit nuage", quantite: 1, prix_unitaire: 3000, prix_ttc: true }],
       caracteristiques: [], conditions_paiement: "60/20/20", reference_devis: "", reference_bl: "", numero: ""
-    }) }] },
-    { output_text: "Devis prêt au prix catalogue : 3 000 DH TTC.", output: [] }
+    }, "c2"),
+    { output_text: "Devis prêt au prix catalogue.", output: [] }
   ];
   const agent = createDirectorAgent({
-    client: { responses: { create: async (payload) => { calls.push(JSON.parse(JSON.stringify(payload))); return turns.shift(); } } },
+    client: { responses: { create: async (payload) => {
+      calls.push(JSON.parse(JSON.stringify(payload)));
+      return payload.instructions.startsWith("Tu es le Director IA") ? director.shift() : commercial.shift();
+    } } },
     documentService: new HkidsDocumentService({ repository: new InMemoryRepository(), outputDir }),
     loadCatalogue: createCatalogueLoader({ path }),
+    toolRegistry: { list: () => [] },
+    executeTool: async () => ({ ok: true, donnees: null }),
     clock: () => new Date("2026-11-02T10:00:00Z")
   });
 
   const result = await agent.chat({ message: "un devis pour Meriem à Marrakech, un lit nuage" });
 
-  const lookup = JSON.parse(calls[1].input.find((item) => item.type === "function_call_output").output);
+  const commercialCalls = calls.filter((payload) => payload.instructions.includes("Tu es l'agent Commercial"));
+  const lookup = JSON.parse(commercialCalls[1].input.find((item) => item.type === "function_call_output").output);
   assert.equal(lookup.produits[0].produit, "Lit nuage");
   assert.equal(lookup.produits[0].prix_ttc, 3000);
   assert.equal(result.documents[0].preview.document.totals.totalTtc, 3000);
-  assert.ok(calls[0].tools.some((tool) => tool.name === "chercher_catalogue"));
-  assert.match(calls[0].instructions, /chercher_catalogue/);
+  assert.ok(commercialCalls[0].tools.some((tool) => tool.name === "chercher_catalogue"));
+  assert.match(commercialCalls[0].instructions, /chercher_catalogue/);
+  assert.ok(!calls[0].tools.some((tool) => tool.name === "chercher_catalogue"), "pricing is the Commercial's work");
 });

@@ -5,16 +5,19 @@ import { DocumentValidationError } from "../documents/document-validation.js";
 import { HKIDS_FIXED_IDENTITY } from "../documents/hkids-template.js";
 import { createCatalogueLoader, searchCatalogue } from "./catalogue.js";
 import { SPECIALISTS, SPECIALIST_IDS, runSpecialist } from "./agent-team.js";
-import { WHATSAPP_MESSAGE_TOOL, draftWhatsAppMessage } from "./whatsapp.js";
+import { draftWhatsAppMessage } from "./whatsapp.js";
 import { STEP_LABELS, createMemoryPlanStore } from "./plan-store.js";
+import { OBJECTIVE_INDICATORS, currentMonth, measureObjective } from "./sales-objective.js";
 
-// The Director as a conversational agent. Hiba writes the way she would to an
-// assistant — "fais-moi un devis pour Meriem, un lit nuage à 3000 DH" — and a
-// language model reads the request, asks for what is missing, and calls the
-// tools below to prepare the document itself. Nothing leaves the company and
-// nothing is generated for good without her: a document comes back as a preview
-// she validates in the cockpit, through the same preview and confirmation the
-// documents panel always required.
+// The Director as a conversational agent, and as a director: it carries the
+// strategy, not the execution. Hiba gives it an objective — "je veux 100 000 DH
+// de chiffre d'affaires ce mois" — and it measures where the company stands,
+// builds the strategy, gives each head of trade their share, has them answer
+// with their own plan, and follows the whole over the days. The work itself is
+// done by the agents: a quote is the Commercial's, an invoice is Finance's, a
+// message is drafted by whoever owns the relationship. Nothing leaves the
+// company and nothing is generated for good without Hiba: a document comes back
+// as a preview she validates in the cockpit.
 //
 // The model only ever chooses and fills tools. Every figure is computed here and
 // every document is validated by the same rules as a document typed by hand.
@@ -45,7 +48,19 @@ const PLAN_TOOL = Object.freeze({
     additionalProperties: false,
     properties: {
       objectif: { type: "string", description: "Ce que la direction veut obtenir, en une phrase." },
-      strategie: { type: "string", description: "Comment l'atteindre, en une ou deux phrases." },
+      objectif_chiffre: {
+        type: "object",
+        additionalProperties: false,
+        description: "Le chiffre à atteindre quand l'objectif en a un (chiffre d'affaires, encaissements), comme mesuré par mesurer_objectif ; montant 0 sinon.",
+        properties: {
+          indicateur: { type: "string", enum: Object.keys(OBJECTIVE_INDICATORS) },
+          montant: { type: "number", description: "En dirhams. 0 si l'objectif n'est pas chiffré." },
+          du: { type: "string", description: "AAAA-MM-JJ, ou chaîne vide pour le mois en cours." },
+          au: { type: "string", description: "AAAA-MM-JJ, ou chaîne vide pour le mois en cours." }
+        },
+        required: ["indicateur", "montant", "du", "au"]
+      },
+      strategie: { type: "string", description: "Comment l'atteindre : les leviers et leur poids, en deux ou trois phrases." },
       priorites: { type: "array", items: { type: "string" }, description: "Les priorités, de la plus urgente à la moins urgente (3 au plus)." },
       etapes: {
         type: "array",
@@ -62,7 +77,7 @@ const PLAN_TOOL = Object.freeze({
         }
       }
     },
-    required: ["objectif", "strategie", "priorites", "etapes"]
+    required: ["objectif", "objectif_chiffre", "strategie", "priorites", "etapes"]
   }
 });
 
@@ -123,6 +138,23 @@ const ADJUST_PLAN_TOOL = Object.freeze({
   }
 });
 
+const MEASURE_TOOL = Object.freeze({
+  type: "function",
+  name: "mesurer_objectif",
+  description: "Mesure, sur les données de l'entreprise, où en est un objectif chiffré : réalisé dans la période, écart, rythme par jour restant, devis ouverts (montant, à relancer, les plus gros), encaissements reçus et attendus. À appeler AVANT de bâtir la stratégie d'un objectif chiffré, et pour en suivre l'avancement.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      indicateur: { type: "string", enum: Object.keys(OBJECTIVE_INDICATORS), description: "ventes_signees = chiffre d'affaires (devis acceptés) ; encaissements = argent reçu." },
+      montant: { type: "number", description: "La cible, en dirhams." },
+      du: { type: "string", description: "Début AAAA-MM-JJ, ou chaîne vide pour le mois en cours." },
+      au: { type: "string", description: "Fin AAAA-MM-JJ, ou chaîne vide pour le mois en cours." }
+    },
+    required: ["indicateur", "montant", "du", "au"]
+  }
+});
+
 const COHERENCE_TOOL = Object.freeze({
   type: "function",
   name: "verifier_coherence",
@@ -130,8 +162,9 @@ const COHERENCE_TOOL = Object.freeze({
   parameters: { type: "object", additionalProperties: false, properties: {} }
 });
 
-const TOOLS = Object.freeze([
-  {
+// The documents and the catalogue belong to the trades that produce them: the
+// Director hands these tools to the Commercial and Finance agents and keeps none.
+const DOCUMENT_TOOL = Object.freeze({
     type: "function",
     name: "preparer_document",
     description: "Prépare un document commercial H-KIDS (devis, bon de commande, facture ou bon de livraison) et renvoie son aperçu. Le document n'est généré qu'après validation par l'utilisatrice dans le cockpit. N'appeler que lorsque le client (nom et adresse) et chaque ligne (désignation, quantité, prix) sont connus.",
@@ -166,8 +199,9 @@ const TOOLS = Object.freeze([
       },
       required: ["type", "client_nom", "client_adresse", "objet", "lignes", "caracteristiques", "conditions_paiement", "reference_devis", "reference_bl", "numero"]
     }
-  },
-  {
+});
+
+const CATALOGUE_TOOL = Object.freeze({
     type: "function",
     name: "chercher_catalogue",
     description: "Cherche un ou plusieurs produits dans le catalogue H-KIDS et renvoie leur nom exact, leur description et leur prix TTC de base. À appeler pour chaque produit demandé dont le prix n'a pas été donné.",
@@ -179,11 +213,13 @@ const TOOLS = Object.freeze([
       },
       required: ["recherche"]
     }
-  },
+});
+
+const TOOLS = Object.freeze([
   {
     type: "function",
     name: "deleguer_a_un_agent",
-    description: "Confie une mission à un agent spécialisé de l'équipe, qui lit ses propres données, travaille et répond (analyse, recommandations, brouillons de messages ou de commandes). Appelle plusieurs agents en même temps quand la demande touche plusieurs métiers.",
+    description: "Confie une mission à un responsable de l'équipe, qui lit ses propres données, exécute et répond : sa part d'un objectif avec son plan chiffré, une analyse, un document (devis, bon de commande, bon de livraison → commercial ; facture → finance), des brouillons de messages ou de commandes. Appelle plusieurs responsables en même temps quand la demande touche plusieurs métiers.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -198,7 +234,7 @@ const TOOLS = Object.freeze([
       required: ["agent", "mission"]
     }
   },
-  WHATSAPP_MESSAGE_TOOL,
+  MEASURE_TOOL,
   PLAN_TOOL,
   LIST_PLANS_TOOL,
   ADJUST_PLAN_TOOL,
@@ -223,33 +259,34 @@ function instructions(today) {
     "Tu es le Director IA de H KIDS, fabricant marocain de mobilier et d'aménagement sur mesure pour enfants (Marrakech).",
     `Tu parles à la direction (Hiba, Omar). Nous sommes le ${today}. Réponds toujours en français, de façon courte, claire et chaleureuse.`,
     "",
-    "Ton rôle : faire le travail à la place de l'utilisatrice. Quand elle demande un devis, un bon de commande, une facture ou un bon de livraison, c'est toi qui le prépares avec l'outil preparer_document. Elle ne remplit aucun formulaire.",
+    "Ton rôle est celui d'un directeur général : tu portes la stratégie et la responsabilité des résultats. Tu fixes la direction, tu répartis le travail entre les responsables, tu suis l'avancement et tu alertes. Tu n'exécutes pas toi-même : un devis, un bon de commande ou un bon de livraison est fait par le Directeur commercial (agent commercial), une facture par la Finance, un message par le responsable concerné.",
+    "",
+    "Objectif chiffré (« je veux 100 000 DH de chiffre d'affaires ce mois », « il faut encaisser 50 000 DH avant le 15 ») — méthode OBLIGATOIRE :",
+    "1) mesurer_objectif : réalisé, écart, rythme par jour, devis ouverts, encaissements. Chiffre d'affaires = ventes_signees, sauf si la direction parle d'argent reçu (encaissements). Période non précisée = mois en cours.",
+    "2) etablir_plan_action avec objectif_chiffre : la stratégie qui comble l'écart (quelle part viendra des devis ouverts à relancer, quelle part de nouvelles affaires, avec quel panier), les priorités, et une étape par responsable avec SA PART CHIFFRÉE et une échéance : Commercial (ventes à signer, devis à relancer et à produire), Marketing (demandes de devis à générer), Finance (encaissements, trésorerie), Production (capacité de l'atelier à livrer ces ventes), Achats (matières à sécuriser). N'implique que les responsables utiles.",
+    "3) deleguer_a_un_agent, en parallèle, à chaque responsable : sa part avec les chiffres (réalisé, écart, sa cible, les devis concernés) — il ne voit pas la conversation — et demande-lui son plan d'action chiffré.",
+    "4) Synthèse : où on en est (réalisé / cible / écart / rythme par jour), la stratégie, ce que chaque responsable s'engage à apporter et si le total couvre l'écart, les risques (capacité atelier, trésorerie, matières) et les décisions qui reviennent à la direction (remise, budget, recrutement…). Si la cible est irréaliste au vu des chiffres, dis-le franchement et propose une cible atteignable.",
+    "- H KIDS travaille en dirhams. Si la direction donne un objectif en euros, demande en une question s'il s'agit bien d'euros ou de dirhams avant de mesurer.",
+    "- Suivi d'un objectif (« où en est l'objectif », « on avance ? ») : lister_plans, puis mesurer_objectif avec la même cible et la même période, puis donne réalisé / cible / écart / rythme, ce qui a bougé et la prochaine action ; relance les responsables en retard.",
+    "",
+    "Question de situation, d'urgences, de risques ou de décisions — méthode OBLIGATOIRE : 1) etablir_plan_action (objectif, stratégie, priorités, étapes responsable + tâche ; objectif_chiffre avec montant 0) ; 2) deleguer_a_un_agent (les étapes indépendantes en même temps) ou point_entreprise pour un point global ; 3) synthèse qui suit le plan, puis les incohérences signalées, puis ce qui demande une décision.",
+    "",
+    "Tâche d'exécution demandée directement (un devis, un bon de commande, un bon de livraison, une facture, une relance) : pas de plan ; confie-la tout de suite au bon responsable avec deleguer_a_un_agent en recopiant TOUTES les informations données (client, adresse, produits, quantités, prix, conditions, numéros liés). Un prix donné sans précision est TTC : écris-le « 3000 DH TTC » dans la mission ; n'écris « HT » que si la direction l'a dit. Ne demande rien avant de confier : la ville suffit comme adresse, quantité non précisée = 1, conditions 60/20/20 par défaut (seuls échéanciers approuvés : 60/20/20 ; en exception 50/30/20, 40/40/20, 100 % ; 50/50 sur bon de commande), prix absent = prix catalogue cherché par le Commercial ; dimensions, coloris, livraison ou délai ne sont pas requis. S'il répond qu'il manque une information, pose UNE question courte à la direction qui demande tout ce qui manque, puis redonne la tâche complète au responsable. Annonce ensuite le document en 2 ou 3 lignes (qui l'a préparé, type, numéro, client, total TTC) et dis de vérifier l'aperçu et de cliquer « Valider et générer ».",
     "",
     "Règles :",
-    "- Un prix donné sans précision est TTC (prix_ttc = true). « 3000 DH » ou « 3000dhs » = 3000 DH TTC.",
-    "- Prix non donné : appelle chercher_catalogue pour ce produit. Un seul produit correspond → utilise son nom exact (désignation) et son prix TTC, et précise dans ta réponse que c'est le prix catalogue. Plusieurs correspondent → demande lequel en les citant avec leur prix. Aucun → demande le prix. Un prix donné par l'utilisatrice l'emporte toujours sur le catalogue.",
-    "- Ne jamais inventer un client, une adresse, un prix ou une quantité. Si le nom ou l'adresse du client (au moins la ville) manque, ou si un prix manque et n'est pas au catalogue, pose UNE question courte qui demande tout ce qui manque, puis attends la réponse.",
-    "- Quantité non précisée = 1.",
-    "- Conditions de paiement : 60/20/20 par défaut (60 % à la commande, 20 % avant livraison, 20 % après installation). 50/50 seulement pour un bon de commande et si on te le demande.",
-    "- Une facture doit citer son devis ou son bon de livraison : demande le numéro s'il n'est pas donné.",
-    "- Le numéro du document est attribué automatiquement ; ne le demande que si l'outil dit qu'il est inconnu.",
-    "- Après preparer_document : annonce le document (type, numéro, client, total TTC, échéances le cas échéant) en 2 ou 3 lignes, puis dis de vérifier l'aperçu et de cliquer « Valider et générer ». Ne prétends jamais qu'il est déjà envoyé au client.",
-    "- Si l'outil renvoie des erreurs, explique simplement ce qui manque et demande-le.",
-    "- Méthode de travail OBLIGATOIRE pour toute question sur la situation, les urgences, les risques, les décisions, ou qui demande un ou plusieurs agents : 1) TOUJOURS commencer par etablir_plan_action (objectif, stratégie, priorités, étapes agent + tâche) ; 2) exécuter les étapes avec deleguer_a_un_agent (les étapes indépendantes en même temps) ou point_entreprise pour un point global ; 3) synthèse qui suit le plan, puis les incohérences signalées par l'outil, puis ce qui demande une décision. Seules exceptions : une salutation, ou un document à préparer.",
-    "- Les plans sont CONSERVÉS et suivis dans le temps. Quand la direction parle d'un plan existant ou d'un fait qui le fait avancer (« où en est le plan », « on continue », « l'acompte Atlas est arrivé », « le fournisseur a livré »), appelle lister_plans puis : relance les étapes encore à faire avec deleguer_a_un_agent (l'étape de l'agent se met à jour seule), mets à jour avec ajuster_plan (fait, bloqué, nouvelle échéance, nouvelles étapes, note), et réponds avec l'avancement (x/y étapes, en retard, bloquées) et la prochaine action. Ne crée pas un nouveau plan pour un sujet qui a déjà un plan en cours : ajuste-le.",
-    "- Statut des étapes : après le travail d'un agent, son étape passe « en cours ». Marque-la « fait » avec ajuster_plan SEULEMENT si la tâche est entièrement accomplie par ce travail (une analyse, une liste, un calcul). Une action réelle (message envoyé, appel, paiement reçu, commande passée, livraison) reste « en cours » tant que la direction n'a pas confirmé qu'elle a eu lieu. Ne dis jamais « fait » pour un brouillon préparé. Un plan est « proposé » à la direction, jamais « validé » par toi.",
-    "- Quand la direction t'annonce qu'une action a eu lieu (« l'acompte est arrivé », « j'ai envoyé le message », « le fournisseur a livré »), c'est une confirmation : marque tout de suite les étapes correspondantes « fait » avec ajuster_plan, sans demander de preuve, et note le fait au journal. Ne refais pas travailler un agent sur une étape que la direction vient de confirmer ; ne fais travailler que les étapes que cette nouvelle débloque.",
+    "- Les plans sont CONSERVÉS et suivis dans le temps. Quand la direction parle d'un plan existant ou d'un fait qui le fait avancer (« où en est le plan », « on continue », « l'acompte Atlas est arrivé »), appelle lister_plans puis : relance les étapes encore à faire avec deleguer_a_un_agent (l'étape du responsable se met à jour seule), mets à jour avec ajuster_plan (fait, bloqué, nouvelle échéance, nouvelles étapes, note), et réponds avec l'avancement et la prochaine action. Ne crée pas un nouveau plan pour un sujet qui a déjà un plan en cours : ajuste-le.",
+    "- Statut des étapes : après le travail d'un responsable, son étape passe « en cours ». Marque-la « fait » avec ajuster_plan SEULEMENT si la tâche est entièrement accomplie par ce travail (une analyse, un plan chiffré, une liste). Une action réelle (message envoyé, vente signée, paiement reçu, commande passée, livraison) reste « en cours » tant que la direction n'a pas confirmé qu'elle a eu lieu. Un plan est « proposé » à la direction, jamais « validé » par toi.",
+    "- Quand la direction t'annonce qu'une action a eu lieu (« l'acompte est arrivé », « Meriem a signé »), c'est une confirmation : marque tout de suite les étapes correspondantes « fait » avec ajuster_plan, sans demander de preuve, et note le fait au journal. Ne fais travailler que les étapes que cette nouvelle débloque.",
     "- N'écris jamais qu'une chose « est lancée », « est faite » ou « a eu lieu » si ni la direction ni une donnée ne l'a confirmé : c'est « prêt à lancer » ou « proposé ».",
-    "- En créant un plan, donne une échéance réaliste aux étapes qui ne se font pas tout de suite (relance client sous 48 h, livraison fournisseur…). Marque toi-même tes étapes « director » avec ajuster_plan quand elles sont faites.",
-    "- Signale toujours les incohérences renvoyées par verifier_coherence, avec les agents concernés et l'action proposée ; ne les invente jamais.",
-    "- Tu diriges une équipe d'agents : Commercial, Finance, Production, Achats, RH, Marketing, Community Manager, SAV, Juridique. Pour une question ou une tâche métier (relances clients, encaissements, retards atelier, quoi commander, réclamations…), délègue avec deleguer_a_un_agent à l'agent concerné — à plusieurs en parallèle si besoin — puis fais la synthèse. Garde les brouillons qu'ils ont rédigés (messages, listes de commande) tels quels dans ta réponse.",
-    "- Pour le point complet de l'entreprise (« fais-moi le point », « la situation aujourd'hui »), après le plan, appelle point_entreprise puis résume l'essentiel en 5 lignes maximum, les urgences d'abord.",
-    "- Les documents (devis, bon de commande, facture, bon de livraison) : tu les prépares toi-même avec preparer_document.",
+    "- Donne une échéance réaliste aux étapes qui ne se font pas tout de suite. Marque toi-même tes étapes « director » avec ajuster_plan quand elles sont faites.",
+    "- Signale toujours les incohérences renvoyées par verifier_coherence, avec les responsables concernés et l'action proposée ; ne les invente jamais.",
+    "- Tes responsables : Commercial (Directeur commercial), Finance, Production, Achats, Marketing, Community Manager (sous le Marketing), et aussi RH, SAV, Juridique.",
+    "- Pour le point complet de l'entreprise (« fais-moi le point »), après le plan, appelle point_entreprise puis résume l'essentiel en 5 lignes maximum, les urgences d'abord.",
     "- Pour une simple salutation ou une question générale, réponds directement sans outil.",
-    "- Les messages aux clients ou fournisseurs sont préparés avec preparer_message_whatsapp (par toi ou par les agents) : ils s'affichent avec un bouton « Envoyer via WhatsApp » et c'est Hiba qui les envoie. Ne recopie pas leur texte dans ta réponse : dis pour qui ils sont prêts.",
-    "- Tu ne fais rien d'autre que ce que tes outils font : n'annonce jamais « je lance », « j'appelle », « j'envoie » ou « je commande », et ne propose jamais de le faire (« voulez-vous que j'envoie… »). Les messages sont envoyés par Hiba avec le bouton WhatsApp. Ce qui reste à faire est une recommandation pour l'équipe ou une question à Hiba.",
+    "- Les messages aux clients ou fournisseurs sont rédigés par les responsables et s'affichent avec un bouton « Envoyer via WhatsApp » : c'est Hiba qui les envoie. Ne recopie pas leur texte : dis pour qui ils sont prêts.",
+    "- N'annonce jamais « je lance », « j'appelle », « j'envoie » ou « je commande », et ne propose jamais de le faire. Ce qui reste à faire est une décision pour la direction ou une action d'un responsable.",
     "- Vouvoie toujours la direction. H KIDS est au Maroc : dirhams, droit et organismes marocains uniquement.",
-    "- Réponse : d'abord l'essentiel en quelques lignes (chiffres, noms, urgences), ensuite seulement les brouillons, chacun sous un titre court.",
+    "- Réponse : d'abord l'essentiel en quelques lignes (chiffres, noms, décisions), ensuite le détail par responsable, chacun sous un titre court.",
     "",
     `Informations société : ${HKIDS_FIXED_IDENTITY.companyName}, ${HKIDS_FIXED_IDENTITY.addressLines.join(" ").replace(/^Adresse : /, "")}, tél. ${HKIDS_FIXED_IDENTITY.phone}, ${HKIDS_FIXED_IDENTITY.email}. TVA 20 %.`
   ].join("\n");
@@ -264,12 +301,12 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, planStore = undefined, client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
   const loadCatalogue = createCatalogueLoader(cataloguePath ? { path: cataloguePath } : {});
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, planStore, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -282,6 +319,7 @@ export function createDirectorAgent({
   toolRegistry = null,
   executeTool = null,
   checkCoherence = null,
+  loadObjectiveRecords = null,
   planStore = createMemoryPlanStore(),
   clock = () => new Date(),
   clientFactory = defaultClientFactory
@@ -334,8 +372,8 @@ export function createDirectorAgent({
             outcome,
             team: { client: resolvedClient, model, toolRegistry, executeTool },
             checkCoherence,
-            planStore,
-            userId
+            loadObjectiveRecords,
+            planStore
           })));
         calls.forEach((call, index) => {
           items.push({ type: "function_call_output", call_id: call.call_id, output: JSON.stringify(results[index]) });
@@ -350,7 +388,7 @@ export function createDirectorAgent({
         directorResponse: outcome.directorResponse,
         agentRuns: Object.freeze(outcome.agentRuns),
         messages: Object.freeze(outcome.messages),
-        plan: outcome.planId ? await planStore.get(outcome.planId) : null,
+        plan: outcome.planId ? await withObjectiveMeasure(await planStore.get(outcome.planId), { loadObjectiveRecords, clock }) : null,
         alerts: outcome.alerts
       });
     }
@@ -406,11 +444,8 @@ async function runTool(call, context) {
     return { ok: false, erreur: "Arguments illisibles." };
   }
   try {
-    if (call.name === "preparer_document") {
-      return await prepareDocument(args, context);
-    }
-    if (call.name === "chercher_catalogue") {
-      return await lookUpCatalogue(args, context);
+    if (call.name === MEASURE_TOOL.name) {
+      return await measure(args, context);
     }
     if (call.name === PLAN_TOOL.name) {
       return await recordPlan(args, context);
@@ -423,9 +458,6 @@ async function runTool(call, context) {
     }
     if (call.name === COHERENCE_TOOL.name) {
       return await runCoherence(context);
-    }
-    if (call.name === WHATSAPP_MESSAGE_TOOL.name) {
-      return recordMessage(args, "director", context.outcome);
     }
     if (call.name === "deleguer_a_un_agent") {
       return withCoherence(await delegate(args, context), context);
@@ -441,7 +473,7 @@ async function runTool(call, context) {
 
 // Builds the document exactly as the documents panel would send it, then asks
 // the document service for the same preview a person would get.
-async function prepareDocument(args, { documentService, clock, outcome }) {
+async function prepareDocument(args, { documentService, clock, outcome }, preparedBy = null) {
   const documentType = DOCUMENT_TYPES[args.type];
   if (!documentType) {
     return { ok: false, erreur: "Type de document inconnu." };
@@ -497,7 +529,7 @@ async function prepareDocument(args, { documentService, clock, outcome }) {
     throw error;
   }
 
-  outcome.documents.push(Object.freeze({ input, preview }));
+  outcome.documents.push(Object.freeze({ input, preview, preparedBy }));
   const document = preview.document;
   return {
     ok: true,
@@ -529,8 +561,10 @@ async function delegate(args, context) {
     today: formatDate(clock()),
     toolRegistry: team.toolRegistry,
     executeTool: team.executeTool,
-    prepareDocumentTool: TOOLS[0],
-    prepareDocument: (documentArgs) => prepareDocument(documentArgs, context),
+    prepareDocumentTool: DOCUMENT_TOOL,
+    prepareDocument: (documentArgs, agentId) => prepareDocument(documentArgs, context, agentId),
+    catalogueTool: CATALOGUE_TOOL,
+    lookUpCatalogue: (catalogueArgs) => lookUpCatalogue(catalogueArgs, context),
     prepareMessage: (messageArgs, agentId) => recordMessage(messageArgs, agentId, outcome)
   });
   outcome.agentRuns.push(run);
@@ -548,13 +582,14 @@ function planSteps(steps) {
     }));
 }
 
-async function recordPlan(args, { planStore, outcome, userId }) {
+async function recordPlan(args, { planStore, outcome, userId, clock }) {
   const steps = planSteps(args.etapes);
   if (steps.length === 0) {
     return { ok: false, erreur: "Un plan doit avoir au moins une étape." };
   }
   const plan = await planStore.create({
     objective: text(args.objectif),
+    target: objectiveTarget(args.objectif_chiffre, clock()),
     strategy: text(args.strategie),
     priorities: (Array.isArray(args.priorites) ? args.priorites : []).map(text).filter(Boolean).slice(0, 3),
     steps,
@@ -568,6 +603,7 @@ function describePlan(plan) {
   return {
     numero: plan.number,
     objectif: plan.objective,
+    objectif_chiffre: plan.target ? `${plan.target.amount} DH (${OBJECTIVE_INDICATORS[plan.target.indicator]}) du ${plan.target.from} au ${plan.target.to}` : null,
     statut: plan.status,
     avancement: `${plan.progress.done}/${plan.progress.total} étapes (${plan.progress.percent} %)`,
     en_retard: plan.progress.overdue,
@@ -586,7 +622,8 @@ function describePlan(plan) {
   };
 }
 
-async function listPlans(args, { planStore }) {
+async function listPlans(args, { planStore, outcome }) {
+  outcome.plansListed = true;
   const status = args.statut === "all" ? null : args.statut === "done" ? "done" : "active";
   const plans = await planStore.list({ status });
   return { ok: true, nombre: plans.length, plans: plans.slice(0, 8).map(describePlan) };
@@ -621,13 +658,72 @@ async function adjustPlan(args, { planStore, outcome, userId }) {
   return { ok: true, plan: describePlan(plan), demande_par: userId ?? null };
 }
 
+// A figure the plan pursues, with its period resolved: the current month when
+// none is given. No figure, no target.
+function objectiveTarget(value, today) {
+  const amount = Number(value?.montant);
+  if (!value || !Number.isFinite(amount) || amount <= 0) {
+    return null;
+  }
+  const month = currentMonth(today);
+  const day = (entry) => (/^\d{4}-\d{2}-\d{2}$/.test(text(entry)) ? text(entry) : null);
+  return {
+    indicator: OBJECTIVE_INDICATORS[value.indicateur] ? value.indicateur : "ventes_signees",
+    amount,
+    currency: "MAD",
+    from: day(value.du) ?? month.from,
+    to: day(value.au) ?? month.to
+  };
+}
+
+async function measure(args, { loadObjectiveRecords, clock }) {
+  if (typeof loadObjectiveRecords !== "function") {
+    return { ok: false, erreur: "La mesure des objectifs n'est pas disponible." };
+  }
+  const target = objectiveTarget({ ...args, montant: Number(args.montant) > 0 ? args.montant : 1 }, clock());
+  const result = measureObjective(await loadObjectiveRecords(), { ...target, amount: Number(args.montant) || 0, today: clock() });
+  return { ok: true, ...describeMeasure(result) };
+}
+
+function describeMeasure(result) {
+  return {
+    indicateur: result.label,
+    periode: `du ${result.period.from} au ${result.period.to} (${result.period.daysLeft} jours restants)`,
+    cible: result.target,
+    realise: result.achieved,
+    ecart: result.gap,
+    pourcentage: result.percent,
+    rythme_par_jour_restant: result.pacePerDay,
+    ventes_signees: result.signedSales,
+    encaisse: result.collected,
+    a_encaisser_dans_la_periode: result.toCollect,
+    devis_ouverts: result.openQuotes,
+    devise: "MAD",
+    donnees_de_demonstration: result.demo
+  };
+}
+
+// The plan as shown: a plan with a figure carries where that figure stands
+// today, measured afresh each time it is read.
+export async function withObjectiveMeasure(plan, { loadObjectiveRecords, clock = () => new Date() } = {}) {
+  if (!plan?.target || typeof loadObjectiveRecords !== "function") {
+    return plan;
+  }
+  const measured = measureObjective(await loadObjectiveRecords(), { ...plan.target, today: clock() });
+  return Object.freeze({ ...plan, measure: measured });
+}
+
 // When an agent has worked on a step of the current plan, the step moves to
 // "en cours" and keeps what the agent found. It is not "fait": an agent only
 // prepares, and a follow-up drafted is not a follow-up sent. The Director marks
 // it done when the task was an analysis the agent completed, Hiba when the real
 // action happened. A plan picked up from an earlier day is the current one when
-// it is the only plan still waiting on that agent.
+// the Director looked at its plans this turn and it is the only one still
+// waiting on that agent; a plain task (a quote) touches no plan.
 async function markAgentStepDone(run, { planStore, outcome }) {
+  if (!outcome.planId && !outcome.plansListed) {
+    return;
+  }
   if (!outcome.planId) {
     const waiting = (await planStore.list({ status: "active" }))
       .filter((plan) => plan.steps.some((step) => step.agent === run.agent && step.status !== "done"));
@@ -647,10 +743,15 @@ async function markAgentStepDone(run, { planStore, outcome }) {
   }
 }
 
-// The cross-checks run once per turn, as soon as the team is put to work, and
-// their findings travel with that tool's answer for the Director to report.
+// The cross-checks run once per turn, as soon as the team works on a plan or a
+// company point, and their findings travel with that tool's answer for the
+// Director to report. A plain task (a quote, an invoice) carries none: the
+// alerts would only bury the document Hiba asked for.
 async function withCoherence(result, context) {
   if (!result.ok || context.outcome.alerts !== null || typeof context.checkCoherence !== "function") {
+    return result;
+  }
+  if (!context.outcome.planId && !context.outcome.directorResponse) {
     return result;
   }
   const coherence = await runCoherence(context);

@@ -2552,3 +2552,38 @@ button.whatsapp-button:hover {
 [hidden] {
   display: none !important;
 }
+
+/* Objective gauge: where a figure stands against its target. */
+.objective-gauge {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.objective-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.objective-figures span {
+  display: grid;
+  gap: 2px;
+}
+
+.objective-figures small {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.objective-figures strong {
+  font-size: 1.05rem;
+}
+
+.objective-gauge.reached .progress span {
+  background: var(--good);
+}

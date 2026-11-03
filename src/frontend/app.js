@@ -178,8 +178,8 @@ async function checkAgentStatus() {
   }
   if (agentState.enabled) {
     messageInput.value = "";
-    messageInput.placeholder = "Ex. : Fais-moi un devis pour Meriem, un lit nuage à 3000 DH";
-    uiState.textContent = "Director IA connecté. Écrivez votre demande comme à un assistant.";
+    messageInput.placeholder = "Ex. : Je veux 100 000 DH de chiffre d'affaires ce mois";
+    uiState.textContent = "Director IA connecté. Donnez-lui un objectif : il bâtit la stratégie et fait travailler les responsables.";
   }
 }
 
@@ -260,6 +260,7 @@ function planCard(plan) {
         </div>
         <span class="tag ${done === plan.steps.length ? "ok" : "warning"}">${done}/${plan.steps.length} étapes</span>
       </header>
+      ${plan.measure ? objectiveGauge(plan.measure) : ""}
       ${plan.strategy ? `<p class="plan-strategy"><b>Stratégie :</b> ${escapeHtml(plan.strategy)}</p>` : ""}
       ${plan.priorities.length > 0 ? `<ol class="plan-priorities">${plan.priorities.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ol>` : ""}
       <ul class="plan-steps">
@@ -272,6 +273,27 @@ function planCard(plan) {
         `).join("")}
       </ul>
     </article>
+  `;
+}
+
+// Where a figure stands: achieved against target, the gap and the pace needed.
+// The figures are computed by the server from the business data.
+function objectiveGauge(measure) {
+  return `
+    <div class="objective-gauge ${measure.reached ? "reached" : ""}">
+      <div class="objective-figures">
+        <span><small>${escapeHtml(measure.label)}</small><strong>${escapeHtml(formatDh(measure.achieved))}</strong></span>
+        <span><small>Objectif</small><strong>${escapeHtml(formatDh(measure.target))}</strong></span>
+        <span><small>Reste à faire</small><strong>${escapeHtml(formatDh(measure.gap))}</strong></span>
+        <span><small>Par jour restant</small><strong>${escapeHtml(formatDh(measure.pacePerDay))}</strong></span>
+      </div>
+      <div class="progress" title="${measure.percent} %"><span style="width:${measure.percent}%"></span></div>
+      <p class="progress-label">
+        ${measure.percent} % · du ${escapeHtml(formatIsoDay(measure.period.from))} au ${escapeHtml(formatIsoDay(measure.period.to))} · ${measure.period.daysLeft} jour(s) restant(s)
+        · devis ouverts : ${measure.openQuotes.count} (${escapeHtml(formatDh(measure.openQuotes.amount))})
+        ${measure.demo ? "· <em>données de démonstration</em>" : ""}
+      </p>
+    </div>
   `;
 }
 
@@ -310,7 +332,7 @@ function renderPlans(plans) {
       <div class="all-clear">
         <span class="badge">${icon("route")}</span>
         <h3>Aucun plan pour le moment</h3>
-        <p>Demandez au Director « Qu'est-ce qui risque de bloquer cette semaine ? » : il établit un plan et le suit ici.</p>
+        <p>Donnez un objectif au Director, par exemple « Je veux 100 000 DH de chiffre d'affaires ce mois » : il établit la stratégie, répartit le travail entre les responsables et la suit ici.</p>
       </div>
     `;
     return;
@@ -325,6 +347,7 @@ function renderPlans(plans) {
         </div>
         <span class="tag ${plan.status === "active" ? "info" : plan.status === "done" ? "ok" : ""}">${escapeHtml(PLAN_STATUS_LABELS[plan.status] ?? plan.status)}</span>
       </header>
+      ${plan.measure ? objectiveGauge(plan.measure) : ""}
       <div class="progress" title="${plan.progress.done}/${plan.progress.total} étapes">
         <span style="width:${plan.progress.percent}%"></span>
       </div>
@@ -509,7 +532,7 @@ function documentCard(entry, index) {
         <span class="doc-icon">${icon("file")}</span>
         <div>
           <strong>${escapeHtml(DOCUMENT_LABELS[preview.documentType] ?? preview.documentType)} n° ${escapeHtml(preview.documentNumber)}</strong>
-          <span>${escapeHtml(preview.client.name)} · ${escapeHtml(preview.client.address)} · ${escapeHtml(preview.date)}</span>
+          <span>${escapeHtml(preview.client.name)} · ${escapeHtml(preview.client.address)} · ${escapeHtml(preview.date)}${entry.preparedBy ? ` · préparé par ${escapeHtml(formatAgent(entry.preparedBy))}` : ""}</span>
         </div>
         <span class="tag warning doc-status">À valider</span>
       </header>

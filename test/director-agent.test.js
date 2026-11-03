@@ -8,15 +8,16 @@ import { createDirectorAgent } from "../src/agent/director-agent.js";
 import { buildAuthenticatedApi } from "../test-support/api-auth.js";
 
 // A stand-in for the OpenAI client: it plays back the turns a model would take,
-// and records what it was sent. Every client name below is invented.
-function scriptedClient(turns) {
+// and records what it was sent. The Director and the agents each follow their
+// own script, told apart by their instructions. Every client name is invented.
+function scriptedClient(turns, agentTurns = []) {
   const calls = [];
   return {
     calls,
     responses: {
       async create(payload) {
         calls.push(JSON.parse(JSON.stringify(payload)));
-        const turn = turns.shift();
+        const turn = payload.instructions.startsWith("Tu es le Director IA") ? turns.shift() : agentTurns.shift();
         if (turn instanceof Error) {
           throw turn;
         }
@@ -47,6 +48,8 @@ const QUOTE_ARGS = Object.freeze({
   numero: ""
 });
 
+const toCommercial = (mission) => toolCall("deleguer_a_un_agent", { agent: "commercial", mission }, "d1");
+
 async function createApi(t, client) {
   const repository = new InMemoryRepository();
   const outputDir = await mkdtemp(join(tmpdir(), "hkids-agent-"));
@@ -55,6 +58,8 @@ async function createApi(t, client) {
     client,
     documentService,
     clock: () => new Date("2026-11-02T10:00:00Z"),
+    toolRegistry: { list: () => [] },
+    executeTool: async () => ({ ok: true, donnees: null }),
     runDirectorRequest: async ({ message }) => ({
       message,
       summary: { headline: "Point complete", minimumSections: { "A ENCAISSER": [{ label: "Client Exemple - 5000 MAD - en retard de 2 jour(s)" }] }, domainSources: [] }
@@ -68,26 +73,35 @@ async function createApi(t, client) {
   return { inject };
 }
 
-test("one sentence becomes a quote the agent fills in itself, ready for validation", async (t) => {
-  const client = scriptedClient([toolCall("preparer_document", QUOTE_ARGS), textReply("Devis n° 164 prêt pour Meriem Exemple : 3 000,00 DH TTC.")]);
+test("the Director does not write the quote: it hands it to the Commercial, who prepares it for validation", async (t) => {
+  const client = scriptedClient(
+    [toCommercial("Devis pour Meriem Exemple, Marrakech : 1 lit nuage à 3000 DH TTC."), textReply("Le Commercial a préparé le devis n° 164 pour Meriem Exemple : 3 000,00 DH TTC.")],
+    [toolCall("preparer_document", QUOTE_ARGS, "c1"), textReply("Devis n° 164 prêt : 3000 DH TTC.")]
+  );
   const { inject } = await createApi(t, client);
 
-  const response = await inject({ method: "POST", url: "/api/agent/chat", payload: { message: "fais moi un devis pour meriem un lit nuage 3000dhs" } });
+  const response = await inject({ method: "POST", url: "/api/agent/chat", payload: { message: "fais moi un devis pour meriem a marrakech un lit nuage 3000dhs" } });
   const body = JSON.parse(response.body);
 
   assert.equal(response.statusCode, 200, response.body);
   assert.match(body.reply, /164/);
+  const directorTools = client.calls[0].tools.map((tool) => tool.name);
+  assert.ok(!directorTools.includes("preparer_document"), "the Director executes nothing itself");
+  assert.ok(directorTools.includes("mesurer_objectif"));
+
   assert.equal(body.documents.length, 1);
-  const [{ input, preview }] = body.documents;
+  const [{ input, preview, preparedBy }] = body.documents;
+  assert.equal(preparedBy, "commercial");
   assert.equal(input.documentType, "quote");
   assert.equal(input.documentNumber, "164", "the quote series continues after 163, issued by hand");
   assert.equal(preview.document.totals.totalTtc, 3000, "3000 DH is read as TTC");
   assert.equal(preview.document.totals.totalHt, 2500);
   assert.equal(preview.document.client.name, "Meriem Exemple");
 
-  // The tool result went back to the model, with the figures it must announce.
-  const toolOutput = client.calls[1].input.find((item) => item.type === "function_call_output");
-  assert.match(toolOutput.output, /"total_ttc":3000/);
+  // The Commercial is offered the documents of its trade, not the invoice.
+  const commercialCall = client.calls.find((payload) => payload.instructions.includes("Tu es l'agent Commercial"));
+  const documentTool = commercialCall.tools.find((tool) => tool.name === "preparer_document");
+  assert.deepEqual(documentTool.parameters.properties.type.enum, ["devis", "bon_de_commande", "bon_de_livraison"]);
 
   // Nothing is generated until she validates: then the usual generation runs.
   const generated = await inject({
@@ -100,11 +114,19 @@ test("one sentence becomes a quote the agent fills in itself, ready for validati
 });
 
 test("the conversation is kept, so a missing address can be given in a second message", async (t) => {
-  const client = scriptedClient([
-    textReply("Quelle est l'adresse de Meriem ?"),
-    toolCall("preparer_document", QUOTE_ARGS),
-    textReply("Devis prêt.")
-  ]);
+  const client = scriptedClient(
+    [
+      toCommercial("Devis pour Meriem : 1 lit nuage à 3000 DH TTC."),
+      textReply("Quelle est l'adresse de Meriem ?"),
+      toCommercial("Devis pour Meriem Exemple, Marrakech : 1 lit nuage à 3000 DH TTC."),
+      textReply("Devis prêt.")
+    ],
+    [
+      textReply("Il manque l'adresse de la cliente."),
+      toolCall("preparer_document", QUOTE_ARGS, "c1"),
+      textReply("Devis prêt.")
+    ]
+  );
   const { inject } = await createApi(t, client);
 
   const first = JSON.parse((await inject({ method: "POST", url: "/api/agent/chat", payload: { message: "un devis pour meriem, lit nuage 3000" } })).body);
@@ -118,21 +140,23 @@ test("the conversation is kept, so a missing address can be given in a second me
   })).body);
   assert.equal(second.conversationId, first.conversationId);
   assert.equal(second.documents.length, 1);
-  const sentHistory = client.calls[1].input.map((item) => item.content).filter(Boolean);
-  assert.deepEqual(sentHistory.slice(0, 1), ["un devis pour meriem, lit nuage 3000"]);
+  const directorCalls = client.calls.filter((payload) => payload.instructions.startsWith("Tu es le Director IA"));
+  assert.equal(directorCalls[2].input[0].content, "un devis pour meriem, lit nuage 3000", "the second turn still sees the first");
 });
 
-test("a document the rules refuse comes back to the model as errors to ask about", async (t) => {
-  const client = scriptedClient([
-    toolCall("preparer_document", { ...QUOTE_ARGS, type: "facture" }),
-    textReply("Quel est le numéro du devis lié ?")
-  ]);
+test("a document outside an agent's trade, or that the rules refuse, comes back as errors", async (t) => {
+  const client = scriptedClient(
+    [toCommercial("Facture pour Meriem."), textReply("Quel est le numéro du devis lié ?")],
+    [toolCall("preparer_document", { ...QUOTE_ARGS, type: "facture" }, "c1"), textReply("Je ne fais pas les factures.")]
+  );
   const { inject } = await createApi(t, client);
 
   const body = JSON.parse((await inject({ method: "POST", url: "/api/agent/chat", payload: { message: "une facture pour meriem" } })).body);
   assert.equal(body.documents.length, 0);
-  const toolOutput = JSON.parse(client.calls[1].input.find((item) => item.type === "function_call_output").output);
+  const commercialTurn = client.calls.find((payload) => payload.instructions.includes("Tu es l'agent Commercial") && payload.input.some((item) => item.type === "function_call_output"));
+  const toolOutput = JSON.parse(commercialTurn.input.find((item) => item.type === "function_call_output").output);
   assert.equal(toolOutput.ok, false);
+  assert.match(toolOutput.erreur, /pas du ressort/);
 });
 
 test("a question about the company runs the team and returns its report", async (t) => {

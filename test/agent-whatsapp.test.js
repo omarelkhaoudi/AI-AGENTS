@@ -59,19 +59,23 @@ test("an agent's follow-up comes back as a WhatsApp message to send, not as text
 test("the same message prepared twice for one recipient is kept once, in its latest version", async (t) => {
   const isDirector = (p) => p.instructions.startsWith("Tu es le Director IA");
   const draft = (text, id) => ({ output: [{ type: "function_call", name: "preparer_message_whatsapp", call_id: id, arguments: JSON.stringify({ destinataire: "Client Exemple", telephone: "", type: "relance_paiement", message: text }) }] });
+  let financeTurns = 0;
   let directorTurns = 0;
   const client = { responses: { create: async (payload) => {
-    if (!isDirector(payload)) {
-      throw new Error("no agent in this test");
+    if (isDirector(payload)) {
+      directorTurns += 1;
+      return directorTurns === 1
+        ? { output: [{ type: "function_call", name: "deleguer_a_un_agent", call_id: "d1", arguments: JSON.stringify({ agent: "finance", mission: "Relancer Client Exemple." }) }] }
+        : { output_text: "Relance prête.", output: [] };
     }
-    directorTurns += 1;
-    if (directorTurns === 1) {
+    financeTurns += 1;
+    if (financeTurns === 1) {
       return draft("Première version", "m1");
     }
-    if (directorTurns === 2) {
+    if (financeTurns === 2) {
       return draft("Version corrigée", "m2");
     }
-    return { output_text: "Relance prête.", output: [] };
+    return { output_text: "Relance préparée.", output: [] };
   } } };
   const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository(), agentClient: client });
   t.after(() => app.close());

@@ -5,11 +5,14 @@ Directeur** qui comprend une demande, la planifie, sollicite les agents
 spécialisés, lit les données métier et produit une synthèse exploitable.
 
 Le point d'entrée du dirigeant est unique : une conversation en langage naturel
-avec le **Director IA**, un vrai agent (modèle OpenAI) qui prépare lui-même les
-documents, fait travailler l'équipe d'agents, suit ses plans d'action dans le
-temps et ne fait rien d'irréversible sans validation humaine.
+avec le **Director IA**, un vrai agent (modèle OpenAI) qui joue le rôle d'un
+directeur général : il reçoit un objectif, mesure l'écart sur les données, bâtit
+la stratégie, donne à chaque responsable (Commercial, Marketing, Finance,
+Production, Achats…) sa part chiffrée, suit le plan dans le temps et ne fait rien
+d'irréversible sans validation humaine. L'exécution — devis, factures, messages —
+revient aux responsables.
 
-> **« Fais-moi un devis pour Meriem à Marrakech, un lit nuage à 3000 DH. »**
+> **« Je veux qu'on fasse 100 000 DH de chiffre d'affaires ce mois. Quelle stratégie ? »**
 >
 > **« Qu'est-ce qui risque de bloquer cette semaine et qu'est-ce que je dois décider ? »**
 
@@ -98,12 +101,15 @@ avec la clé, le message d'accueil indique « Director IA connecté ».
 
 ### Utiliser le Director
 
-On écrit au Director comme à une assistante, dans le **Briefing** :
+Le Director est un directeur, pas un assistant : il fixe la stratégie et délègue,
+les responsables exécutent. On lui écrit dans le **Briefing** :
 
 | Demande | Ce qui se passe |
 | --- | --- |
-| « Fais-moi un devis pour Meriem à Marrakech, un lit nuage à 3000 DH » | Le Director prépare le devis (numéro suivant, TVA, échéances 60/20/20). Un prix sans précision est TTC. S'il manque le client, l'adresse ou un prix, il le demande. Carte d'aperçu → **Valider et générer** → PDF + Word. |
-| Bon de commande, facture, bon de livraison | Même principe. Une facture doit citer son devis ou son BL. |
+| « Je veux qu'on fasse 100 000 DH de chiffre d'affaires ce mois » | Le Director **mesure** sur les données ce qui est déjà signé, l'écart, le rythme par jour restant et les devis ouverts ; il **bâtit la stratégie** (part des relances, part des nouvelles affaires, panier visé) et donne à chaque responsable **sa part chiffrée** : Commercial (ventes à signer), Marketing (demandes de devis à générer), Production (capacité de l'atelier), Achats (matières), Finance (encaissements). Chacun répond avec son plan ; le Director fait la synthèse, dit si le total couvre l'écart et liste les **décisions** qui reviennent à la direction (offre, budget, remise…). Le plan et la jauge de l'objectif se suivent dans la vue **Plans**. |
+| « Où en est l'objectif du mois ? » | Le Director remesure, donne réalisé / cible / écart / rythme, ce qui a bougé et relance les responsables en retard. |
+| « Fais un devis pour Meriem à Marrakech, un lit nuage à 3000 DH » | Le Director confie le devis au **Commercial**, qui le prépare (numéro suivant, TVA, 60/20/20 ; prix sans précision = TTC ; prix absent = catalogue). S'il manque une information, le Director la demande. Carte d'aperçu « préparé par Commercial » → **Valider et générer** → PDF + Word. |
+| Bon de commande, bon de livraison, facture | Même principe : Commercial pour le BC et le BL, **Finance** pour la facture, qui doit citer son devis ou son BL. |
 | « Combien dois-je encaisser cette semaine ? Prépare les relances » | Le Director délègue à **Finance** (et **Commercial**). Chaque relance devient une **carte WhatsApp** : numéro et texte modifiables, bouton **Envoyer via WhatsApp** qui ouvre WhatsApp pré-rempli. Rien ne part sans le clic d'Hiba. |
 | « Qu'est-ce qui risque de bloquer cette semaine ? » | Le Director affiche d'abord un **plan d'action** (objectif, stratégie, priorités, étapes par agent), fait travailler l'équipe, puis signale les **incohérences** entre métiers (production sans acompte, achat avant paiement…). |
 | « L'acompte Atlas est arrivé. Où en est le plan ? » | Le Director reprend le plan existant, coche l'étape confirmée, ajoute ce qui est débloqué et donne l'avancement. Les plans se suivent aussi dans la vue **Plans**. |
@@ -120,7 +126,7 @@ doivent jamais y aller.
 
 | Fichier | Rôle | Modèle |
 | --- | --- | --- |
-| `data/catalogue-hkids.xlsx` | Produits et prix TTC de base : le Director s'en sert quand Hiba ne donne pas le prix. Relu à chaque demande, sans redémarrage. | [`docs/catalogue-hkids.xlsx`](docs/catalogue-hkids.xlsx) |
+| `data/catalogue-hkids.xlsx` | Produits et prix TTC de base : le Commercial s'en sert quand Hiba ne donne pas le prix, et pour bâtir les ventes d'un objectif. Relu à chaque demande, sans redémarrage. | [`docs/catalogue-hkids.xlsx`](docs/catalogue-hkids.xlsx) |
 | `data/plans-director.json` | Les plans d'action du Director, créés et mis à jour automatiquement. | — |
 
 Les dossiers réels (clients, devis, commandes, paiements, achats) se chargent dans
@@ -694,7 +700,9 @@ OPENAI_REASONING_EFFORT="low"
 
 Ce que fait le modèle et ce qu'il ne fait pas :
 
-- il **choisit et remplit des outils** ; chaque montant est recalculé par le code
+- il **choisit et remplit des outils** ; l'avancement d'un objectif (réalisé,
+  écart, rythme, devis ouverts) est **calculé par le code**
+  (`src/agent/sales-objective.js`), jamais estimé par le modèle ; chaque montant est recalculé par le code
   et chaque document passe par la même validation et le même aperçu qu'un
   document saisi à la main ;
 - les agents lisent leurs données par `ToolExecutionService` : permissions,
@@ -921,12 +929,12 @@ pas du JSON), `N8N_REQUEST_TIMEOUT`, `N8N_REQUEST_FAILED`.
 
 | Domaine | État |
 | --- | --- |
-| Director IA conversationnel | ✅ Comprend une demande libre, demande ce qui manque, prépare les documents, délègue, synthétise |
+| Director IA conversationnel | ✅ Rôle de directeur : objectif chiffré mesuré sur les données, stratégie, part de chaque responsable, synthèse et décisions ; délègue toute l'exécution |
 | Équipe d'agents IA | ✅ 9 agents (dont les 5 + Community Manager du schéma validé), outils et droits propres, testés en réel |
 | Plan d'action et suivi | ✅ Plan visible, étapes par agent, échéances, statuts, journal, repris d'un jour à l'autre (vue **Plans**) |
 | Cohérence entre métiers | ✅ Contrôles calculés : production sans acompte, achat avant paiement, livré non payé… |
-| Documents H-KIDS | ✅ Devis, bon de commande, facture, BL dans le design H-KIDS, PDF + Word, préparés par le Director |
-| Catalogue | ✅ Lu par le Director — **à remplir par l'entreprise** (`data/catalogue-hkids.xlsx`) |
+| Documents H-KIDS | ✅ Devis, bon de commande, facture, BL dans le design H-KIDS, PDF + Word, préparés par le Commercial ou la Finance |
+| Catalogue | ✅ Lu par le Commercial — **à remplir par l'entreprise** (`data/catalogue-hkids.xlsx`) |
 | Messages WhatsApp | 🟡 Rédigés par les agents, envoyés par Hiba depuis WhatsApp (lien `wa.me`) ; pas d'envoi automatique |
 | Orchestration, permissions, audit | ✅ Moindre privilège, approbation humaine, journal |
 | PostgreSQL | ✅ Migrations versionnées, équivalence mémoire / base vérifiée |

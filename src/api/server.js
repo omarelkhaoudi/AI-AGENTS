@@ -1,4 +1,5 @@
-import { DirectorAgentError, createDirectorAgentFromEnv } from "../agent/director-agent.js";
+import { DirectorAgentError, createDirectorAgentFromEnv, withObjectiveMeasure } from "../agent/director-agent.js";
+import { OBJECTIVE_DOMAINS } from "../agent/sales-objective.js";
 import Fastify from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import { readFile } from "node:fs/promises";
@@ -138,6 +139,16 @@ export function buildApi({
     }
     return checkConsistency(records);
   };
+  // An objective is measured on the same records: quotes, orders, payments.
+  const loadObjectiveRecords = async () => {
+    const source = directoryMemory.getBusinessDataSource?.()?.recordSource;
+    const records = {};
+    for (const domain of OBJECTIVE_DOMAINS) {
+      records[domain] = await directoryMemory.listBusinessRecords({ domain, agentId: "director", ...(source ? { source } : {}) });
+    }
+    return records;
+  };
+  const measured = (plan) => withObjectiveMeasure(plan, { loadObjectiveRecords });
   const plans = planStore ?? createMemoryPlanStore();
   const agent = directorAgent ?? createDirectorAgentFromEnv({
     documentService: hkidsDocuments,
@@ -145,6 +156,7 @@ export function buildApi({
     toolRegistry: teamToolRegistry,
     executeTool: executeTeamTool,
     checkCoherence: checkTeamCoherence,
+    loadObjectiveRecords,
     planStore: plans,
     client: agentClient
   });
@@ -444,7 +456,7 @@ export function buildApi({
 
     app.get("/api/plans", readRouteOptions(), async (request) => {
       const status = ["active", "done", "abandoned"].includes(request.query?.status) ? request.query.status : null;
-      return { plans: await plans.list({ status }) };
+      return { plans: await Promise.all((await plans.list({ status })).map(measured)) };
     });
 
     // Hiba can move a step herself from the cockpit; the journal says it was her.
@@ -455,7 +467,7 @@ export function buildApi({
           result: typeof request.body?.result === "string" && request.body.result.trim() !== "" ? request.body.result.trim() : null,
           by: request.principal.userId ?? "direction"
         });
-        return reply.code(200).send({ plan });
+        return reply.code(200).send({ plan: await measured(plan) });
       } catch (error) {
         if (error instanceof PlanStoreError) {
           return reply.code(error.code === "PLAN_NOT_FOUND" ? 404 : 400).send({ error: error.message, details: { code: error.code } });
@@ -470,7 +482,7 @@ export function buildApi({
         if (!status) {
           return reply.code(400).send({ error: "action must be terminer, abandonner or reouvrir." });
         }
-        return reply.code(200).send({ plan: await plans.close(request.params.id, status, { by: request.principal.userId ?? "direction" }) });
+        return reply.code(200).send({ plan: await measured(await plans.close(request.params.id, status, { by: request.principal.userId ?? "direction" })) });
       } catch (error) {
         if (error instanceof PlanStoreError) {
           return reply.code(404).send({ error: error.message, details: { code: error.code } });

@@ -4,37 +4,52 @@ Système d'exploitation intelligent de l'entreprise, organisé autour d'un **Age
 Directeur** qui comprend une demande, la planifie, sollicite les agents
 spécialisés, lit les données métier et produit une synthèse exploitable.
 
-Le point d'entrée du dirigeant est unique : une question en langage naturel.
+Le point d'entrée du dirigeant est unique : une conversation en langage naturel
+avec le **Director IA**, un vrai agent (modèle OpenAI) qui prépare lui-même les
+documents, fait travailler l'équipe d'agents, suit ses plans d'action dans le
+temps et ne fait rien d'irréversible sans validation humaine.
 
-> **« Fais-moi le point sur mon entreprise aujourd'hui. »**
+> **« Fais-moi un devis pour Meriem à Marrakech, un lit nuage à 3000 DH. »**
+>
+> **« Qu'est-ce qui risque de bloquer cette semaine et qu'est-ce que je dois décider ? »**
 
-Sur cette question, le Directeur sollicite **les 10 agents**, exécute **15
-étapes**, déduplique les signaux et rend un rapport en **10 rubriques**.
-
-> **Vous voulez juste démarrer ?** Allez directement à
-> [Démarrage rapide — Demo](#6-démarrage-rapide--demo). Trois commandes, aucune
-> base de données, aucun compte externe.
+> **Vous installez le projet ?** Suivez [Installation / Passation](#installation--passation)
+> juste en dessous. Sans clé OpenAI ni base de données, la
+> [démo](#6-démarrage-rapide--demo) démarre aussi en trois commandes.
 
 ---
 
-## Installation / Passation MVP
+## Installation / Passation
 
-Cette section est le chemin recommandé pour remettre la branche propre à Hiba et vérifier le projet comme sur un poste neuf.
+Cette section est le chemin recommandé pour installer le projet sur un poste neuf
+(par exemple chez Hiba) et le vérifier. Comptez une vingtaine de minutes.
 
 ### Prérequis
 
-- Node.js **20 ou supérieur**
-- Git
+- **Node.js 20 ou supérieur** — <https://nodejs.org>, bouton « LTS »
+- **Git** — <https://git-scm.com/download/win>
 - npm, fourni avec Node.js
+- **Une clé API OpenAI** du compte de l'entreprise (§20 du CDC) : c'est elle qui
+  fait du Director et des agents de vrais agents IA
 
-### Cloner la branche de livraison
+Vérifier dans PowerShell :
 
 ```powershell
-git clone --branch delivery/hkids-clean --single-branch https://github.com/omarelkhaoudi/AI-AGENTS.git
+node -v
+git --version
+```
+
+### Cloner
+
+```powershell
+git clone https://github.com/omarelkhaoudi/AI-AGENTS.git
 cd AI-AGENTS
 ```
 
-La branche attendue est `delivery/hkids-clean`, au commit `fda2545` ou à un commit de documentation plus récent issu de cette branche. `main` n'est pas la branche de passation.
+La branche de passation est **`main`** : elle contient le Director conversationnel,
+l'équipe d'agents IA, les documents H-KIDS, le suivi des plans et l'import des
+données réelles. L'ancienne branche `delivery/hkids-clean` a été intégrée à
+`main` et n'est plus la branche de référence.
 
 ### Installer
 
@@ -42,24 +57,27 @@ La branche attendue est `delivery/hkids-clean`, au commit `fda2545` ou à un com
 npm.cmd ci
 ```
 
-`npm ci` est recommandé pour une livraison : il respecte exactement `package-lock.json` et reproduit l'arbre de dépendances validé.
+`npm ci` respecte exactement `package-lock.json` et reproduit l'arbre de
+dépendances validé.
 
 ### Créer `.env`
 
 ```powershell
 Copy-Item .env.example .env
+notepad .env
 ```
 
-Pour une première démo navigateur, renseigner uniquement :
+Pour démarrer, renseigner :
 
 ```env
-NODE_ENV="development"
 AUTH_MODE="demo"
 PORT="3000"
 HOST="127.0.0.1"
+OPENAI_API_KEY="<la clé de l'entreprise, jamais commitée ni envoyée>"
 ```
 
-Ne jamais écrire de vraie clé, de jeton, de mot de passe ou de chaîne de connexion réelle dans `.env.example`, le code ou la documentation.
+`.env` est ignoré par Git. Ne jamais écrire de vraie clé, de mot de passe ou de
+chaîne de connexion dans `.env.example`, le code ou la documentation.
 
 ### Démarrer
 
@@ -67,35 +85,59 @@ Ne jamais écrire de vraie clé, de jeton, de mot de passe ou de chaîne de conn
 npm.cmd start
 ```
 
-Vérifier ensuite :
+Ouvrir **<http://127.0.0.1:3000/app/>**. Si le port 3000 est déjà pris,
+mettre `PORT="3100"` dans `.env`, redémarrer et ouvrir
+<http://127.0.0.1:3100/app/>.
 
-```text
-http://127.0.0.1:3000/health
-http://127.0.0.1:3000/app/
-```
+> Utiliser `127.0.0.1` plutôt que `localhost` : sur certains postes, une autre
+> application écoute le même port sur toutes les adresses et `localhost` peut
+> tomber sur elle.
 
-Si le port `3000` est déjà occupé, modifier seulement cette ligne dans `.env` :
+Sans `OPENAI_API_KEY`, le cockpit fonctionne avec l'ancien Director à mots-clés ;
+avec la clé, le message d'accueil indique « Director IA connecté ».
 
-```env
-PORT="3100"
-```
+### Utiliser le Director
 
-Puis redémarrer et ouvrir :
+On écrit au Director comme à une assistante, dans le **Briefing** :
 
-```text
-http://127.0.0.1:3100/health
-http://127.0.0.1:3100/app/
-```
+| Demande | Ce qui se passe |
+| --- | --- |
+| « Fais-moi un devis pour Meriem à Marrakech, un lit nuage à 3000 DH » | Le Director prépare le devis (numéro suivant, TVA, échéances 60/20/20). Un prix sans précision est TTC. S'il manque le client, l'adresse ou un prix, il le demande. Carte d'aperçu → **Valider et générer** → PDF + Word. |
+| Bon de commande, facture, bon de livraison | Même principe. Une facture doit citer son devis ou son BL. |
+| « Combien dois-je encaisser cette semaine ? Prépare les relances » | Le Director délègue à **Finance** (et **Commercial**). Chaque relance devient une **carte WhatsApp** : numéro et texte modifiables, bouton **Envoyer via WhatsApp** qui ouvre WhatsApp pré-rempli. Rien ne part sans le clic d'Hiba. |
+| « Qu'est-ce qui risque de bloquer cette semaine ? » | Le Director affiche d'abord un **plan d'action** (objectif, stratégie, priorités, étapes par agent), fait travailler l'équipe, puis signale les **incohérences** entre métiers (production sans acompte, achat avant paiement…). |
+| « L'acompte Atlas est arrivé. Où en est le plan ? » | Le Director reprend le plan existant, coche l'étape confirmée, ajoute ce qui est débloqué et donne l'avancement. Les plans se suivent aussi dans la vue **Plans**. |
+
+L'équipe : Commercial, Finance, Production, Achats, Marketing et Community
+Manager (le périmètre validé par Hiba), plus RH, SAV et Juridique. Chaque agent ne
+lit que ses propres données (§22 du CDC), rédige et propose ; il n'envoie, ne paie
+et ne commande jamais rien lui-même.
+
+### Les fichiers de l'entreprise (`data/`)
+
+Le dossier `data/` est **ignoré par Git** : le dépôt est public, ces fichiers ne
+doivent jamais y aller.
+
+| Fichier | Rôle | Modèle |
+| --- | --- | --- |
+| `data/catalogue-hkids.xlsx` | Produits et prix TTC de base : le Director s'en sert quand Hiba ne donne pas le prix. Relu à chaque demande, sans redémarrage. | [`docs/catalogue-hkids.xlsx`](docs/catalogue-hkids.xlsx) |
+| `data/plans-director.json` | Les plans d'action du Director, créés et mis à jour automatiquement. | — |
+
+Les dossiers réels (clients, devis, commandes, paiements, achats) se chargent dans
+la base avec le classeur [`docs/modele-donnees-hkids.xlsx`](docs/modele-donnees-hkids.xlsx) :
+voir [Importer les données réelles H-KIDS](#importer-les-données-réelles-h-kids).
+Tant qu'ils ne sont pas importés, les agents travaillent sur des **données de
+démonstration** et le disent.
 
 ### Documents H-KIDS
 
-Toutes les pièces H-KIDS — **facture, bon de livraison et bon de commande** — sont
-dessinées par le code, dans le design adopté avec les bons de commande et les
-devis : logo et coordonnées de la société (adresse du registre, DOUAR HARAKAT N
-2153 TASSELTANT SAADA MARRAKECH), titre et objet, tableau à en-tête vert, totaux
-sur bandeau vert, conditions de règlement, puis selon la pièce un bloc « Bon pour
-accord » (commande) ou « Réception de la livraison » (BL). **Aucun gabarit n'est
-à fournir** : seuls le logo du dépôt et une police `.ttf` sont nécessaires.
+Toutes les pièces H-KIDS — **devis, bon de commande, facture et bon de livraison** —
+sont dessinées par le code, dans le design adopté avec les bons de commande :
+logo et adresse du registre (DOUAR HARAKAT N 2153 TASSELTANT SAADA MARRAKECH),
+tableau à en-tête vert, totaux sur bandeau vert, conditions de règlement, puis
+selon la pièce un bloc « Bon pour accord » ou « Réception de la livraison ».
+**Aucun gabarit n'est à fournir.** Les fichiers générés vont dans
+`assets/documents/generated/`, ignoré par Git.
 
 ---
 
@@ -217,12 +259,12 @@ où une commande diffère selon le système, les trois variantes sont données.
 ## 4. Installation
 
 ```powershell
-git clone --branch delivery/hkids-clean --single-branch https://github.com/omarelkhaoudi/AI-AGENTS.git
+git clone https://github.com/omarelkhaoudi/AI-AGENTS.git
 cd AI-AGENTS
 npm.cmd ci
 ```
 
-`npm ci` est recommandé pour reproduire exactement le lockfile de la livraison.
+`npm ci` est recommandé pour reproduire exactement le lockfile de `main`.
 Aucune étape de compilation : le projet est en JavaScript ESM natif.
 
 ---
@@ -633,23 +675,41 @@ Variables et messages d'erreur :
 
 ## 11. OpenAI
 
-**Désactivé par défaut, et le projet fonctionne entièrement sans.** Le
-planificateur déterministe couvre le périmètre métier ; aucun appel réseau vers
-OpenAI n'est effectué tant que la configuration ne le demande pas.
-
-Pour activer un vrai modèle :
+Le **Director IA conversationnel** et l'équipe d'agents utilisent OpenAI dès que
+`OPENAI_API_KEY` est renseignée. Sans clé, le cockpit garde le Director à
+mots-clés et le projet fonctionne entièrement hors ligne.
 
 ```text
-PLANNER_PROVIDER="llm_openai"
-OPENAI_API_KEY="<votre cle, jamais commitee>"
+OPENAI_API_KEY="<la clé de l'entreprise, jamais commitée>"
 OPENAI_MODEL="gpt-5"
+OPENAI_REASONING_EFFORT="low"
 ```
 
-`PLANNER_PROVIDER` accepte `deterministic` (défaut), `stub_llm`, `llm_mock` et
-`llm_openai`. Les trois premiers n'atteignent aucun réseau.
+- `OPENAI_MODEL` : `gpt-5` par défaut.
+- `OPENAI_REASONING_EFFORT` : `minimal`, `low` (défaut), `medium` ou `high`, pour
+  les modèles qui raisonnent (GPT-5, série o). `low` ramène une réponse à deux
+  agents d'environ 80 s à environ 30 s.
+- Temps de réponse constatés : quelques secondes pour un document, 20 à 75 s
+  quand plusieurs agents travaillent.
 
-Détail : [`docs/PLANNER_CONFIGURATION.md`](docs/PLANNER_CONFIGURATION.md).
-Variables : [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md).
+Ce que fait le modèle et ce qu'il ne fait pas :
+
+- il **choisit et remplit des outils** ; chaque montant est recalculé par le code
+  et chaque document passe par la même validation et le même aperçu qu'un
+  document saisi à la main ;
+- les agents lisent leurs données par `ToolExecutionService` : permissions,
+  domaines de sécurité et journal d'audit s'appliquent comme au planificateur ;
+- les incohérences entre métiers sont **calculées par le code**
+  (`src/agent/consistency.js`), jamais rédigées par le modèle ;
+- rien n'est envoyé, payé ni commandé par un agent : messages WhatsApp, documents
+  et plans attendent la validation de la direction.
+
+Le code : `src/agent/` (Director, équipe, catalogue, WhatsApp, plans,
+cohérence) et les routes `/api/agent/*` et `/api/plans*`.
+
+L'ancien planificateur LLM (`PLANNER_PROVIDER="llm_openai"`) reste disponible
+pour l'endpoint `/api/director/requests` ; il est indépendant de l'agent
+conversationnel. Détail : [`docs/PLANNER_CONFIGURATION.md`](docs/PLANNER_CONFIGURATION.md).
 
 ---
 
@@ -861,21 +921,19 @@ pas du JSON), `N8N_REQUEST_TIMEOUT`, `N8N_REQUEST_FAILED`.
 
 | Domaine | État |
 | --- | --- |
-| Orchestration | ✅ Plan validé, exécution étape par étape, consolidation |
-| Les 10 agents | ✅ Missions, permissions et outils réels |
-| Tools | ✅ **25** enregistrés — 26 avec la passerelle n8n |
-| Business Memory | ✅ 15 domaines, contrat unique |
-| PostgreSQL | ✅ 26 modèles, **6** migrations, équivalence vérifiée |
-| Sécurité | ✅ Authentification, moindre privilège, domaines de sécurité |
-| Validation humaine | ✅ 3 niveaux, approbation obligatoire pour toute action non `read_analyze` |
-| Audit | ✅ Événements structurés, causes sans message brut |
-| Director §31 | ✅ Les 10 rubriques |
-| Documents H-KIDS | ✅ Facture, BL et bon de commande dessinés dans le design H-KIDS, PDF + Word |
-| Interface | 🟡 Cockpit fonctionnel, volontairement minimal — **pas de saisie de jeton** |
-| Planificateur LLM | 🟡 Implémenté derrière une interface, **désactivé par défaut** |
-| n8n / workflows | 🟡 Implémenté et testé hors ligne, **désactivé par défaut, jamais validé par un appel réel** |
-| Voix | 🔴 **Non intégré** — emplacement réservé dans le cockpit |
-| Données réelles de l'entreprise | 🔴 **Non raccordées** — les données livrées sont des données de démonstration |
+| Director IA conversationnel | ✅ Comprend une demande libre, demande ce qui manque, prépare les documents, délègue, synthétise |
+| Équipe d'agents IA | ✅ 9 agents (dont les 5 + Community Manager du schéma validé), outils et droits propres, testés en réel |
+| Plan d'action et suivi | ✅ Plan visible, étapes par agent, échéances, statuts, journal, repris d'un jour à l'autre (vue **Plans**) |
+| Cohérence entre métiers | ✅ Contrôles calculés : production sans acompte, achat avant paiement, livré non payé… |
+| Documents H-KIDS | ✅ Devis, bon de commande, facture, BL dans le design H-KIDS, PDF + Word, préparés par le Director |
+| Catalogue | ✅ Lu par le Director — **à remplir par l'entreprise** (`data/catalogue-hkids.xlsx`) |
+| Messages WhatsApp | 🟡 Rédigés par les agents, envoyés par Hiba depuis WhatsApp (lien `wa.me`) ; pas d'envoi automatique |
+| Orchestration, permissions, audit | ✅ Moindre privilège, approbation humaine, journal |
+| PostgreSQL | ✅ Migrations versionnées, équivalence mémoire / base vérifiée |
+| Interface | ✅ Cockpit : Briefing (conversation), Plans, Validations, Documents, Devis, Dossier, Équipe |
+| Données réelles de l'entreprise | 🔴 **En attente** : import prêt (`npm run data:import-hkids`), fichiers à remplir par Hiba |
+| Accès en ligne | 🔴 **Non fait** : fonctionne en local ; hébergement et comptes nominatifs à prévoir |
+| Voix | 🔴 **Non intégré** |
 
 ### Sécurité et validation humaine
 
@@ -893,24 +951,27 @@ exigent, ni plus ni moins. Ce modèle est figé par un test.
 
 ### Limites assumées
 
-- Les données métier sont **de démonstration**.
-- La passerelle n8n n'a pas été validée par un appel réel.
-- Le cockpit ne sait pas saisir un jeton : le mode `token` s'utilise via l'API.
-- Un devis approuvé n'est **pas** persisté comme devis : l'outil le prépare,
-  l'approbation le débloque, rien ne l'archive encore.
+- Tant que le classeur d'Hiba n'est pas importé, les agents travaillent sur des
+  **données de démonstration** (« Demo Client Atlas ») et le signalent.
+- Une confirmation donnée au Director (« l'acompte est arrivé ») met à jour le
+  **plan**, pas encore les **données métier** : elles se mettent à jour par un
+  nouvel import du classeur.
+- Les conversations avec le Director sont gardées en mémoire du serveur : un
+  redémarrage les efface (les plans, eux, sont conservés).
+- Le mode `AUTH_MODE="demo"` donne l'accès à quiconque atteint le serveur : il
+  convient à un poste local, pas à un accès en ligne.
 - Il n'existe ni sauvegarde planifiée ni restauration à un instant donné.
-- Le rang des enregistrements métier est stocké dans un champ JSON plutôt que
-  dans une colonne indexée.
 
 ### Prochaines étapes
 
-1. Compléter les agrégats métier restants du §29 du CDC.
-2. Valider la passerelle n8n par un premier appel réel.
-3. Raccorder les données réelles de l'entreprise — **après validation
-   explicite**.
-4. Enrichir le cockpit, à commencer par la saisie d'un jeton.
-5. Commandes vocales, après validation du noyau.
-6. Sauvegardes planifiées et supervision avant toute mise en production.
+1. Importer les données réelles et le catalogue d'Hiba.
+2. Héberger le système (serveur au nom de l'entreprise) avec un compte par
+   personne (Hiba, Hicham, Omar).
+3. Faire mettre à jour les données métier par les confirmations données au
+   Director, et conserver les conversations.
+4. Envoi WhatsApp automatique (WhatsApp Business Platform de Meta, modèles
+   approuvés) si le volume le justifie.
+5. Sauvegardes planifiées avant toute mise en production.
 
 ---
 

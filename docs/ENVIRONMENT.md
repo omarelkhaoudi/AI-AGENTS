@@ -164,11 +164,11 @@ Une valeur **vide** vaut « non configurée » pour les trois variables : copier
 
 ## Validation de la passation
 
-Dernière validation réalisée sur un clone propre de `delivery/hkids-clean` :
+Dernière validation réalisée sur `main` :
 
 ```text
 npm ci                 PASS
-npm test               810 tests / 776 passed / 34 skipped / 0 failed
+npm test               1121 tests / 1087 passed / 34 skipped / 0 failed
 npm run lint           PASS
 npm run build          PASS
 npm run typecheck      PASS
@@ -228,24 +228,28 @@ jeton dans un corps d'erreur, il est masqué avant journalisation.
 
 ## IA
 
-**Optionnel. Désactivé par défaut, et le projet fonctionne entièrement sans.**
+**Le Director conversationnel et l'équipe d'agents s'activent avec
+`OPENAI_API_KEY`.** Sans clé, le cockpit garde le Director à mots-clés et aucun
+appel réseau vers OpenAI n'a lieu.
 
 | Variable | Défaut | Obligatoire | Rôle |
 | --- | --- | --- | --- |
-| `PLANNER_PROVIDER` | `deterministic` | non | `deterministic`, `stub_llm`, `llm_mock`, `llm_openai`. |
-| `LLM_PROVIDER` | `mock` | non | Fournisseur du planificateur LLM. |
-| `OPENAI_API_KEY` | vide | **si `llm_openai`** | **Secret.** |
-| `OPENAI_MODEL` | `gpt-5` | non | Modèle utilisé. |
+| `OPENAI_API_KEY` | vide | **pour le Director IA** | **Secret.** Clé du compte OpenAI de l'entreprise. |
+| `OPENAI_MODEL` | `gpt-5` | non | Modèle du Director et des agents. |
+| `OPENAI_REASONING_EFFORT` | `low` | non | `minimal`, `low`, `medium`, `high` (modèles qui raisonnent). |
+| `HKIDS_CATALOGUE_PATH` | `data/catalogue-hkids.xlsx` | non | Catalogue produits lu par le Director. |
+| `HKIDS_PLANS_PATH` | `data/plans-director.json` | non | Où les plans d'action sont conservés. |
+| `PLANNER_PROVIDER` | `deterministic` | non | Planificateur de `/api/director/requests` : `deterministic`, `stub_llm`, `llm_mock`, `llm_openai`. |
+| `LLM_PROVIDER` | `mock` | non | Fournisseur de ce planificateur. |
 | `AI_PROVIDER` | `openai` | non | Frontière fournisseur IA, distincte du planificateur. |
 | `AI_PROVIDER_API_KEY` | vide | **si activé** | **Secret.** |
 | `AI_PROVIDER_MODEL` | `gpt-5` | non | Modèle de la frontière IA. |
 | `AI_PROVIDER_ENABLED` | `false` | non | `"true"` active la frontière. |
 
-Seul `PLANNER_PROVIDER="llm_openai"` conduit à un appel réseau vers OpenAI. Les
-trois autres planificateurs n'atteignent aucun réseau. `deterministic`, le
-défaut, couvre le périmètre métier du CDC.
+Le dossier `data/` est ignoré par Git : le dépôt est public, le catalogue et les
+plans de l'entreprise n'y vont jamais.
 
-Détail : [`PLANNER_CONFIGURATION.md`](PLANNER_CONFIGURATION.md).
+Détail du planificateur : [`PLANNER_CONFIGURATION.md`](PLANNER_CONFIGURATION.md).
 
 ---
 

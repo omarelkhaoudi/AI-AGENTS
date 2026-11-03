@@ -19,7 +19,8 @@
     "db:seed:business": "node scripts/db-seed-business.mjs",
     "auth:create-token": "node scripts/create-api-token.mjs",
     "data:ingest": "node scripts/ingest-business-data.mjs",
-    "data:import-hkids": "node scripts/import-hkids-workbook.mjs"
+    "data:import-hkids": "node scripts/import-hkids-workbook.mjs",
+    "css:build": "tailwindcss -i src/frontend/tailwind.css -o src/frontend/styles.css --minify"
   },
   "engines": {
     "node": ">=20"
@@ -36,7 +37,9 @@
     "yazl": "^3.3.1"
   },
   "devDependencies": {
-    "prisma": "^7.9.1"
+    "@tailwindcss/cli": "4.3.4",
+    "prisma": "^7.9.1",
+    "tailwindcss": "4.3.4"
   },
   "prisma": {
     "seed": "node scripts/db-seed.mjs"

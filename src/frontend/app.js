@@ -1621,7 +1621,7 @@ globalThis.addEventListener?.("keydown", (event) => {
 function renderGreeting(now = new Date()) {
   const hour = now.getHours();
   const greeting = hour < 5 || hour >= 18 ? "Bonsoir" : "Bonjour";
-  document.querySelector("#greeting").textContent = `${greeting}, que veux-tu faire ?`;
+  document.querySelector("#greeting").textContent = `${greeting}, que souhaitez-vous faire ?`;
   document.querySelector("#today-label").textContent = new Intl.DateTimeFormat("fr-FR", {
     weekday: "long",
     day: "numeric",

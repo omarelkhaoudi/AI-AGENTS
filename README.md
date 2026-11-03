@@ -273,6 +273,17 @@ npm.cmd ci
 `npm ci` est recommandé pour reproduire exactement le lockfile de `main`.
 Aucune étape de compilation : le projet est en JavaScript ESM natif.
 
+Le design du cockpit est écrit avec **Tailwind CSS** (`src/frontend/tailwind.css`
+et les classes de `index.html`). La feuille compilée `src/frontend/styles.css` est
+versionnée : rien à compiler pour utiliser le cockpit, et il marche hors ligne.
+Après une modification du design, recompiler :
+
+```powershell
+npm.cmd run css:build
+```
+
+Un test vérifie que `styles.css` correspond bien à la source.
+
 ---
 
 ## 5. Configuration `.env`
@@ -775,7 +786,7 @@ src/
   workflows/        Contrat des evenements de workflow
   persistence/      Depots memoire et Prisma
   observability/    Audit
-  frontend/         Le cockpit : index.html, app.js, styles.css
+  frontend/         Le cockpit : index.html, app.js, tailwind.css (source) → styles.css (compilé)
   demo/             Donnees de demonstration
   config.js         Lecture de la configuration
   load-dotenv.js    Chargement de .env, sans dependance

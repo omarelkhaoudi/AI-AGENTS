@@ -5,12 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
     <title>Director IA - AI Agents</title>
+    <meta name="theme-color" content="#18281f">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap">
     <link rel="stylesheet" href="/app/styles.css">
   </head>
-  <body>
+  <body class="min-h-dvh">
     <!-- Icon set: one symbol per glyph, drawn on a 24 grid with a 1.75 stroke. -->
     <svg width="0" height="0" style="position:absolute" aria-hidden="true">
       <defs>
@@ -46,112 +47,116 @@
       </defs>
     </svg>
 
-    <div class="app">
-      <aside class="sidebar" aria-label="Navigation">
-        <div class="brand">
-          <span class="brand-mark" aria-hidden="true">H</span>
-          <div class="brand-text">
-            <strong>Director IA</strong>
-            <span>H-KIDS · Équipe d'agents</span>
-          </div>
-        </div>
-
-        <nav class="nav" aria-label="Vues du cockpit">
-          <p class="nav-caption">Pilotage</p>
-          <button type="button" class="nav-item" data-view="director" aria-current="page">
-            <svg class="i" aria-hidden="true"><use href="#i-layout"/></svg><span class="nav-label">Briefing</span>
-          </button>
-          <button type="button" class="nav-item" data-view="plans">
-            <svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span class="nav-label">Plans</span>
-            <span class="nav-badge" id="plans-count" hidden>0</span>
-          </button>
-          <button type="button" class="nav-item" data-view="approvals">
-            <svg class="i" aria-hidden="true"><use href="#i-shield"/></svg><span class="nav-label">Validations</span>
-            <span class="nav-badge" id="approval-count" hidden>0</span>
-          </button>
-          <p class="nav-caption">Atelier</p>
-          <button type="button" class="nav-item" data-view="documents">
-            <svg class="i" aria-hidden="true"><use href="#i-file"/></svg><span class="nav-label">Documents</span>
-          </button>
-          <button type="button" class="nav-item" data-view="quotes">
-            <svg class="i" aria-hidden="true"><use href="#i-receipt"/></svg><span class="nav-label">Devis</span>
-          </button>
-          <button type="button" class="nav-item" data-view="file">
-            <svg class="i" aria-hidden="true"><use href="#i-package"/></svg><span class="nav-label">Dossier</span>
-          </button>
-          <button type="button" class="nav-item" data-view="team">
-            <svg class="i" aria-hidden="true"><use href="#i-users"/></svg><span class="nav-label">Équipe IA</span>
-          </button>
-        </nav>
-
-        <div class="sidebar-foot">
-          <div class="source-card">
-            <svg class="i" aria-hidden="true"><use href="#i-database"/></svg>
-            <div>
-              <span class="status-pill" id="api-status">Demo mock</span>
-              <p>Aucune action sensible sans votre accord.</p>
+    <div class="app min-h-dvh md:grid md:grid-cols-[272px_minmax(0,1fr)]">
+      <aside class="sidebar fixed inset-x-0 bottom-0 z-30 md:sticky md:top-0 md:h-dvh md:p-3" aria-label="Navigation">
+        <div class="flex h-full flex-col gap-6 border-t border-white/8 bg-linear-to-b from-sidebar-2 to-sidebar px-2 pt-1.5 pb-[calc(6px+env(safe-area-inset-bottom))] text-sidebar-ink shadow-float md:rounded-[28px] md:border md:border-white/6 md:px-3.5 md:pt-6 md:pb-4">
+          <div class="brand flex items-center gap-3 px-2 max-md:hidden">
+            <span class="brand-mark grid size-10 place-items-center rounded-xl bg-linear-140 from-[#9cc1b2] via-sage to-sand font-display text-[21px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.35),0_8px_20px_-8px_rgb(128_166_151/0.8)]" aria-hidden="true">H</span>
+            <div class="brand-text leading-tight">
+              <strong class="block font-display text-[19px] font-semibold tracking-[-0.01em]">Director IA</strong>
+              <span class="text-[12px] text-sidebar-muted">H-KIDS · Équipe d'agents</span>
             </div>
           </div>
-          <button type="button" class="theme-toggle" id="theme-toggle" title="Changer de thème">
-            <svg class="i" aria-hidden="true"><use href="#i-monitor" id="theme-icon"/></svg>
-            <span id="theme-label">Thème : système</span>
-          </button>
+
+          <nav class="nav flex gap-0.5 overflow-x-auto [scrollbar-width:none] max-md:justify-between md:flex-col md:overflow-visible" aria-label="Vues du cockpit">
+            <p class="nav-caption mx-3 mb-1.5 text-[10.5px] font-semibold tracking-[0.14em] text-sidebar-muted/80 uppercase max-md:hidden">Pilotage</p>
+            <button type="button" class="nav-item" data-view="director" aria-current="page">
+              <svg class="i" aria-hidden="true"><use href="#i-layout"/></svg><span class="nav-label">Briefing</span>
+            </button>
+            <button type="button" class="nav-item" data-view="plans">
+              <svg class="i" aria-hidden="true"><use href="#i-route"/></svg><span class="nav-label">Plans</span>
+              <span class="nav-badge" id="plans-count" hidden>0</span>
+            </button>
+            <button type="button" class="nav-item" data-view="approvals">
+              <svg class="i" aria-hidden="true"><use href="#i-shield"/></svg><span class="nav-label">Validations</span>
+              <span class="nav-badge" id="approval-count" hidden>0</span>
+            </button>
+            <p class="nav-caption mx-3 mt-5 mb-1.5 text-[10.5px] font-semibold tracking-[0.14em] text-sidebar-muted/80 uppercase max-md:hidden">Atelier</p>
+            <button type="button" class="nav-item" data-view="documents">
+              <svg class="i" aria-hidden="true"><use href="#i-file"/></svg><span class="nav-label">Documents</span>
+            </button>
+            <button type="button" class="nav-item" data-view="quotes">
+              <svg class="i" aria-hidden="true"><use href="#i-receipt"/></svg><span class="nav-label">Devis</span>
+            </button>
+            <button type="button" class="nav-item" data-view="file">
+              <svg class="i" aria-hidden="true"><use href="#i-package"/></svg><span class="nav-label">Dossier</span>
+            </button>
+            <button type="button" class="nav-item" data-view="team">
+              <svg class="i" aria-hidden="true"><use href="#i-users"/></svg><span class="nav-label">Équipe IA</span>
+            </button>
+          </nav>
+
+          <div class="sidebar-foot mt-auto flex flex-col gap-2.5 max-md:hidden">
+            <div class="source-card flex gap-2.5 rounded-2xl border border-white/8 bg-white/4 p-3 text-sidebar-muted">
+              <svg class="i mt-0.5" aria-hidden="true"><use href="#i-database"/></svg>
+              <div>
+                <span class="status-pill border-white/12! bg-white/6! text-sidebar-ink!" id="api-status">Demo mock</span>
+                <p class="mt-1.5 text-[12px] leading-snug">Aucune action sensible sans votre accord.</p>
+              </div>
+            </div>
+            <button type="button" class="theme-toggle" id="theme-toggle" title="Changer de thème">
+              <svg class="i" aria-hidden="true"><use href="#i-monitor" id="theme-icon"/></svg>
+              <span id="theme-label">Thème : système</span>
+            </button>
+          </div>
         </div>
       </aside>
 
-      <main class="main">
-        <header class="topbar">
-          <div>
-            <p class="eyebrow" id="today-label">Plateforme AI Agents</p>
-            <h1 id="director-title">Director IA</h1>
+      <main class="main mx-auto flex w-full max-w-[1360px] min-w-0 flex-col gap-6 px-4 pt-5 pb-28 md:px-9 md:pt-8 md:pb-14 [&>*]:min-w-0">
+        <header class="topbar flex items-end justify-between gap-4">
+          <div class="min-w-0">
+            <p class="eyebrow first-letter:uppercase" id="today-label">Plateforme AI Agents</p>
+            <h1 id="director-title" class="max-md:text-[25px]">Director IA</h1>
           </div>
-          <div class="topbar-actions">
-            <span class="kbd-hint"><kbd>/</kbd> écrire au Director</span>
+          <div class="topbar-actions flex items-center gap-3 max-md:hidden">
+            <span class="kbd-hint rounded-full border border-line bg-surface/70 px-3 py-1.5 backdrop-blur"><kbd>/</kbd> écrire au Director</span>
           </div>
         </header>
 
         <!-- Briefing -->
-        <section class="view" data-view-panel="director" aria-labelledby="request-title">
-          <section class="composer" aria-labelledby="request-title">
-            <div class="composer-head">
-              <span class="composer-orb" aria-hidden="true"><svg class="i"><use href="#i-sparkles"/></svg></span>
-              <div>
+        <section class="view flex animate-rise flex-col gap-6 [&>*]:min-w-0" data-view-panel="director" aria-labelledby="request-title">
+          <section class="composer relative isolate overflow-hidden rounded-[28px] border border-line bg-surface px-4 pt-5 pb-4 shadow-card md:px-7 md:pt-7 md:pb-5 [&>*]:min-w-0" aria-labelledby="request-title">
+            <div class="pointer-events-none absolute -top-24 -right-20 -z-10 size-72 rounded-full bg-sand/35 blur-3xl" aria-hidden="true"></div>
+            <div class="pointer-events-none absolute -top-28 -left-24 -z-10 size-80 rounded-full bg-sage/30 blur-3xl" aria-hidden="true"></div>
+            <div class="composer-head mb-5 flex items-center gap-4">
+              <span class="composer-orb grid size-12 shrink-0 place-items-center rounded-2xl bg-linear-140 from-brand-2 to-brand text-brand-ink shadow-[var(--shadow-brand)]" aria-hidden="true"><svg class="i size-[22px]!"><use href="#i-sparkles"/></svg></span>
+              <div class="min-w-0">
                 <p class="eyebrow" id="request-title">Demande dirigeant</p>
-                <h2 class="composer-question" id="greeting">Que veux-tu faire ?</h2>
+                <h2 class="composer-question font-display text-[22px] leading-tight font-semibold tracking-[-0.015em] md:text-[28px]" id="greeting">Que souhaitez-vous faire ?</h2>
               </div>
             </div>
-            <form id="director-form" class="composer-form">
+            <form id="director-form" class="composer-form flex flex-col gap-1.5 rounded-2xl border border-line-strong bg-surface p-2 shadow-sm transition focus-within:border-brand-2 focus-within:shadow-[0_0_0_4px_var(--ring)]">
               <label for="director-message" class="visually-hidden">Votre demande</label>
-              <textarea id="director-message" name="message" rows="2" placeholder="Que veux-tu faire ?">Fais-moi le point sur mon entreprise aujourd'hui.</textarea>
-              <div class="composer-bar">
-                <span class="kbd-hint"><kbd>Ctrl</kbd> + <kbd>Entrée</kbd> pour envoyer</span>
-                <div class="composer-actions">
+              <textarea id="director-message" name="message" rows="2" class="min-h-16 resize-none border-0 bg-transparent px-2.5 py-2 text-[16px] leading-normal shadow-none focus:shadow-none" placeholder="Que souhaitez-vous faire ?">Fais-moi le point sur mon entreprise aujourd'hui.</textarea>
+              <div class="composer-bar flex items-center justify-between gap-3 pr-1 pb-0.5 pl-2.5">
+                <span class="kbd-hint max-md:hidden"><kbd>Ctrl</kbd> + <kbd>Entrée</kbd> pour envoyer</span>
+                <div class="composer-actions flex shrink-0 gap-2 max-md:flex-1">
                   <button type="button" class="icon-button" id="voice-placeholder" disabled title="Commande vocale à venir">
                     <svg class="i" aria-hidden="true"><use href="#i-mic"/></svg><span class="visually-hidden">Voix indisponible en Phase 0</span>
                   </button>
-                  <button type="submit" class="primary send-button">Envoyer au Director</button>
+                  <button type="submit" class="primary send-button max-md:flex-1"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg>Envoyer au Director</button>
                 </div>
               </div>
             </form>
-            <div class="chips" role="group" aria-label="Demandes fréquentes">
+            <div class="chips mt-4 max-md:flex-nowrap max-md:overflow-x-auto max-md:[scrollbar-width:none] max-md:[&>*]:shrink-0" role="group" aria-label="Demandes fréquentes">
               <button type="button" class="chip" data-scenario="Je veux qu'on fasse 100 000 DH de chiffre d'affaires ce mois. Quelle stratégie ?"><svg class="i" aria-hidden="true"><use href="#i-trend"/></svg>Objectif du mois</button>
               <button type="button" class="chip" data-scenario="Fais-moi le point sur mon entreprise aujourd'hui."><svg class="i" aria-hidden="true"><use href="#i-layout"/></svg>Point entreprise</button>
               <button type="button" class="chip" data-scenario="Qu'est-ce qui est urgent ?"><svg class="i" aria-hidden="true"><use href="#i-alert"/></svg>Urgences</button>
               <button type="button" class="chip" data-scenario="Combien dois-je encaisser cette semaine ?"><svg class="i" aria-hidden="true"><use href="#i-wallet"/></svg>Encaissements</button>
               <button type="button" class="chip" data-scenario="Quelles commandes risquent d'etre en retard ?"><svg class="i" aria-hidden="true"><use href="#i-clock"/></svg>Retards</button>
               <button type="button" class="chip" data-scenario="Qu'est-ce que je dois commander ?"><svg class="i" aria-hidden="true"><use href="#i-cart"/></svg>Achats</button>
-              <button type="button" class="chip" data-scenario="Quels clients dois-je relancer ?"><svg class="i" aria-hidden="true"><use href="#i-trend"/></svg>Relances</button>
+              <button type="button" class="chip" data-scenario="Quels clients dois-je relancer ?"><svg class="i" aria-hidden="true"><use href="#i-megaphone"/></svg>Relances</button>
               <button type="button" class="chip chip-sensitive" data-scenario="Effectue le paiement de cette facture."><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg>Paiement sensible</button>
             </div>
-            <p id="ui-state" class="state-line" role="status">Prêt.</p>
+            <p id="ui-state" class="state-line mt-3" role="status">Prêt.</p>
           </section>
 
-          <section class="panel chat-panel" id="agent-panel" hidden aria-label="Conversation avec le Director">
+          <section class="panel chat-panel px-4 py-5 md:px-6" id="agent-panel" hidden aria-label="Conversation avec le Director">
             <div id="agent-thread" class="chat-thread"></div>
           </section>
 
-          <div class="director-layout">
-            <section class="panel summary-panel" aria-labelledby="summary-title">
+          <div class="director-layout grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+            <section class="panel summary-panel min-w-0" aria-labelledby="summary-title">
               <div class="panel-heading">
                 <div>
                   <h2 id="summary-title">Synthèse du Director</h2>
@@ -160,15 +165,15 @@
               </div>
               <div id="summary-content" class="empty-state">
                 <div class="orbit" aria-hidden="true">
-                  <span style="--a:0">Co</span><span style="--a:1">Fi</span><span style="--a:2">Pr</span><span style="--a:3">Ac</span><span style="--a:4">SA</span><span style="--a:5">Ju</span>
+                  <span style="--a:0">Co</span><span style="--a:1">Fi</span><span style="--a:2">Pr</span><span style="--a:3">Ac</span><span style="--a:4">Ma</span><span style="--a:5">CM</span>
                   <b><svg class="i"><use href="#i-sparkles"/></svg></b>
                 </div>
                 <h3>Votre point du jour vous attend</h3>
-                <p>Le Director interroge les agents spécialisés et vous rend l'essentiel en dix rubriques.</p>
+                <p>Donnez un objectif au Director ou demandez le point : il fait travailler les responsables et vous rend l'essentiel.</p>
               </div>
             </section>
 
-            <div class="side-column">
+            <div class="side-column grid gap-6 md:grid-cols-2 xl:sticky xl:top-6 xl:grid-cols-1">
               <section class="panel" aria-labelledby="plan-title">
                 <div class="panel-heading">
                   <div>
@@ -203,35 +208,35 @@
         </section>
 
         <!-- Plans -->
-        <section class="view" data-view-panel="plans" hidden aria-labelledby="plans-title">
+        <section class="view flex animate-rise flex-col gap-6" data-view-panel="plans" hidden aria-labelledby="plans-title">
           <section class="panel">
             <div class="panel-heading">
               <div>
                 <h2 id="plans-title">Plans d'action</h2>
-                <p>Les plans du Director, suivis jour après jour. Changez le statut d'une étape ici, ou dites simplement au Director ce qui a avancé.</p>
+                <p>Les objectifs et les plans du Director, suivis jour après jour. Changez le statut d'une étape ici, ou dites simplement au Director ce qui a avancé.</p>
               </div>
-              <button type="button" class="secondary" id="refresh-plans"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Rafraîchir</button>
+              <button type="button" class="secondary shrink-0" id="refresh-plans"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Rafraîchir</button>
             </div>
             <div id="plans-list" class="plans-list"></div>
           </section>
         </section>
 
         <!-- Validations -->
-        <section class="view" data-view-panel="approvals" hidden aria-labelledby="approval-title">
+        <section class="view flex animate-rise flex-col gap-6" data-view-panel="approvals" hidden aria-labelledby="approval-title">
           <section class="panel approvals">
             <div class="panel-heading">
               <div>
                 <h2 id="approval-title">Actions nécessitant votre validation</h2>
                 <p>Aucune action sensible n'est exécutée automatiquement : l'agent prépare, vous décidez.</p>
               </div>
-              <button type="button" class="secondary" id="refresh-approvals"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Rafraîchir</button>
+              <button type="button" class="secondary shrink-0" id="refresh-approvals"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Rafraîchir</button>
             </div>
             <div id="approval-list" class="approval-list"></div>
           </section>
         </section>
 
         <!-- Documents -->
-        <section class="view" data-view-panel="documents" hidden aria-labelledby="documents-title">
+        <section class="view flex animate-rise flex-col gap-6" data-view-panel="documents" hidden aria-labelledby="documents-title">
           <ol class="stepper" aria-label="Étapes">
             <li class="is-active"><span>1</span>Remplir</li>
             <li><span>2</span>Vérifier l'aperçu</li>
@@ -241,7 +246,7 @@
             <div class="panel-heading">
               <div>
                 <h2 id="documents-title">Documents H-KIDS</h2>
-                <p>Aperçu obligatoire avant génération du PDF et du Word.</p>
+                <p>Aperçu obligatoire avant génération du PDF et du Word. Le plus simple reste de demander le document au Director dans le Briefing.</p>
               </div>
             </div>
             <form id="document-form" class="form-sections">
@@ -343,7 +348,7 @@
         </section>
 
         <!-- Devis -->
-        <section class="view" data-view-panel="quotes" hidden aria-labelledby="datasheet-title">
+        <section class="view flex animate-rise flex-col gap-6" data-view-panel="quotes" hidden aria-labelledby="datasheet-title">
           <section class="panel">
             <div class="panel-heading">
               <div>
@@ -388,7 +393,7 @@
         </section>
 
         <!-- Dossier commercial -->
-        <section class="view" data-view-panel="file" hidden aria-labelledby="file-title">
+        <section class="view flex animate-rise flex-col gap-6" data-view-panel="file" hidden aria-labelledby="file-title">
           <section class="panel">
             <div class="panel-heading">
               <div>
@@ -451,7 +456,7 @@
               </div>
             </form>
           </section>
-          <section class="panel">
+          <section class="panel flex flex-col gap-4">
             <div id="file-summary" class="empty">Aucun dossier consulté.</div>
             <div id="file-deliverables"></div>
             <div id="file-missing"></div>
@@ -460,12 +465,12 @@
         </section>
 
         <!-- Équipe IA -->
-        <section class="view" data-view-panel="team" hidden aria-labelledby="team-title">
+        <section class="view flex animate-rise flex-col gap-6" data-view-panel="team" hidden aria-labelledby="team-title">
           <section class="panel">
             <div class="panel-heading">
               <div>
                 <h2 id="team-title">Mon équipe IA</h2>
-                <p>Chaque agent n'accède qu'aux données de sa mission. Le Community Manager reporte au Marketing. Les agents marqués « a répondu » ont travaillé sur la dernière demande.</p>
+                <p>Le Director fixe la stratégie et répartit le travail ; chaque responsable n'accède qu'aux données de sa mission. Le Community Manager reporte au Marketing. Les agents marqués « a répondu » ont travaillé sur la dernière demande.</p>
               </div>
             </div>
             <div id="agent-roster" class="agent-roster" aria-label="Agents disponibles"></div>
@@ -474,7 +479,7 @@
       </main>
     </div>
 
-    <div id="toast-region" class="toast-region" role="status" aria-live="polite"></div>
+    <div id="toast-region" class="toast-region pointer-events-none fixed inset-x-4 bottom-24 z-50 flex flex-col gap-2.5 md:inset-x-auto md:right-6 md:bottom-6" role="status" aria-live="polite"></div>
     <script type="module" src="/app/app.js"></script>
   </body>
 </html>

@@ -1068,6 +1068,41 @@
     @apply border-danger/40 bg-danger-soft text-danger;
   }
 
+  /* Photos joined to a message: the tray under the composer, and the strip
+     above the text in the bubble once sent. */
+  .photo-tray {
+    @apply m-0 flex list-none flex-wrap gap-2 px-2.5 pt-1 pb-0.5;
+  }
+
+  .photo-tray li {
+    @apply relative size-16 overflow-hidden rounded-xl border border-line bg-surface-3;
+  }
+
+  .photo-tray img,
+  .bubble-photos img {
+    @apply block size-full object-cover;
+  }
+
+  .photo-tray .photo-remove {
+    @apply absolute top-1 right-1 min-h-0 size-5 rounded-full border-0 bg-ink/70 p-0 text-[13px] leading-none text-white hover:bg-ink;
+  }
+
+  .photo-tray li.is-loading {
+    @apply animate-pulse;
+  }
+
+  .composer-form.is-dragging {
+    @apply border-brand-2 bg-brand-soft;
+  }
+
+  .bubble-photos {
+    @apply mb-1.5 flex flex-wrap justify-end gap-1.5;
+  }
+
+  .bubble-photos span {
+    @apply block size-24 overflow-hidden rounded-xl border border-line shadow-sm md:size-28;
+  }
+
   .typing {
     @apply inline-flex gap-1 py-1;
   }

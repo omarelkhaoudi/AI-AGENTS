@@ -491,16 +491,18 @@ export function buildApi({
       }
     });
 
-    app.post("/api/agent/chat", writeRouteOptions(), async (request, reply) => {
+    // Photos travel with the message, so the chat gets the document allowance.
+    app.post("/api/agent/chat", documentRouteOptions(securityConfig), async (request, reply) => {
       try {
         return reply.code(200).send(await agent.chat({
           message: request.body?.message,
+          photos: request.body?.photos,
           conversationId: typeof request.body?.conversationId === "string" ? request.body.conversationId : null,
           userId: request.principal.userId
         }));
       } catch (error) {
         if (error instanceof DirectorAgentError) {
-          const statusCode = error.code === "AGENT_MESSAGE_EMPTY" ? 400 : 503;
+          const statusCode = error.code === "AGENT_MESSAGE_EMPTY" || error.code === "AGENT_PHOTO_INVALID" ? 400 : 503;
           return reply.code(statusCode).send({ error: error.message, details: { code: error.code, ...error.details } });
         }
         return sendDomainError(reply, "Director agent failed.", error);

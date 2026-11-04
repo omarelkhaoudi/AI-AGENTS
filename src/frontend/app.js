@@ -91,6 +91,9 @@ const voicePlaceholder = document.querySelector("#voice-placeholder");
 const approvalCount = document.querySelector("#approval-count");
 const toastRegion = document.querySelector("#toast-region");
 const sendButton = form.querySelector("button[type='submit']");
+const photoInput = document.querySelector("#photo-input");
+const photoButton = document.querySelector("#photo-button");
+const photoTray = document.querySelector("#photo-tray");
 
 voicePlaceholder.dataset.voiceStatus = VOICE_INTERFACE.status;
 voicePlaceholder.dataset.externalConnectionsEnabled = String(VOICE_INTERFACE.externalConnectionsEnabled);
@@ -107,6 +110,75 @@ messageInput.addEventListener("keydown", (event) => {
     askDirector(messageInput.value);
   }
 });
+
+// Photos for the Director: picked with the button, dropped on the composer or
+// pasted. Each is shrunk to a JPEG here, so a phone photo of several megabytes
+// travels as a few hundred kilobytes and can also become a purchase order's
+// visual.
+const MAX_CHAT_PHOTOS = 4;
+const composerPhotos = [];
+
+photoButton.addEventListener("click", () => photoInput.click());
+photoInput.addEventListener("change", async () => {
+  await addComposerPhotos(photoInput.files);
+  photoInput.value = "";
+});
+messageInput.addEventListener("paste", async (event) => {
+  const files = [...(event.clipboardData?.files ?? [])].filter((file) => file.type.startsWith("image/"));
+  if (files.length > 0 && agentState.enabled) {
+    event.preventDefault();
+    await addComposerPhotos(files);
+  }
+});
+form.addEventListener("dragover", (event) => {
+  if (agentState.enabled && [...(event.dataTransfer?.types ?? [])].includes("Files")) {
+    event.preventDefault();
+    form.classList.add("is-dragging");
+  }
+});
+form.addEventListener("dragleave", () => form.classList.remove("is-dragging"));
+form.addEventListener("drop", async (event) => {
+  form.classList.remove("is-dragging");
+  if (!agentState.enabled || !event.dataTransfer?.files?.length) {
+    return;
+  }
+  event.preventDefault();
+  await addComposerPhotos(event.dataTransfer.files);
+});
+photoTray.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-remove-photo]");
+  if (button) {
+    composerPhotos.splice(Number(button.dataset.removePhoto), 1);
+    renderPhotoTray();
+  }
+});
+
+async function addComposerPhotos(fileList) {
+  const files = [...fileList].filter((file) => file.type.startsWith("image/"));
+  const room = MAX_CHAT_PHOTOS - composerPhotos.length;
+  if (files.length > room) {
+    showToast(`${MAX_CHAT_PHOTOS} photos au plus par message.`, "warn");
+  }
+  for (const file of files.slice(0, Math.max(0, room))) {
+    try {
+      composerPhotos.push(await downscaleImage(file, 1600, 0.85));
+    } catch {
+      showToast(`La photo « ${file.name} » n'a pas pu être lue.`, "warn");
+    }
+    renderPhotoTray();
+  }
+  messageInput.focus();
+}
+
+function renderPhotoTray() {
+  photoTray.hidden = composerPhotos.length === 0;
+  photoTray.innerHTML = composerPhotos.map((url, index) => `
+    <li>
+      <img src="${url}" alt="Photo jointe ${index + 1}">
+      <button type="button" class="photo-remove" data-remove-photo="${index}" title="Retirer cette photo" aria-label="Retirer la photo ${index + 1}">×</button>
+    </li>
+  `).join("");
+}
 
 // A chip asks its question straight away: picking one is the request.
 document.querySelectorAll("[data-scenario]").forEach((button) => {
@@ -176,6 +248,7 @@ async function checkAgentStatus() {
   } catch {
     agentState.enabled = false;
   }
+  photoButton.hidden = !agentState.enabled;
   if (agentState.enabled) {
     messageInput.value = "";
     messageInput.placeholder = "Ex. : Je veux 100 000 DH de chiffre d'affaires ce mois";
@@ -185,19 +258,22 @@ async function checkAgentStatus() {
 
 async function sendToAgent(message) {
   const text = message.trim();
-  if (!text || agentState.busy) {
+  const photos = composerPhotos.splice(0);
+  if ((!text && photos.length === 0) || agentState.busy) {
+    composerPhotos.push(...photos);
     return;
   }
   agentState.busy = true;
   agentPanel.hidden = false;
-  appendBubble("user", escapeHtml(text));
+  appendBubble("user", escapeHtml(text), [], [], [], { photos });
   messageInput.value = "";
+  renderPhotoTray();
   const pending = appendBubble("agent pending", '<span class="typing"><i></i><i></i><i></i></span>');
   sendButton.disabled = true;
   sendButton.className = "primary send-button is-loading";
   uiState.textContent = "Le Director réfléchit…";
   try {
-    const response = await postJson("/api/agent/chat", { message: text, conversationId: agentState.conversationId });
+    const response = await postJson("/api/agent/chat", { message: text, photos, conversationId: agentState.conversationId });
     agentState.conversationId = response.conversationId;
     pending.remove?.();
     appendBubble("agent", formatAgentText(response.reply), response.documents ?? [], response.agentRuns ?? [], response.messages ?? [], { plan: response.plan, alerts: response.alerts });
@@ -214,6 +290,12 @@ async function sendToAgent(message) {
     pending.remove?.();
     appendBubble("agent error", escapeHtml(error.message));
     uiState.textContent = error.message;
+    // Nothing reached the Director: give the message and photos back to retry.
+    messageInput.value ||= text;
+    if (composerPhotos.length === 0) {
+      composerPhotos.push(...photos);
+      renderPhotoTray();
+    }
   } finally {
     agentState.busy = false;
     sendButton.disabled = false;
@@ -221,7 +303,7 @@ async function sendToAgent(message) {
   }
 }
 
-function appendBubble(kind, html, documents = [], runs = [], messages = [], { plan = null, alerts = null } = {}) {
+function appendBubble(kind, html, documents = [], runs = [], messages = [], { plan = null, alerts = null, photos = [] } = {}) {
   const bubble = document.createElement("div");
   bubble.className = `bubble ${kind}`;
   bubble.innerHTML = `
@@ -229,7 +311,8 @@ function appendBubble(kind, html, documents = [], runs = [], messages = [], { pl
     <div class="bubble-body">
       ${plan ? planCard(plan) : ""}
       ${runs.length > 0 ? teamStrip(runs) : ""}
-      <div class="bubble-text">${html}</div>
+      ${photos.length > 0 ? `<div class="bubble-photos">${photos.map((url, index) => `<span><img src="${url}" alt="Photo jointe ${index + 1}"></span>`).join("")}</div>` : ""}
+      ${html ? `<div class="bubble-text">${html}</div>` : ""}
       ${documents.map((entry, index) => documentCard(entry, index)).join("")}
       ${Array.isArray(alerts) ? alertsCard(alerts) : ""}
       ${messages.map((draft) => messageCard(draft)).join("")}

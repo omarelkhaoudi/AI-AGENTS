@@ -3,6 +3,7 @@ import { calculateDocumentTotals, roundMoney } from "../documents/document-calcu
 import { HKIDS_DOCUMENT_TYPES } from "../documents/document-schema.js";
 import { DocumentValidationError } from "../documents/document-validation.js";
 import { HKIDS_FIXED_IDENTITY } from "../documents/hkids-template.js";
+import { parseReferenceImage } from "../documents/purchase-order.js";
 import { createCatalogueLoader, searchCatalogue } from "./catalogue.js";
 import { SPECIALISTS, SPECIALIST_IDS, runSpecialist } from "./agent-team.js";
 import { draftWhatsAppMessage } from "./whatsapp.js";
@@ -25,6 +26,7 @@ import { OBJECTIVE_INDICATORS, currentMonth, measureObjective } from "./sales-ob
 export const DEFAULT_AGENT_MODEL = "gpt-5";
 const MAX_TOOL_ROUNDS = 6;
 const MAX_CONVERSATION_ITEMS = 60;
+const MAX_PHOTOS_PER_MESSAGE = 4;
 const TVA_RATE = 0.2;
 
 const DOCUMENT_TYPES = Object.freeze({
@@ -195,9 +197,10 @@ const DOCUMENT_TOOL = Object.freeze({
         conditions_paiement: { type: "string", enum: Object.keys(PAYMENT_RULES), description: "60/20/20 par défaut ; 50/50 seulement pour un bon de commande." },
         reference_devis: { type: "string", description: "Numéro du devis lié (facture, bon de livraison). Chaîne vide si aucun." },
         reference_bl: { type: "string", description: "Numéro du bon de livraison lié (facture). Chaîne vide si aucun." },
-        numero: { type: "string", description: "Numéro imposé par l'utilisatrice. Chaîne vide pour prendre le prochain numéro libre." }
+        numero: { type: "string", description: "Numéro imposé par l'utilisatrice. Chaîne vide pour prendre le prochain numéro libre." },
+        photo: { type: "integer", description: "Bon de commande : numéro de la photo jointe par la direction à mettre comme visuel de référence (« visuel : photo n° 2 » → 2). 0 si aucune." }
       },
-      required: ["type", "client_nom", "client_adresse", "objet", "lignes", "caracteristiques", "conditions_paiement", "reference_devis", "reference_bl", "numero"]
+      required: ["type", "client_nom", "client_adresse", "objet", "lignes", "caracteristiques", "conditions_paiement", "reference_devis", "reference_bl", "numero", "photo"]
     }
 });
 
@@ -273,6 +276,8 @@ function instructions(today) {
     "",
     "Tâche d'exécution demandée directement (un devis, un bon de commande, un bon de livraison, une facture, une relance) : pas de plan ; confie-la tout de suite au bon responsable avec deleguer_a_un_agent en recopiant TOUTES les informations données (client, adresse, produits, quantités, prix, conditions, numéros liés). Un prix donné sans précision est TTC : écris-le « 3000 DH TTC » dans la mission ; n'écris « HT » que si la direction l'a dit. Ne demande rien avant de confier : la ville suffit comme adresse, quantité non précisée = 1, conditions 60/20/20 par défaut (seuls échéanciers approuvés : 60/20/20 ; en exception 50/30/20, 40/40/20, 100 % ; 50/50 sur bon de commande), prix absent = prix catalogue cherché par le Commercial ; dimensions, coloris, livraison ou délai ne sont pas requis. S'il répond qu'il manque une information, pose UNE question courte à la direction qui demande tout ce qui manque, puis redonne la tâche complète au responsable. Annonce ensuite le document en 2 ou 3 lignes (qui l'a préparé, type, numéro, client, total TTC) et dis de vérifier l'aperçu et de cliquer « Valider et générer ».",
     "",
+    "Photos : la direction peut joindre des photos (numérotées « photo n° 1 », « photo n° 2 »… dans la conversation). Regarde-les et dis en une phrase ce que tu y vois d'utile (meuble, modèle, coloris, finitions, dimensions apparentes, texte lisible). Les responsables ne voient pas les photos : recopie dans la mission ce qu'elles montrent. Pour un bon de commande, écris aussi « visuel : photo n° X » dans la mission pour que la photo figure sur le document. N'invente rien que la photo ne montre pas.",
+    "",
     "Règles :",
     "- Les plans sont CONSERVÉS et suivis dans le temps. Quand la direction parle d'un plan existant ou d'un fait qui le fait avancer (« où en est le plan », « on continue », « l'acompte Atlas est arrivé »), appelle lister_plans puis : relance les étapes encore à faire avec deleguer_a_un_agent (l'étape du responsable se met à jour seule), mets à jour avec ajuster_plan (fait, bloqué, nouvelle échéance, nouvelles étapes, note), et réponds avec l'avancement et la prochaine action. Ne crée pas un nouveau plan pour un sujet qui a déjà un plan en cours : ajuste-le.",
     "- Statut des étapes : après le travail d'un responsable, son étape passe « en cours ». Marque-la « fait » avec ajuster_plan SEULEMENT si la tâche est entièrement accomplie par ce travail (une analyse, un plan chiffré, une liste). Une action réelle (message envoyé, vente signée, paiement reçu, commande passée, livraison) reste « en cours » tant que la direction n'a pas confirmé qu'elle a eu lieu. Un plan est « proposé » à la direction, jamais « validé » par toi.",
@@ -325,6 +330,7 @@ export function createDirectorAgent({
   clientFactory = defaultClientFactory
 } = {}) {
   const conversations = new Map();
+  const photoAlbums = new Map();
   let resolvedClient = client;
 
   return Object.freeze({
@@ -333,9 +339,10 @@ export function createDirectorAgent({
       return Boolean(client) || apiKey !== "";
     },
 
-    async chat({ message, conversationId = null, userId = null } = {}) {
-      const text = typeof message === "string" ? message.trim() : "";
-      if (text === "") {
+    async chat({ message, photos = [], conversationId = null, userId = null } = {}) {
+      const newPhotos = checkPhotos(photos);
+      const typed = typeof message === "string" ? message.trim() : "";
+      if (typed === "" && newPhotos.length === 0) {
         throw new DirectorAgentError("Le message est vide.", "AGENT_MESSAGE_EMPTY");
       }
       if (!this.isConfigured()) {
@@ -345,9 +352,17 @@ export function createDirectorAgent({
 
       const id = conversationId && conversations.has(conversationId) ? conversationId : randomUUID();
       const items = conversations.get(id) ?? [];
-      items.push({ role: "user", content: text });
+      // Photos are numbered across the conversation, so "la photo n° 2" keeps
+      // meaning the same picture from one message to the next.
+      const conversationPhotos = [...(photoAlbums.get(id) ?? []), ...newPhotos];
+      const numbers = newPhotos.map((_, index) => conversationPhotos.length - newPhotos.length + index + 1);
+      const text = [typed || "Voici une photo.", ...(numbers.length > 0 ? [`[Photos jointes : ${numbers.map((n) => `n° ${n}`).join(", ")}]`] : [])].join("\n\n");
+      const userItem = newPhotos.length === 0
+        ? { role: "user", content: text }
+        : { role: "user", content: [{ type: "input_text", text }, ...newPhotos.map((url) => ({ type: "input_image", image_url: url, detail: "auto" }))] };
+      items.push(userItem);
 
-      const outcome = { documents: [], directorResponse: null, agentRuns: [], messages: [], plan: null, planId: null, alerts: null };
+      const outcome = { documents: [], directorResponse: null, agentRuns: [], messages: [], plan: null, planId: null, alerts: null, photos: conversationPhotos };
       let reply = "";
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
         const response = await callModel(resolvedClient, {
@@ -380,7 +395,14 @@ export function createDirectorAgent({
         });
       }
 
+      // The model has seen the pictures in this turn and said what they show.
+      // Later turns keep that text and the numbers, not the pictures: resending
+      // every photo with every message would be slow and costly.
+      if (newPhotos.length > 0) {
+        items[items.indexOf(userItem)] = { role: "user", content: `${text}\n[Photos vues à ce message ; elles restent disponibles par leur numéro comme visuel d'un bon de commande.]` };
+      }
       conversations.set(id, items.slice(-MAX_CONVERSATION_ITEMS));
+      photoAlbums.set(id, conversationPhotos);
       return Object.freeze({
         conversationId: id,
         reply: reply || "Je n'ai pas pu formuler de réponse. Pouvez-vous reformuler ?",
@@ -392,6 +414,28 @@ export function createDirectorAgent({
         alerts: outcome.alerts
       });
     }
+  });
+}
+
+// The cockpit sends each photo as a JPEG or PNG data URL, the two formats a
+// purchase order can carry as its visual, so a photo shown to the Director can
+// also go on the document.
+function checkPhotos(photos) {
+  if (photos === undefined || photos === null) {
+    return [];
+  }
+  if (!Array.isArray(photos) || photos.length > MAX_PHOTOS_PER_MESSAGE) {
+    throw new DirectorAgentError(`Joignez au plus ${MAX_PHOTOS_PER_MESSAGE} photos par message.`, "AGENT_PHOTO_INVALID");
+  }
+  return photos.map((photo) => {
+    const { image, error } = parseReferenceImage(photo);
+    if (!image) {
+      throw new DirectorAgentError(
+        error === "REFERENCE_IMAGE_TOO_LARGE" ? "Une photo dépasse 3 Mo." : "Une photo n'a pas pu être lue (JPEG ou PNG attendu).",
+        "AGENT_PHOTO_INVALID"
+      );
+    }
+    return photo.trim();
   });
 }
 
@@ -502,6 +546,12 @@ async function prepareDocument(args, { documentService, clock, outcome }, prepar
   });
   const calculated = calculateDocumentTotals(items, TVA_RATE);
 
+  const photoNumber = Number(args.photo) || 0;
+  const referenceImage = purchaseOrder && photoNumber > 0 ? outcome.photos?.[photoNumber - 1] : undefined;
+  if (purchaseOrder && photoNumber > 0 && !referenceImage) {
+    return { ok: false, erreur: `Il n'y a pas de photo n° ${photoNumber} dans la conversation. Mettre 0 ou le bon numéro.` };
+  }
+
   const input = {
     documentType,
     documentNumber: number,
@@ -512,6 +562,7 @@ async function prepareDocument(args, { documentService, clock, outcome }, prepar
     totals: { totalHt: calculated.totals.totalHt, tva: calculated.totals.tva, totalTtc: calculated.totals.totalTtc },
     payment: purchaseOrder ? { termsRule } : { method: "virement bancaire", termsRule },
     ...(purchaseOrder ? { specifications: (args.caracteristiques ?? []).map(text).filter(Boolean) } : {}),
+    ...(referenceImage ? { referenceImage } : {}),
     ...(text(args.reference_devis) ? { quoteReference: text(args.reference_devis) } : {}),
     ...(text(args.reference_bl) ? { deliveryNoteReference: text(args.reference_bl) } : {})
   };
@@ -541,6 +592,7 @@ async function prepareDocument(args, { documentService, clock, outcome }, prepar
     total_ttc: document.totals.totalTtc,
     echeances: (document.payment?.instalments ?? []).map((part) => `${part.percent} % ${part.due} : ${part.amount} DH`),
     conditions: document.payment?.terms ?? null,
+    ...(referenceImage ? { visuel: `photo n° ${photoNumber}` } : {}),
     statut: "Aperçu prêt : l'utilisatrice doit cliquer « Valider et générer » dans le cockpit."
   };
 }

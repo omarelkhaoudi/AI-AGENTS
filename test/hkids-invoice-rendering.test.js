@@ -474,3 +474,17 @@ test("the number is printed once, never repeated on the following pages", async 
 
   assert.equal(text.match(new RegExp(`N° ${invoice.documentNumber}`, "g"))?.length, 1);
 });
+
+// Hiba wants a quote on a single sheet. A document that only just spills over
+// is drawn tighter to hold on one page; a long one keeps several pages.
+test("a document that only just spills over holds on one page, a long one keeps several", async () => {
+  const invoice = invoiceOf(DISCOUNTED);
+  const withLines = (count) => ({
+    ...invoice,
+    items: Array.from({ length: count }, (_, index) => ({ ...invoice.items[0], designation: `Ligne ${index + 1} : meuble sur mesure, finition chêne, avec intégration de l'éclairage LED et quincaillerie` }))
+  });
+  const pages = async (document) => (await PDFDocument.load(await renderHkidsPdf(document))).getPageCount();
+
+  assert.equal(await pages(withLines(6)), 1, "two pages in the regular layout");
+  assert.ok(await pages(withLines(30)) > 1);
+});

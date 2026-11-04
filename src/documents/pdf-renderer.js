@@ -111,6 +111,8 @@ const PAGE = Object.freeze({ width: 595.28, height: 841.89 });
 const L = 40;
 const R = PAGE.width - 40;
 const CONTENT_BOTTOM = 770;
+// The tighter layout also lets the content run a little closer to the footer.
+const COMPACT_CONTENT_BOTTOM = 780;
 
 const COLORS = Object.freeze({
   green: rgb(0x80 / 255, 0xa6 / 255, 0x97 / 255),
@@ -185,15 +187,39 @@ export async function renderHkidsPdf(document, {
   // problem, and reporting it first makes it the error the caller actually sees.
   const resolvedFontPath = await resolveDocumentFontPath("regular", fontPath);
   const resolvedBoldFontPath = await resolveDocumentFontPath("bold", boldFontPath);
+  const files = {
+    font: await readFile(resolvedFontPath),
+    bold: await readFile(resolvedBoldFontPath),
+    logo: await readFile(logoPath())
+  };
 
+  // A document that only just spills onto a second page — the signature block
+  // alone, say — is drawn again a little tighter, and kept that way if it then
+  // holds on one page: Hiba wants a quote on a single sheet. A long document
+  // keeps the regular layout over several pages. The visual of an order always
+  // has a page of its own and is not counted.
+  const imagePages = parseReferenceImage(document.referenceImage).image ? 1 : 0;
+  let pdf = await drawDocument(document, files, { compact: false });
+  if (pdf.getPageCount() - imagePages > 1) {
+    const compact = await drawDocument(document, files, { compact: true });
+    if (compact.getPageCount() - imagePages === 1) {
+      pdf = compact;
+    }
+  }
+
+  assertNoQuestionMarkInPdfText(document);
+  return Buffer.from(await pdf.save({ useObjectStreams: false }));
+}
+
+async function drawDocument(document, files, { compact }) {
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
   pdf.setTitle(`H-KIDS — ${titleCase(documentTitleFor(document.documentType))} n° ${document.documentNumber} — ${document.client.name}`);
   pdf.setAuthor("H-KIDS");
-  const font = await pdf.embedFont(await readFile(resolvedFontPath), { subset: true });
-  const bold = await pdf.embedFont(await readFile(resolvedBoldFontPath), { subset: true });
-  const logo = await pdf.embedJpg(await readFile(logoPath()));
-  const writer = createWriter(pdf, document, { font, bold, logo });
+  const font = await pdf.embedFont(files.font, { subset: true });
+  const bold = await pdf.embedFont(files.bold, { subset: true });
+  const logo = await pdf.embedJpg(files.logo);
+  const writer = createWriter(pdf, document, { font, bold, logo, compact });
 
   drawFirstPageHeader(writer, document);
   drawItems(writer, document);
@@ -213,19 +239,19 @@ export async function renderHkidsPdf(document, {
     const embedded = image.format === "png" ? await pdf.embedPng(image.bytes) : await pdf.embedJpg(image.bytes);
     drawReferenceImagePage(writer, document, embedded);
   }
-
-  assertNoQuestionMarkInPdfText(document);
-  return Buffer.from(await pdf.save({ useObjectStreams: false }));
+  return pdf;
 }
 
 // Coordinates are written from the top of the page, as on the reference
 // documents, and converted to pdf-lib's bottom-up frame in one place.
-function createWriter(pdf, document, { font, bold, logo }) {
+function createWriter(pdf, document, { font, bold, logo, compact = false }) {
   const writer = {
     pdf,
     font,
     bold,
     logo,
+    compact,
+    bottom: compact ? COMPACT_CONTENT_BOTTOM : CONTENT_BOTTOM,
     page: null,
     y: 0,
     text(value, x, top, { size = 9, isBold = false, color = COLORS.ink, align = "left" } = {}) {
@@ -257,7 +283,7 @@ function createWriter(pdf, document, { font, bold, logo }) {
     },
     // Starts a continuation page when the block would cross the footer.
     ensure(height) {
-      if (this.y + height > CONTENT_BOTTOM) {
+      if (this.y + height > this.bottom) {
         this.newPage();
         drawContinuationHeader(this, document);
       }
@@ -339,14 +365,15 @@ function drawItems(w, document) {
   drawTableHeader(w, layout);
   for (const item of document.items) {
     const lines = w.wrap(item.designation, layout.designation.width, layout.size + 0.5);
-    const height = Math.max(33, 14 + lines.length * 12);
-    if (w.y + height > CONTENT_BOTTOM) {
+    const height = w.compact ? Math.max(24, 10 + lines.length * 12) : Math.max(33, 14 + lines.length * 12);
+    const baseline = w.compact ? 15 : 19;
+    if (w.y + height > w.bottom) {
       w.ensure(height + 23);
       drawTableHeader(w, layout);
     }
-    lines.forEach((line, index) => w.text(line, layout.designation.x, w.y + 19 + index * 12, { size: layout.size + 0.5 }));
+    lines.forEach((line, index) => w.text(line, layout.designation.x, w.y + baseline + index * 12, { size: layout.size + 0.5 }));
     for (const column of layout.columns) {
-      w.text(cellValue(item, column.key), column.right, w.y + 19, { size: layout.size, align: "right" });
+      w.text(cellValue(item, column.key), column.right, w.y + baseline, { size: layout.size, align: "right" });
     }
     w.y += height;
     w.rule(w.y);
@@ -435,16 +462,17 @@ function drawPaymentTerms(w, document) {
     ? instalments.map((instalment) => `${instalment.percent} % ${instalment.due} : ${formatMoney(instalment.amount)}.`)
     : document.payment.terms ? w.wrap(document.payment.terms, R - L, 9) : [];
   const extra = (document.payment.method ? 1 : 0) + (document.note ? 1 : 0);
-  w.ensure(28 + (termLines.length + extra) * 18);
+  const step = w.compact ? 14 : 18;
+  w.ensure(28 + (termLines.length + extra) * step);
   w.text("CONDITIONS DE RÈGLEMENT", L, w.y + 10, { size: 9, isBold: true });
-  w.y += 28;
+  w.y += w.compact ? 24 : 28;
   for (const line of termLines) {
     w.text(line, L, w.y, { size: 9 });
-    w.y += 18;
+    w.y += step;
   }
   if (document.payment.method) {
     w.text(`Moyen de paiement : ${document.payment.method}`, L, w.y, { size: 9 });
-    w.y += 18;
+    w.y += step;
   }
   if (document.note) {
     for (const line of w.wrap(`Note : ${document.note}`, R - L, 9)) {

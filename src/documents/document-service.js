@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { PDFDocument, PDFName, PDFRawStream } from "pdf-lib";
+import { readWordText } from "../agent/chat-attachments.js";
 import { validateAndPrepareDocument, DocumentValidationError } from "./document-validation.js";
 import { HKIDS_DOCUMENT_TYPES } from "./document-schema.js";
-import { renderHkidsPdf } from "./pdf-renderer.js";
+import { logoPath, renderHkidsPdf } from "./pdf-renderer.js";
 import { isPurchaseOrderNumberUsed, nextPurchaseOrderNumber } from "./purchase-order.js";
 import { renderHkidsDocx } from "./docx-renderer.js";
 import { documentLayoutFor } from "./hkids-template.js";
@@ -25,11 +27,19 @@ export class HkidsDocumentService {
     this.outputDir = outputDir ?? join(process.cwd(), "assets", "documents", "generated");
   }
 
-  async preview(input = {}) {
+  // replaceExisting: the document corrects one already issued under the same
+  // type and number. It must exist; on generation its files are archived, never
+  // deleted. The choice is part of what the preview token confirms.
+  async preview(input = {}, { replaceExisting = false } = {}) {
     const document = validateAndPrepareDocument(input);
-    await this.#assertPurchaseOrderNumberFree(document);
+    if (replaceExisting) {
+      await this.#assertIssued(document);
+    } else {
+      await this.#assertPurchaseOrderNumberFree(document);
+      await this.#assertNumberFree(document);
+    }
     const template = await templateFor(document.documentType);
-    const previewHash = hashPayload({ document: stripRuntimeFields(document), templateChecksum: template.checksum });
+    const previewHash = hashPayload({ document: stripRuntimeFields(document), templateChecksum: template.checksum, replaceExisting });
     const previewToken = randomUUID();
     this.#previewTokens.set(previewToken, previewHash);
     return Object.freeze({
@@ -40,29 +50,40 @@ export class HkidsDocumentService {
     });
   }
 
-  async generate(input = {}, { createdById = null } = {}) {
+  async generate(input = {}, { createdById = null, replaceExisting = false } = {}) {
     const document = validateAndPrepareDocument(input, { requireConfirmation: true });
     const template = await templateFor(document.documentType);
     const expectedHash = this.#previewTokens.get(document.previewToken);
-    const actualHash = hashPayload({ document: stripRuntimeFields(document), templateChecksum: template.checksum });
+    const actualHash = hashPayload({ document: stripRuntimeFields(document), templateChecksum: template.checksum, replaceExisting });
     if (!expectedHash || expectedHash !== actualHash) {
       throw new DocumentGenerationError("A matching preview validation is required before generation.", "PREVIEW_CONFIRMATION_REQUIRED", {
         field: "previewToken"
       });
     }
 
-    // Checked again at generation: another order may have taken the number
+    // Checked again at generation: another document may have taken the number
     // between the preview and the confirmation.
-    await this.#assertPurchaseOrderNumberFree(document);
+    if (replaceExisting) {
+      await this.#assertIssued(document);
+    } else {
+      await this.#assertPurchaseOrderNumberFree(document);
+      await this.#assertNumberFree(document);
+    }
 
-    await mkdir(this.outputDir, { recursive: true });
-    const stem = safeFileStem(document);
     const pdfBuffer = await renderHkidsPdf(document);
     const docxBuffer = await renderHkidsDocx(document);
+    await mkdir(this.outputDir, { recursive: true });
+    if (replaceExisting) {
+      await this.#archiveIssued(document);
+    }
+    const stem = safeFileStem(document);
     const pdfStorageKey = resolve(this.outputDir, `${stem}.pdf`);
     const docxStorageKey = resolve(this.outputDir, `${stem}.docx`);
     await writeFile(pdfStorageKey, pdfBuffer);
     await writeFile(docxStorageKey, docxBuffer);
+    // What the document says, kept beside its files so that an agent asked to
+    // correct it later starts from its exact content, visual included.
+    await writeFile(resolve(this.outputDir, `${stem}.json`), JSON.stringify(issuedContent(input), null, 2));
 
     const pdf = await this.repository.createDocument({
       requestId: null,
@@ -147,6 +168,69 @@ export class HkidsDocumentService {
       .filter(Boolean);
   }
 
+  // The files of an issued document, found by type and number whatever its date.
+  async #issuedFiles(documentType, documentNumber) {
+    const prefix = FILE_PREFIXES[documentType];
+    if (!prefix) {
+      return [];
+    }
+    const pattern = new RegExp(`^${prefix}_HKIDS_${String(documentNumber).replace(/[^a-zA-Z0-9_-]+/g, "_")}_.+\\.(pdf|docx|json)$`);
+    return (await this.#outputNames()).filter((name) => pattern.test(name));
+  }
+
+  // A number already printed on a generated document is never printed on
+  // another one by accident: correcting a document is an explicit replacement.
+  async #assertNumberFree(document) {
+    if ((await this.#issuedFiles(document.documentType, document.documentNumber)).length > 0) {
+      throw new DocumentGenerationError("This document number has already been issued.", "DOCUMENT_NUMBER_USED", {
+        field: "documentNumber",
+        documentNumber: document.documentNumber,
+        nextNumber: await this.nextDocumentNumber(document.documentType)
+      });
+    }
+  }
+
+  async #assertIssued(document) {
+    if ((await this.#issuedFiles(document.documentType, document.documentNumber)).length === 0) {
+      throw new DocumentGenerationError("There is no issued document with this number to replace.", "DOCUMENT_TO_REPLACE_NOT_FOUND", {
+        field: "documentNumber",
+        documentNumber: document.documentNumber
+      });
+    }
+  }
+
+  async #archiveIssued(document) {
+    const archive = join(this.outputDir, ARCHIVE_DIR);
+    await mkdir(archive, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    for (const name of await this.#issuedFiles(document.documentType, document.documentNumber)) {
+      await rename(join(this.outputDir, name), join(archive, `remplace-${stamp}_${name}`));
+    }
+  }
+
+  // What an issued document says: the content kept at its generation, or, for a
+  // document generated before that was kept, the text of its Word file and the
+  // visual found in its PDF. Null when no document has this type and number.
+  async readIssued(documentType, documentNumber) {
+    const names = await this.#issuedFiles(documentType, documentNumber);
+    if (names.length === 0) {
+      return null;
+    }
+    const json = names.find((name) => name.endsWith(".json"));
+    if (json) {
+      return { source: "content", input: JSON.parse(await readFile(join(this.outputDir, json), "utf8")) };
+    }
+    const docx = names.find((name) => name.endsWith(".docx"));
+    const pdf = names.find((name) => name.endsWith(".pdf"));
+    return {
+      source: "word",
+      text: docx ? readWordText(await readFile(join(this.outputDir, docx))) : "",
+      referenceImage: pdf && documentType === HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER
+        ? await referenceImageFromPdf(await readFile(join(this.outputDir, pdf)))
+        : null
+    };
+  }
+
   async #assertPurchaseOrderNumberFree(document) {
     if (document.documentType !== HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER) {
       return;
@@ -218,6 +302,32 @@ async function templateFor(documentType) {
 }
 
 const PURCHASE_ORDER_FILE_PREFIX = "bon_commande";
+// Where a replaced document goes. Inside the output folder, so it stays out of
+// the repository, and a folder, so its files never count as issued numbers.
+const ARCHIVE_DIR = "annules";
+
+function issuedContent(input) {
+  const { previewToken, userConfirmation, ...content } = input;
+  return content;
+}
+
+// The visual of a purchase order generated before its content was kept: the
+// largest JPEG in its PDF that is not the logo.
+async function referenceImageFromPdf(bytes) {
+  const pdf = await PDFDocument.load(bytes);
+  const logo = await readFile(logoPath());
+  const images = [];
+  for (const [, object] of pdf.context.enumerateIndirectObjects()) {
+    if (object instanceof PDFRawStream
+      && object.dict.get(PDFName.of("Subtype")) === PDFName.of("Image")
+      && object.dict.get(PDFName.of("Filter")) === PDFName.of("DCTDecode")
+      && !Buffer.from(object.contents).equals(logo)) {
+      images.push(Buffer.from(object.contents));
+    }
+  }
+  const largest = images.sort((a, b) => b.length - a.length)[0];
+  return largest ? `data:image/jpeg;base64,${largest.toString("base64")}` : null;
+}
 
 const FILE_PREFIXES = Object.freeze({
   [HKIDS_DOCUMENT_TYPES.QUOTE]: "devis",

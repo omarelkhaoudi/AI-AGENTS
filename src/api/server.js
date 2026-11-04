@@ -631,7 +631,7 @@ export function buildApi({
 
     app.post("/api/documents/preview", documentRouteOptions(securityConfig), async (request, reply) => {
       try {
-        return reply.code(200).send(await hkidsDocuments.preview(request.body));
+        return reply.code(200).send(await hkidsDocuments.preview(request.body, { replaceExisting: request.body?.replaceExisting === true }));
       } catch (error) {
         const normalized = normalizeDocumentError(error);
         if (normalized) {
@@ -644,7 +644,8 @@ export function buildApi({
     app.post("/api/documents/generate", documentRouteOptions(securityConfig), async (request, reply) => {
       try {
         return reply.code(201).send(await hkidsDocuments.generate(request.body, {
-          createdById: request.principal.userId
+          createdById: request.principal.userId,
+          replaceExisting: request.body?.replaceExisting === true
         }));
       } catch (error) {
         const normalized = normalizeDocumentError(error);

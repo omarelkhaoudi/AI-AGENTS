@@ -17,6 +17,9 @@ import { WHATSAPP_MESSAGE_TOOL } from "./whatsapp.js";
 export const MAX_SPECIALIST_ROUNDS = 5;
 const MAX_TOOL_OUTPUT_CHARS = 7000;
 
+// How an agent that prepares documents corrects one already generated.
+const CORRECTION_RULE = "Corriger ou refaire un document déjà généré (« refais le devis 170 », « corrige la date du BC 165 ») : consulter_document (type, numéro), puis preparer_document avec remplace = true et le même numéro, en reprenant TOUT le contenu relu (client, adresse, objet, chaque ligne avec son prix_unitaire HT et prix_ttc = false, caractéristiques, conditions, références, et la date d'origine sauf si la correction la change) et en n'appliquant QUE les corrections demandées. Ne change rien d'autre, et dis précisément ce qui a changé. L'ancienne version est archivée quand la direction valide.";
+
 const COMMON_RULES = [
   "Tu fais partie de l'équipe d'agents IA de H KIDS (mobilier et aménagement sur mesure pour enfants, Marrakech). Le Director IA te confie une mission ; tu lui réponds, il fera la synthèse pour la direction (Hiba, Omar).",
   "Réponds en français, de façon concrète et courte : d'abord l'essentiel (chiffres, noms, dates), puis tes recommandations, puis les brouillons que tu as préparés.",
@@ -45,6 +48,7 @@ export const SPECIALISTS = Object.freeze({
       "Tu suis les devis envoyés, les relances à faire (un devis sans réponse depuis 5 jours ou plus doit être relancé), les commandes des clients et les acomptes attendus côté commercial.",
       "Pour chaque relance, rédige un message court, chaleureux et professionnel, prêt à envoyer par WhatsApp (tutoiement interdit, « Bonjour Madame/Monsieur … »), signé « L'équipe H-KIDS ».",
       "C'est toi qui prépares les devis, bons de commande et bons de livraison avec preparer_document. Un prix est TTC (prix_ttc = true) sauf si la mission écrit explicitement « HT ». Prix non donné : cherche-le avec chercher_catalogue (un seul produit correspond → son nom exact et son prix TTC, en précisant que c'est le prix catalogue ; plusieurs → cite-les avec leur prix sans choisir ; aucun → dis que le prix manque). Quantité non précisée = 1. 60/20/20 par défaut, 50/50 seulement sur un bon de commande si c'est demandé. Le numéro est attribué automatiquement.",
+      CORRECTION_RULE,
       "Si la mission impose une date au document (« date du document : 08/08/2026 », « daté du 8 août »), mets-la dans le champ date au format JJ/MM/AAAA ; sinon chaîne vide (date du jour). Dans ta réponse, donne la date, le numéro et le total renvoyés par preparer_document.",
       "Si la mission indique « visuel : photo n° X », mets X dans le champ photo du bon de commande ; sinon 0. Reprends dans les caractéristiques ce que la mission dit de la photo (modèle, coloris, finitions).",
       "Après preparer_document, donne le type, le numéro, le client, le total TTC et les échéances : l'aperçu attend la validation de la direction (« Valider et générer »). Ne dis jamais qu'il est envoyé."
@@ -59,6 +63,7 @@ export const SPECIALISTS = Object.freeze({
       "Tu dis ce qui doit être encaissé (cette semaine, en retard), les créances par client, le chiffre d'affaires facturé, et les décisions de trésorerie à prendre.",
       "Donne toujours les montants avec leur devise, sans jamais additionner deux devises différentes.",
       "Pour un paiement en retard, rédige une relance de paiement polie et ferme, prête à envoyer, avec le montant et l'échéance.",
+      CORRECTION_RULE,
       "C'est toi qui prépares les factures avec preparer_document : elle doit citer son devis ou son bon de livraison (sinon, dis que le numéro manque). Un prix est TTC (prix_ttc = true) sauf si la mission écrit explicitement « HT ».",
       "Pour un objectif de chiffre d'affaires, ta part est de transformer les ventes en encaissements : acomptes et soldes à encaisser dans la période, et les conditions qui protègent la trésorerie."
     ]
@@ -149,12 +154,17 @@ export async function runSpecialist({
   prepareDocument,
   catalogueTool = null,
   lookUpCatalogue = null,
+  consultDocumentTool = null,
+  consultDocument = null,
   prepareMessage = null
 }) {
   const specialist = SPECIALISTS[agentId];
   const readTools = readToolsFor(agentId, toolRegistry);
   const documentTypes = specialist.documentTypes ?? [];
   const documentTool = documentTypes.length > 0 && prepareDocumentTool ? restrictDocumentTypes(prepareDocumentTool, documentTypes) : null;
+  // Whoever prepares a type of document can read back the ones already issued,
+  // to correct one under its own number.
+  const consultTool = documentTool && consultDocumentTool && consultDocument ? restrictDocumentTypes(consultDocumentTool, documentTypes) : null;
   const catalogue = specialist.usesCatalogue && catalogueTool && lookUpCatalogue ? catalogueTool : null;
   const tools = [
     ...readTools.map((tool) => ({
@@ -164,6 +174,7 @@ export async function runSpecialist({
       parameters: { type: "object", additionalProperties: false, properties: {} }
     })),
     ...(documentTool ? [documentTool] : []),
+    ...(consultTool ? [consultTool] : []),
     ...(catalogue ? [catalogue] : []),
     ...(prepareMessage ? [WHATSAPP_MESSAGE_TOOL] : [])
   ];
@@ -194,6 +205,11 @@ export async function runSpecialist({
         const args = parseArguments(call.arguments);
         result = documentTypes.includes(args.type)
           ? await prepareDocument(args, agentId)
+          : { ok: false, erreur: `Ce document n'est pas du ressort de l'agent ${specialist.label}.` };
+      } else if (consultTool && call.name === consultTool.name) {
+        const args = parseArguments(call.arguments);
+        result = documentTypes.includes(args.type)
+          ? await consultDocument(args)
           : { ok: false, erreur: `Ce document n'est pas du ressort de l'agent ${specialist.label}.` };
       } else if (catalogue && call.name === catalogue.name) {
         result = await lookUpCatalogue(parseArguments(call.arguments));

@@ -575,7 +575,7 @@ function wrapText(value, font, size, width) {
 
 // An override that is set to an empty string is not an override, as for the
 // Word renderer.
-function logoPath() {
+export function logoPath() {
   const configured = typeof process.env.HKIDS_LOGO_PATH === "string" ? process.env.HKIDS_LOGO_PATH.trim() : "";
   return configured === "" ? HKIDS_LOGO_PATH : configured;
 }

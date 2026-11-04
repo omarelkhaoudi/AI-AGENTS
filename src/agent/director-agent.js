@@ -200,9 +200,25 @@ const DOCUMENT_TOOL = Object.freeze({
         reference_bl: { type: "string", description: "Numéro du bon de livraison lié (facture). Chaîne vide si aucun." },
         numero: { type: "string", description: "Numéro imposé par l'utilisatrice. Chaîne vide pour prendre le prochain numéro libre." },
         photo: { type: "integer", description: "Bon de commande : numéro de la photo jointe par la direction à mettre comme visuel de référence (« visuel : photo n° 2 » → 2). 0 si aucune." },
-        date: { type: "string", description: "Date imprimée sur le document, au format JJ/MM/AAAA, seulement si la direction en impose une (« date : 08/08/2026 »). Chaîne vide = date du jour." }
+        date: { type: "string", description: "Date imprimée sur le document, au format JJ/MM/AAAA, seulement si la direction en impose une (« date : 08/08/2026 »). Chaîne vide = date du jour." },
+        remplace: { type: "boolean", description: "true pour corriger ou refaire un document DÉJÀ GÉNÉRÉ sous le même numéro (numero obligatoire) : l'ancienne version est archivée quand la direction valide, jamais effacée. false pour un nouveau document." }
       },
-      required: ["type", "client_nom", "client_adresse", "objet", "lignes", "caracteristiques", "conditions_paiement", "reference_devis", "reference_bl", "numero", "photo", "date"]
+      required: ["type", "client_nom", "client_adresse", "objet", "lignes", "caracteristiques", "conditions_paiement", "reference_devis", "reference_bl", "numero", "photo", "date", "remplace"]
+    }
+});
+
+const CONSULT_DOCUMENT_TOOL = Object.freeze({
+    type: "function",
+    name: "consulter_document",
+    description: "Relit un document H-KIDS déjà généré (devis, bon de commande, facture ou bon de livraison) par son numéro : client, adresse, date, lignes avec leur prix unitaire HT, caractéristiques, conditions, visuel. À appeler avant de corriger ou de refaire un document existant.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        type: { type: "string", enum: Object.keys(DOCUMENT_TYPES), description: "Le type du document." },
+        numero: { type: "string", description: "Son numéro, par exemple « 170 »." }
+      },
+      required: ["type", "numero"]
     }
 });
 
@@ -277,6 +293,8 @@ function instructions(today) {
     "Question de situation, d'urgences, de risques ou de décisions — méthode OBLIGATOIRE : 1) etablir_plan_action (objectif, stratégie, priorités, étapes responsable + tâche ; objectif_chiffre avec montant 0) ; 2) deleguer_a_un_agent (les étapes indépendantes en même temps) ou point_entreprise pour un point global ; 3) synthèse qui suit le plan, puis les incohérences signalées, puis ce qui demande une décision.",
     "",
     "Tâche d'exécution demandée directement (un devis, un bon de commande, un bon de livraison, une facture, une relance) : pas de plan ; confie-la tout de suite au bon responsable avec deleguer_a_un_agent en recopiant TOUTES les informations données (client, adresse, téléphone, produits, quantités, prix, conditions, acompte déjà payé, numéros liés, et la date du document si la direction en impose une : écris « date du document : JJ/MM/AAAA »). Un prix donné sans précision est TTC : écris-le « 3000 DH TTC » dans la mission ; n'écris « HT » que si la direction l'a dit. Ne demande rien avant de confier : la ville suffit comme adresse, quantité non précisée = 1, conditions 60/20/20 par défaut (seuls échéanciers approuvés : 60/20/20 ; en exception 50/30/20, 40/40/20, 100 % ; 50/50 sur bon de commande), prix absent = prix catalogue cherché par le Commercial ; dimensions, coloris, livraison ou délai ne sont pas requis. S'il répond qu'il manque une information, pose UNE question courte à la direction qui demande tout ce qui manque, puis redonne la tâche complète au responsable. Annonce ensuite le document en 2 ou 3 lignes (qui l'a préparé, type, numéro, date, client, total TTC), avec les valeurs que le responsable rapporte du document préparé et jamais celles que tu as demandées : si une demande (date, visuel, condition) n'apparaît pas dans le document, dis-le clairement au lieu de l'annoncer comme faite et dis de vérifier l'aperçu et de cliquer « Valider et générer ».",
+    "",
+    "Correction d'un document déjà généré (« refais le devis 170 », « corrige le BC 165, la date est fausse », « enlève la ligne des chevets du devis 170 ») : confie-la tout de suite au responsable du document (devis, bon de commande, bon de livraison → commercial ; facture → finance) avec son type, son numéro et TOUTES les corrections demandées, en écrivant « correction du document existant n° X, même numéro ». Ne demande pas le contenu du document : le responsable le relit lui-même. Annonce ensuite ce qui a changé et que l'ancienne version sera archivée quand la direction validera.",
     "",
     "Photos : la direction peut joindre des photos (numérotées « photo n° 1 », « photo n° 2 »… dans la conversation). Regarde-les et dis en une phrase ce que tu y vois d'utile (meuble, modèle, coloris, finitions, dimensions apparentes, texte lisible). Les responsables ne voient pas les photos : recopie dans la mission ce qu'elles montrent. Pour un bon de commande, écris aussi « visuel : photo n° X » dans la mission pour que la photo figure sur le document. N'invente rien que la photo ne montre pas.",
     "Documents : la direction peut joindre des documents (PDF, Word, Excel, texte), numérotés « document n° 1 »… Lis-les et sers-t'en : réponds à la question posée dessus, ou résume en quelques lignes ce qui compte pour H KIDS (client, montants, dates, quantités, conditions, échéances). Les responsables ne voient pas les documents : recopie dans leur mission les informations utiles, chiffres compris. Si un document ne contient pas l'information demandée, dis-le.",
@@ -557,9 +575,18 @@ async function prepareDocument(args, { documentService, clock, outcome }, prepar
     return { ok: false, erreur: "Le 50/50 n'est possible que sur un bon de commande. Utiliser 60/20/20." };
   }
 
+  const replaces = args.remplace === true;
+  if (replaces && !text(args.numero)) {
+    return { ok: false, erreur: "Pour corriger un document existant, donner son numéro (numero)." };
+  }
   const number = text(args.numero) || await documentService.nextDocumentNumber(documentType);
   if (!number) {
     return { ok: false, erreur: `Aucun numéro connu pour ce type de document : demander à l'utilisatrice le numéro à utiliser.` };
+  }
+  // A corrected order keeps its visual unless another photo is given.
+  const issued = replaces ? await documentService.readIssued(documentType, number) : null;
+  if (replaces && !issued) {
+    return { ok: false, erreur: `Aucun ${args.type.replace(/_/g, " ")} n° ${number} n'a été généré : rien à corriger. Vérifier le numéro, ou préparer un nouveau document (remplace = false).` };
   }
 
   const items = (Array.isArray(args.lignes) ? args.lignes : []).map((line) => {
@@ -575,10 +602,12 @@ async function prepareDocument(args, { documentService, clock, outcome }, prepar
   const calculated = calculateDocumentTotals(items, TVA_RATE);
 
   const photoNumber = Number(args.photo) || 0;
-  const referenceImage = purchaseOrder && photoNumber > 0 ? outcome.photos?.[photoNumber - 1] : undefined;
-  if (purchaseOrder && photoNumber > 0 && !referenceImage) {
+  const newImage = purchaseOrder && photoNumber > 0 ? outcome.photos?.[photoNumber - 1] : undefined;
+  if (purchaseOrder && photoNumber > 0 && !newImage) {
     return { ok: false, erreur: `Il n'y a pas de photo n° ${photoNumber} dans la conversation. Mettre 0 ou le bon numéro.` };
   }
+  const keptImage = purchaseOrder && !newImage ? (issued?.input?.referenceImage ?? issued?.referenceImage ?? undefined) : undefined;
+  const referenceImage = newImage ?? keptImage;
 
   const input = {
     documentType,
@@ -597,18 +626,18 @@ async function prepareDocument(args, { documentService, clock, outcome }, prepar
 
   let preview;
   try {
-    preview = await documentService.preview(input);
+    preview = await documentService.preview(input, { replaceExisting: replaces });
   } catch (error) {
     if (error instanceof DocumentValidationError) {
       return { ok: false, erreurs: error.errors.map((entry) => `${entry.field} : ${entry.message}`) };
     }
-    if (error?.code === "PURCHASE_ORDER_NUMBER_USED") {
-      return { ok: false, erreur: `Le numéro ${error.details.documentNumber} est déjà pris ; prochain libre : ${error.details.nextNumber}.` };
+    if (error?.code === "PURCHASE_ORDER_NUMBER_USED" || error?.code === "DOCUMENT_NUMBER_USED") {
+      return { ok: false, erreur: `Le numéro ${error.details.documentNumber} est déjà pris par un document généré ; prochain libre : ${error.details.nextNumber}. Pour corriger ce document-là, le relire avec consulter_document puis remplace = true.` };
     }
     throw error;
   }
 
-  outcome.documents.push(Object.freeze({ input, preview, preparedBy }));
+  outcome.documents.push(Object.freeze({ input, preview, preparedBy, replaces }));
   const document = preview.document;
   return {
     ok: true,
@@ -621,8 +650,50 @@ async function prepareDocument(args, { documentService, clock, outcome }, prepar
     total_ttc: document.totals.totalTtc,
     echeances: (document.payment?.instalments ?? []).map((part) => `${part.percent} % ${part.due} : ${part.amount} DH`),
     conditions: document.payment?.terms ?? null,
-    ...(referenceImage ? { visuel: `photo n° ${photoNumber}` } : {}),
+    ...(newImage ? { visuel: `photo n° ${photoNumber}` } : keptImage ? { visuel: "celui du document d'origine, conservé" } : {}),
+    ...(replaces ? { remplace: `l'ancienne version du n° ${document.documentNumber} sera archivée à la validation` } : {}),
     statut: "Aperçu prêt : l'utilisatrice doit cliquer « Valider et générer » dans le cockpit."
+  };
+}
+
+// An issued document as the agent needs it to prepare its correction: the same
+// fields preparer_document takes, prices HT so that they come back to the
+// cent. The visual itself is not sent, only whether there is one.
+async function consultDocument(args, { documentService }) {
+  const documentType = DOCUMENT_TYPES[args.type];
+  const number = text(args.numero);
+  if (!documentType || !number) {
+    return { ok: false, erreur: "Donner le type et le numéro du document." };
+  }
+  const issued = await documentService.readIssued(documentType, number);
+  if (!issued) {
+    return { ok: false, erreur: `Aucun ${args.type.replace(/_/g, " ")} n° ${number} n'a été généré.` };
+  }
+  if (issued.source === "word") {
+    return {
+      ok: true,
+      numero: number,
+      source: "texte du fichier Word (document généré avant la conservation du contenu) : les prix unitaires y sont HT",
+      texte: issued.text,
+      visuel: issued.referenceImage ? "oui, il sera conservé" : "non"
+    };
+  }
+  const input = issued.input;
+  const conditions = Object.keys(PAYMENT_RULES).find((key) => PAYMENT_RULES[key] === input.payment?.termsRule) ?? input.payment?.termsRule ?? "";
+  return {
+    ok: true,
+    numero: input.documentNumber,
+    date: input.date,
+    client_nom: input.client?.name ?? "",
+    client_adresse: input.client?.address ?? "",
+    objet: input.object ?? "",
+    lignes: (input.items ?? []).map((item) => ({ designation: item.designation, quantite: item.quantity, prix_unitaire: item.unitPriceHt, prix_ttc: false })),
+    total_ttc: input.totals?.totalTtc ?? null,
+    caracteristiques: input.specifications ?? [],
+    conditions_paiement: conditions,
+    reference_devis: input.quoteReference ?? "",
+    reference_bl: input.deliveryNoteReference ?? "",
+    visuel: input.referenceImage ? "oui, il sera conservé" : "non"
   };
 }
 
@@ -646,6 +717,8 @@ async function delegate(args, context) {
     prepareDocument: (documentArgs, agentId) => prepareDocument(documentArgs, context, agentId),
     catalogueTool: CATALOGUE_TOOL,
     lookUpCatalogue: (catalogueArgs) => lookUpCatalogue(catalogueArgs, context),
+    consultDocumentTool: CONSULT_DOCUMENT_TOOL,
+    consultDocument: (consultArgs) => consultDocument(consultArgs, context),
     prepareMessage: (messageArgs, agentId) => recordMessage(messageArgs, agentId, outcome)
   });
   outcome.agentRuns.push(run);

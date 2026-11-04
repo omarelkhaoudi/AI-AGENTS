@@ -69,7 +69,7 @@ function readAttachment(file, number) {
 
   let text;
   try {
-    text = kind === "word" ? wordText(bytes) : kind === "excel" ? excelText(bytes) : bytes.toString("utf8").replace(/^﻿/, "");
+    text = kind === "word" ? readWordText(bytes) : kind === "excel" ? excelText(bytes) : bytes.toString("utf8").replace(/^﻿/, "");
   } catch {
     throw new ChatAttachmentError(`« ${name} » n'a pas pu être lu : le fichier semble abîmé.`);
   }
@@ -84,7 +84,7 @@ function readAttachment(file, number) {
 }
 
 // The paragraphs of a .docx, tables included, one per line.
-function wordText(bytes) {
+export function readWordText(bytes) {
   const xml = readZipEntries(bytes).get("word/document.xml")?.toString("utf8");
   if (!xml) {
     throw new Error("not a Word document");

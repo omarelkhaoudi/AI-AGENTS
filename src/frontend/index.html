@@ -25,6 +25,7 @@
         <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.5 3.6 5.2"/></symbol>
         <symbol id="i-user-check" viewBox="0 0 24 24"><circle cx="9" cy="8" r="4"/><path d="M2 21c1-4 4-6 7-6s6 2 7 6M16 11l2 2 4-4"/></symbol>
         <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="9.5" r="1.8"/><path d="M21 15.5l-4.8-4.8L6 20"/></symbol>
+        <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="M20.5 11.5l-8.2 8.2a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></symbol>
         <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></symbol>
         <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-2.5-6.5z"/><path d="M11.5 13.5L20 4"/></symbol>
         <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
@@ -133,9 +134,9 @@
               <div class="composer-bar flex items-center justify-between gap-3 pr-1 pb-0.5 pl-2.5">
                 <span class="kbd-hint max-md:hidden"><kbd>Ctrl</kbd> + <kbd>Entrée</kbd> pour envoyer</span>
                 <div class="composer-actions flex shrink-0 gap-2 max-md:flex-1">
-                  <input type="file" id="photo-input" accept="image/*" multiple hidden>
-                  <button type="button" class="icon-button" id="photo-button" title="Joindre des photos (ou glissez-les, ou collez-les)" hidden>
-                    <svg class="i" aria-hidden="true"><use href="#i-image"/></svg><span class="visually-hidden">Joindre des photos</span>
+                  <input type="file" id="photo-input" accept="image/*,.pdf,.docx,.xlsx,.txt,.csv,.md" multiple hidden>
+                  <button type="button" class="icon-button" id="photo-button" title="Joindre des photos ou des documents : PDF, Word, Excel (ou glissez-les, ou collez-les)" hidden>
+                    <svg class="i" aria-hidden="true"><use href="#i-paperclip"/></svg><span class="visually-hidden">Joindre des photos ou des documents</span>
                   </button>
                   <button type="button" class="icon-button" id="voice-placeholder" disabled title="Commande vocale à venir">
                     <svg class="i" aria-hidden="true"><use href="#i-mic"/></svg><span class="visually-hidden">Voix indisponible en Phase 0</span>

@@ -4,6 +4,7 @@ import { HKIDS_DOCUMENT_TYPES } from "../documents/document-schema.js";
 import { DocumentValidationError } from "../documents/document-validation.js";
 import { HKIDS_FIXED_IDENTITY } from "../documents/hkids-template.js";
 import { parseReferenceImage } from "../documents/purchase-order.js";
+import { ChatAttachmentError, readAttachments } from "./chat-attachments.js";
 import { createCatalogueLoader, searchCatalogue } from "./catalogue.js";
 import { SPECIALISTS, SPECIALIST_IDS, runSpecialist } from "./agent-team.js";
 import { draftWhatsAppMessage } from "./whatsapp.js";
@@ -278,6 +279,7 @@ function instructions(today) {
     "Tâche d'exécution demandée directement (un devis, un bon de commande, un bon de livraison, une facture, une relance) : pas de plan ; confie-la tout de suite au bon responsable avec deleguer_a_un_agent en recopiant TOUTES les informations données (client, adresse, téléphone, produits, quantités, prix, conditions, acompte déjà payé, numéros liés, et la date du document si la direction en impose une : écris « date du document : JJ/MM/AAAA »). Un prix donné sans précision est TTC : écris-le « 3000 DH TTC » dans la mission ; n'écris « HT » que si la direction l'a dit. Ne demande rien avant de confier : la ville suffit comme adresse, quantité non précisée = 1, conditions 60/20/20 par défaut (seuls échéanciers approuvés : 60/20/20 ; en exception 50/30/20, 40/40/20, 100 % ; 50/50 sur bon de commande), prix absent = prix catalogue cherché par le Commercial ; dimensions, coloris, livraison ou délai ne sont pas requis. S'il répond qu'il manque une information, pose UNE question courte à la direction qui demande tout ce qui manque, puis redonne la tâche complète au responsable. Annonce ensuite le document en 2 ou 3 lignes (qui l'a préparé, type, numéro, date, client, total TTC), avec les valeurs que le responsable rapporte du document préparé et jamais celles que tu as demandées : si une demande (date, visuel, condition) n'apparaît pas dans le document, dis-le clairement au lieu de l'annoncer comme faite et dis de vérifier l'aperçu et de cliquer « Valider et générer ».",
     "",
     "Photos : la direction peut joindre des photos (numérotées « photo n° 1 », « photo n° 2 »… dans la conversation). Regarde-les et dis en une phrase ce que tu y vois d'utile (meuble, modèle, coloris, finitions, dimensions apparentes, texte lisible). Les responsables ne voient pas les photos : recopie dans la mission ce qu'elles montrent. Pour un bon de commande, écris aussi « visuel : photo n° X » dans la mission pour que la photo figure sur le document. N'invente rien que la photo ne montre pas.",
+    "Documents : la direction peut joindre des documents (PDF, Word, Excel, texte), numérotés « document n° 1 »… Lis-les et sers-t'en : réponds à la question posée dessus, ou résume en quelques lignes ce qui compte pour H KIDS (client, montants, dates, quantités, conditions, échéances). Les responsables ne voient pas les documents : recopie dans leur mission les informations utiles, chiffres compris. Si un document ne contient pas l'information demandée, dis-le.",
     "",
     "Règles :",
     "- Les plans sont CONSERVÉS et suivis dans le temps. Quand la direction parle d'un plan existant ou d'un fait qui le fait avancer (« où en est le plan », « on continue », « l'acompte Atlas est arrivé »), appelle lister_plans puis : relance les étapes encore à faire avec deleguer_a_un_agent (l'étape du responsable se met à jour seule), mets à jour avec ajuster_plan (fait, bloqué, nouvelle échéance, nouvelles étapes, note), et réponds avec l'avancement et la prochaine action. Ne crée pas un nouveau plan pour un sujet qui a déjà un plan en cours : ajuste-le.",
@@ -332,6 +334,7 @@ export function createDirectorAgent({
 } = {}) {
   const conversations = new Map();
   const photoAlbums = new Map();
+  const fileCounts = new Map();
   let resolvedClient = client;
 
   return Object.freeze({
@@ -340,10 +343,12 @@ export function createDirectorAgent({
       return Boolean(client) || apiKey !== "";
     },
 
-    async chat({ message, photos = [], conversationId = null, userId = null } = {}) {
+    async chat({ message, photos = [], files = [], conversationId = null, userId = null } = {}) {
+      const id = conversationId && conversations.has(conversationId) ? conversationId : randomUUID();
       const newPhotos = checkPhotos(photos);
+      const newFiles = checkFiles(files, (fileCounts.get(id) ?? 0) + 1);
       const typed = typeof message === "string" ? message.trim() : "";
-      if (typed === "" && newPhotos.length === 0) {
+      if (typed === "" && newPhotos.length === 0 && newFiles.length === 0) {
         throw new DirectorAgentError("Le message est vide.", "AGENT_MESSAGE_EMPTY");
       }
       if (!this.isConfigured()) {
@@ -351,16 +356,20 @@ export function createDirectorAgent({
       }
       resolvedClient ??= await clientFactory({ apiKey });
 
-      const id = conversationId && conversations.has(conversationId) ? conversationId : randomUUID();
       const items = conversations.get(id) ?? [];
       // Photos are numbered across the conversation, so "la photo n° 2" keeps
       // meaning the same picture from one message to the next.
       const conversationPhotos = [...(photoAlbums.get(id) ?? []), ...newPhotos];
       const numbers = newPhotos.map((_, index) => conversationPhotos.length - newPhotos.length + index + 1);
-      const text = [typed || "Voici une photo.", ...(numbers.length > 0 ? [`[Photos jointes : ${numbers.map((n) => `n° ${n}`).join(", ")}]`] : [])].join("\n\n");
-      const userItem = newPhotos.length === 0
+      const fallback = newPhotos.length > 0 ? "Voici une photo." : "Voici un document.";
+      const text = [typed || fallback, ...(numbers.length > 0 ? [`[Photos jointes : ${numbers.map((n) => `n° ${n}`).join(", ")}]`] : [])].join("\n\n");
+      const userItem = newPhotos.length === 0 && newFiles.length === 0
         ? { role: "user", content: text }
-        : { role: "user", content: [{ type: "input_text", text }, ...newPhotos.map((url) => ({ type: "input_image", image_url: url, detail: "auto" }))] };
+        : { role: "user", content: [
+          { type: "input_text", text },
+          ...newFiles.map((file) => file.part),
+          ...newPhotos.map((url) => ({ type: "input_image", image_url: url, detail: "auto" }))
+        ] };
       items.push(userItem);
 
       const outcome = { documents: [], directorResponse: null, agentRuns: [], messages: [], plan: null, planId: null, alerts: null, photos: conversationPhotos };
@@ -396,12 +405,19 @@ export function createDirectorAgent({
         });
       }
 
-      // The model has seen the pictures in this turn and said what they show.
-      // Later turns keep that text and the numbers, not the pictures: resending
-      // every photo with every message would be slow and costly.
-      if (newPhotos.length > 0) {
-        items[items.indexOf(userItem)] = { role: "user", content: `${text}\n[Photos vues à ce message ; elles restent disponibles par leur numéro comme visuel d'un bon de commande.]` };
+      // The model has seen the pictures and documents in this turn and said
+      // what they show. Later turns keep that text, the numbers and the start of
+      // each document, not the files: resending them with every message would be
+      // slow and costly.
+      if (newPhotos.length > 0 || newFiles.length > 0) {
+        const remembered = [
+          text,
+          ...(newPhotos.length > 0 ? ["[Photos vues à ce message ; elles restent disponibles par leur numéro comme visuel d'un bon de commande.]"] : []),
+          ...newFiles.map((file) => file.remembered)
+        ];
+        items[items.indexOf(userItem)] = { role: "user", content: remembered.join("\n") };
       }
+      fileCounts.set(id, (fileCounts.get(id) ?? 0) + newFiles.length);
       conversations.set(id, items.slice(-MAX_CONVERSATION_ITEMS));
       photoAlbums.set(id, conversationPhotos);
       return Object.freeze({
@@ -438,6 +454,17 @@ function checkPhotos(photos) {
     }
     return photo.trim();
   });
+}
+
+function checkFiles(files, firstNumber) {
+  try {
+    return readAttachments(files, { firstNumber });
+  } catch (error) {
+    if (error instanceof ChatAttachmentError) {
+      throw new DirectorAgentError(error.message, "AGENT_FILE_INVALID");
+    }
+    throw error;
+  }
 }
 
 async function defaultClientFactory({ apiKey }) {

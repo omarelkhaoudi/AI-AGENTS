@@ -1099,6 +1099,31 @@
     @apply mb-1.5 flex flex-wrap justify-end gap-1.5;
   }
 
+  .photo-tray li.file-chip,
+  .bubble-files .file-chip {
+    @apply flex h-16 w-auto max-w-60 items-center gap-2 overflow-visible bg-surface py-0 pr-8 pl-3 text-[13px] text-ink;
+  }
+
+  .bubble-files {
+    @apply mb-1.5 flex flex-wrap justify-end gap-1.5;
+  }
+
+  .bubble-files .file-chip {
+    @apply h-11 rounded-xl border border-line pr-3 shadow-sm;
+  }
+
+  .file-chip .i {
+    @apply shrink-0 text-brand;
+  }
+
+  .file-chip-name {
+    @apply min-w-0 truncate font-medium;
+  }
+
+  .file-chip small {
+    @apply shrink-0 text-[11px] font-semibold text-muted;
+  }
+
   .bubble-photos span {
     @apply block size-24 overflow-hidden rounded-xl border border-line shadow-sm md:size-28;
   }

@@ -111,23 +111,28 @@ messageInput.addEventListener("keydown", (event) => {
   }
 });
 
-// Photos for the Director: picked with the button, dropped on the composer or
-// pasted. Each is shrunk to a JPEG here, so a phone photo of several megabytes
-// travels as a few hundred kilobytes and can also become a purchase order's
-// visual.
+// Photos and documents for the Director: picked with the button, dropped on the
+// composer or pasted. A photo is shrunk to a JPEG here, so a phone photo of
+// several megabytes travels as a few hundred kilobytes and can also become a
+// purchase order's visual. A document (PDF, Word, Excel, text) travels as is;
+// the server reads it.
 const MAX_CHAT_PHOTOS = 4;
+const MAX_CHAT_FILES = 4;
+const MAX_CHAT_FILE_BYTES = 5 * 1024 * 1024;
+const CHAT_FILE_EXTENSIONS = ["pdf", "docx", "xlsx", "txt", "csv", "md"];
 const composerPhotos = [];
+const composerFiles = [];
 
 photoButton.addEventListener("click", () => photoInput.click());
 photoInput.addEventListener("change", async () => {
-  await addComposerPhotos(photoInput.files);
+  await addComposerAttachments(photoInput.files);
   photoInput.value = "";
 });
 messageInput.addEventListener("paste", async (event) => {
-  const files = [...(event.clipboardData?.files ?? [])].filter((file) => file.type.startsWith("image/"));
+  const files = [...(event.clipboardData?.files ?? [])];
   if (files.length > 0 && agentState.enabled) {
     event.preventDefault();
-    await addComposerPhotos(files);
+    await addComposerAttachments(files);
   }
 });
 form.addEventListener("dragover", (event) => {
@@ -143,41 +148,81 @@ form.addEventListener("drop", async (event) => {
     return;
   }
   event.preventDefault();
-  await addComposerPhotos(event.dataTransfer.files);
+  await addComposerAttachments(event.dataTransfer.files);
 });
 photoTray.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-remove-photo]");
-  if (button) {
-    composerPhotos.splice(Number(button.dataset.removePhoto), 1);
-    renderPhotoTray();
+  const photo = event.target.closest("[data-remove-photo]");
+  const file = event.target.closest("[data-remove-file]");
+  if (photo) {
+    composerPhotos.splice(Number(photo.dataset.removePhoto), 1);
+  } else if (file) {
+    composerFiles.splice(Number(file.dataset.removeFile), 1);
   }
+  renderPhotoTray();
 });
 
-async function addComposerPhotos(fileList) {
-  const files = [...fileList].filter((file) => file.type.startsWith("image/"));
-  const room = MAX_CHAT_PHOTOS - composerPhotos.length;
-  if (files.length > room) {
-    showToast(`${MAX_CHAT_PHOTOS} photos au plus par message.`, "warn");
-  }
-  for (const file of files.slice(0, Math.max(0, room))) {
-    try {
-      composerPhotos.push(await downscaleImage(file, 1600, 0.85));
-    } catch {
-      showToast(`La photo « ${file.name} » n'a pas pu être lue.`, "warn");
+async function addComposerAttachments(fileList) {
+  for (const file of [...fileList]) {
+    const extension = /\.([a-z0-9]+)$/i.exec(file.name)?.[1]?.toLowerCase() ?? "";
+    if (file.type.startsWith("image/")) {
+      if (composerPhotos.length >= MAX_CHAT_PHOTOS) {
+        showToast(`${MAX_CHAT_PHOTOS} photos au plus par message.`, "warn");
+        continue;
+      }
+      try {
+        composerPhotos.push(await downscaleImage(file, 1600, 0.85));
+      } catch {
+        showToast(`La photo « ${file.name} » n'a pas pu être lue.`, "warn");
+      }
+    } else if (!CHAT_FILE_EXTENSIONS.includes(extension)) {
+      const hint = extension === "doc" || extension === "xls" ? " Enregistrez-le en .docx ou .xlsx, ou en PDF." : "";
+      showToast(`« ${file.name} » n'est pas pris en charge : PDF, Word, Excel, texte ou CSV.${hint}`, "warn");
+    } else if (file.size > MAX_CHAT_FILE_BYTES) {
+      showToast(`« ${file.name} » dépasse 5 Mo.`, "warn");
+    } else if (composerFiles.length >= MAX_CHAT_FILES) {
+      showToast(`${MAX_CHAT_FILES} documents au plus par message.`, "warn");
+    } else {
+      try {
+        composerFiles.push({ name: file.name, data: await readAsDataUrl(file) });
+      } catch {
+        showToast(`« ${file.name} » n'a pas pu être lu.`, "warn");
+      }
     }
     renderPhotoTray();
   }
   messageInput.focus();
 }
 
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function fileChip(name) {
+  const extension = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toUpperCase() ?? "";
+  return `${icon("file")}<span class="file-chip-name">${escapeHtml(name)}</span><small>${escapeHtml(extension)}</small>`;
+}
+
 function renderPhotoTray() {
-  photoTray.hidden = composerPhotos.length === 0;
-  photoTray.innerHTML = composerPhotos.map((url, index) => `
-    <li>
-      <img src="${url}" alt="Photo jointe ${index + 1}">
-      <button type="button" class="photo-remove" data-remove-photo="${index}" title="Retirer cette photo" aria-label="Retirer la photo ${index + 1}">×</button>
-    </li>
-  `).join("");
+  photoTray.hidden = composerPhotos.length === 0 && composerFiles.length === 0;
+  photoTray.innerHTML = [
+    ...composerPhotos.map((url, index) => `
+      <li>
+        <img src="${url}" alt="Photo jointe ${index + 1}">
+        <button type="button" class="photo-remove" data-remove-photo="${index}" title="Retirer cette photo" aria-label="Retirer la photo ${index + 1}">×</button>
+      </li>
+    `),
+    ...composerFiles.map((file, index) => `
+      <li class="file-chip">
+        ${fileChip(file.name)}
+        <button type="button" class="photo-remove" data-remove-file="${index}" title="Retirer ce document" aria-label="Retirer ${escapeHtml(file.name)}">×</button>
+      </li>
+    `)
+  ].join("");
 }
 
 // A chip asks its question straight away: picking one is the request.
@@ -259,13 +304,15 @@ async function checkAgentStatus() {
 async function sendToAgent(message) {
   const text = message.trim();
   const photos = composerPhotos.splice(0);
-  if ((!text && photos.length === 0) || agentState.busy) {
+  const files = composerFiles.splice(0);
+  if ((!text && photos.length === 0 && files.length === 0) || agentState.busy) {
     composerPhotos.push(...photos);
+    composerFiles.push(...files);
     return;
   }
   agentState.busy = true;
   agentPanel.hidden = false;
-  appendBubble("user", escapeHtml(text), [], [], [], { photos });
+  appendBubble("user", escapeHtml(text), [], [], [], { photos, files });
   messageInput.value = "";
   renderPhotoTray();
   const pending = appendBubble("agent pending", '<span class="typing"><i></i><i></i><i></i></span>');
@@ -273,7 +320,7 @@ async function sendToAgent(message) {
   sendButton.className = "primary send-button is-loading";
   uiState.textContent = "Le Director réfléchit…";
   try {
-    const response = await postJson("/api/agent/chat", { message: text, photos, conversationId: agentState.conversationId });
+    const response = await postJson("/api/agent/chat", { message: text, photos, files, conversationId: agentState.conversationId });
     agentState.conversationId = response.conversationId;
     pending.remove?.();
     appendBubble("agent", formatAgentText(response.reply), response.documents ?? [], response.agentRuns ?? [], response.messages ?? [], { plan: response.plan, alerts: response.alerts });
@@ -290,10 +337,11 @@ async function sendToAgent(message) {
     pending.remove?.();
     appendBubble("agent error", escapeHtml(error.message));
     uiState.textContent = error.message;
-    // Nothing reached the Director: give the message and photos back to retry.
+    // Nothing reached the Director: give the message and attachments back to retry.
     messageInput.value ||= text;
-    if (composerPhotos.length === 0) {
+    if (composerPhotos.length === 0 && composerFiles.length === 0) {
       composerPhotos.push(...photos);
+      composerFiles.push(...files);
       renderPhotoTray();
     }
   } finally {
@@ -303,7 +351,7 @@ async function sendToAgent(message) {
   }
 }
 
-function appendBubble(kind, html, documents = [], runs = [], messages = [], { plan = null, alerts = null, photos = [] } = {}) {
+function appendBubble(kind, html, documents = [], runs = [], messages = [], { plan = null, alerts = null, photos = [], files = [] } = {}) {
   const bubble = document.createElement("div");
   bubble.className = `bubble ${kind}`;
   bubble.innerHTML = `
@@ -312,6 +360,7 @@ function appendBubble(kind, html, documents = [], runs = [], messages = [], { pl
       ${plan ? planCard(plan) : ""}
       ${runs.length > 0 ? teamStrip(runs) : ""}
       ${photos.length > 0 ? `<div class="bubble-photos">${photos.map((url, index) => `<span><img src="${url}" alt="Photo jointe ${index + 1}"></span>`).join("")}</div>` : ""}
+      ${files.length > 0 ? `<div class="bubble-files">${files.map((file) => `<span class="file-chip">${fileChip(file.name)}</span>`).join("")}</div>` : ""}
       ${html ? `<div class="bubble-text">${html}</div>` : ""}
       ${documents.map((entry, index) => documentCard(entry, index)).join("")}
       ${Array.isArray(alerts) ? alertsCard(alerts) : ""}

@@ -150,6 +150,12 @@ function decodeXml(value) {
     .replace(/&amp;/g, "&");
 }
 
+// The archive's files by path. A .docx is the same kind of archive, so the chat
+// attachments read Word documents through this too.
+export function readZipEntries(buffer) {
+  return unzip(buffer);
+}
+
 // Reads the central directory, which is authoritative: local headers may defer
 // their sizes to a data descriptor, the central directory never does.
 function unzip(buffer) {

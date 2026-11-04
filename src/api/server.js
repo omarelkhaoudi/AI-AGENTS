@@ -491,18 +491,20 @@ export function buildApi({
       }
     });
 
-    // Photos travel with the message, so the chat gets the document allowance.
-    app.post("/api/agent/chat", documentRouteOptions(securityConfig), async (request, reply) => {
+    // Photos and documents travel with the message: up to four of each, a
+    // photo shrunk by the cockpit, a document up to 5 MB, base64 included.
+    app.post("/api/agent/chat", { ...writeRouteOptions(), bodyLimit: Math.max(securityConfig.bodyLimitBytes, CHAT_BODY_LIMIT_BYTES) }, async (request, reply) => {
       try {
         return reply.code(200).send(await agent.chat({
           message: request.body?.message,
           photos: request.body?.photos,
+          files: request.body?.files,
           conversationId: typeof request.body?.conversationId === "string" ? request.body.conversationId : null,
           userId: request.principal.userId
         }));
       } catch (error) {
         if (error instanceof DirectorAgentError) {
-          const statusCode = error.code === "AGENT_MESSAGE_EMPTY" || error.code === "AGENT_PHOTO_INVALID" ? 400 : 503;
+          const statusCode = ["AGENT_MESSAGE_EMPTY", "AGENT_PHOTO_INVALID", "AGENT_FILE_INVALID"].includes(error.code) ? 400 : 503;
           return reply.code(statusCode).send({ error: error.message, details: { code: error.code, ...error.details } });
         }
         return sendDomainError(reply, "Director agent failed.", error);
@@ -802,6 +804,7 @@ function writeRouteOptions() {
 // A purchase order may carry its reference visual, which does not fit in the
 // general body limit. Only the two document routes get the larger allowance.
 const DOCUMENT_BODY_LIMIT_BYTES = 5 * 1024 * 1024;
+const CHAT_BODY_LIMIT_BYTES = 40 * 1024 * 1024;
 
 function documentRouteOptions(securityConfig) {
   return {

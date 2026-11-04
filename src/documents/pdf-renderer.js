@@ -273,17 +273,18 @@ function drawFirstPageHeader(w, document) {
   [...HKIDS_FIXED_IDENTITY.addressLines, `E-mail : ${HKIDS_FIXED_IDENTITY.email}`, `Tél : ${HKIDS_FIXED_IDENTITY.phone}`]
     .forEach((line, index) => w.text(line, 170, 63 + index * 10, { size: 8, color: COLORS.gray }));
 
-  w.text(documentTitleFor(document.documentType), L, 112, { size: 18, isBold: true });
+  // The number is part of the title, at the top of the page, where Hiba looks
+  // for it first ("DEVIS N° 170"), as on the continuation pages.
+  w.text(`${documentTitleFor(document.documentType)} N° ${document.documentNumber}`, L, 112, { size: 18, isBold: true });
   if (document.object) {
     w.wrap(document.object.toUpperCase(), 290, 12, true).slice(0, 2)
       .forEach((line, index) => w.text(line, L, 132 + index * 15, { size: 12, isBold: true }));
   }
 
-  w.text(`N° : ${document.documentNumber}`, L, 166, { size: 9, isBold: true });
-  w.text(`Date : ${displayDate(document.date)}`, L, 183, { size: 8.5 });
+  w.text(`Date : ${displayDate(document.date)}`, L, 166, { size: 9 });
   const reference = referenceLine(document);
   if (reference) {
-    w.text(reference, L, 199, { size: 8.5 });
+    w.text(reference, L, 182, { size: 8.5 });
   }
 
   w.text("Adressé à :", 350, 156, { size: 9, isBold: true });

@@ -123,10 +123,13 @@ export async function renderQuotePdf(quote, {
   y = Math.min(y - 72, identityY - 18);
 
   // --- title, number, date --------------------------------------------------
-  line(view.title, { size: 18, useBold: true, gap: 22 });
-  // A number the register has not given prints the register's sentence, never
-  // a value made up to fill the field.
-  line(`N° : ${view.numberText}`, { size: 9, useBold: view.numberAssigned, color: view.numberAssigned ? INK : MUTED });
+  // An assigned number is part of the title, at the top. A number the register
+  // has not given prints the register's sentence, never a value made up to fill
+  // the field.
+  line(view.numberAssigned ? `${view.title} N° ${view.numberText}` : view.title, { size: 18, useBold: true, gap: 22 });
+  if (!view.numberAssigned) {
+    line(`N° : ${view.numberText}`, { size: 9, color: MUTED });
+  }
   line(`Date : ${view.dateText}`, { size: 8.4, color: view.dateProvided ? INK : MUTED, gap: 18 });
 
   // --- client ---------------------------------------------------------------

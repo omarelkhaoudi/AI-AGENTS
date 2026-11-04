@@ -230,7 +230,7 @@ test("the Word file states the goods, the references and the delivery date", asy
   const text = docxText(await renderHkidsDocx(goodsOnlyDeliveryNote()));
 
   assert.match(text, /BON DE LIVRAISON/);
-  assert.match(text, /N° : 35/);
+  assert.match(text, /BON DE LIVRAISON N° 35/, "the number is in the title, at the top");
   assert.match(text, /MADAME EXEMPLE/);
   assert.match(text, /Ville Exemple/);
   assert.match(text, /Lit mezzanine sur mesure/);

@@ -453,3 +453,16 @@ test("percentage rebates and invoices without one keep their wording and their e
     assert.ok(cells.includes(header), `header "${header}"`);
   }
 });
+
+// Hiba reads the number first: it belongs in the title, at the top of the page,
+// not on a line of its own under the subject.
+test("the document number is in the title at the top, in the PDF and the Word file", async () => {
+  const invoice = invoiceOf(DISCOUNTED);
+  const pdf = await pdfText(await renderHkidsPdf(invoice));
+  const word = docxText(await renderHkidsDocx(invoice));
+
+  for (const [label, text] of [["PDF", pdf], ["Word", word]]) {
+    assert.match(text, new RegExp(`FACTURE N° ${invoice.documentNumber}`), label);
+    assert.doesNotMatch(text, /N° :/, `${label}: no separate number line`);
+  }
+});

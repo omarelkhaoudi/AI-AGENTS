@@ -466,3 +466,11 @@ test("the document number is in the title at the top, in the PDF and the Word fi
     assert.doesNotMatch(text, /N° :/, `${label}: no separate number line`);
   }
 });
+
+test("the number is printed once, never repeated on the following pages", async () => {
+  const invoice = invoiceOf(DISCOUNTED);
+  const many = { ...invoice, items: Array.from({ length: 30 }, (_, index) => ({ ...invoice.items[0], designation: `Ligne ${index + 1}` })) };
+  const text = await pdfText(await renderHkidsPdf(many));
+
+  assert.equal(text.match(new RegExp(`N° ${invoice.documentNumber}`, "g"))?.length, 1);
+});

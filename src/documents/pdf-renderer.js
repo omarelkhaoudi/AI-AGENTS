@@ -507,9 +507,11 @@ function drawReferenceImagePage(w, document, image) {
   w.page.drawImage(image, { x: (PAGE.width - width) / 2, y: PAGE.height - 150 - height, width, height });
 }
 
+// The number is printed once, in the title at the top of the first page: Hiba
+// does not want it repeated on the following pages.
 function drawContinuationHeader(w, document) {
   drawLogo(w);
-  w.text(`${documentTitleFor(document.documentType)} N° ${document.documentNumber}`, R, 57, { size: 13, isBold: true, align: "right" });
+  w.text(documentTitleFor(document.documentType), R, 57, { size: 13, isBold: true, align: "right" });
   w.text(document.client.name, R, 77, { size: 9, color: COLORS.gray, align: "right" });
   w.rule(106);
   w.y = 120;

@@ -236,28 +236,138 @@ document.querySelectorAll("[data-scenario]").forEach((button) => {
 
 document.querySelector("#refresh-approvals").addEventListener("click", () => refreshApprovals());
 
-// The cockpit authenticates like any other client. In demo mode the server
-// hands out a real token; otherwise the token is supplied by the operator.
+// The cockpit authenticates like any other client. Signing in with an email and
+// a password gives a session token, kept in this browser for 30 days. In demo
+// mode, on a development machine, the server hands out a token instead and no
+// sign-in is shown.
+const SESSION_KEY = "hkidsSession";
+const nativeFetch = globalThis.fetch.bind(globalThis);
+const loginScreen = document.querySelector("#login-screen");
+const loginForm = document.querySelector("#login-form");
+const loginError = document.querySelector("#login-error");
 let apiToken = null;
+let pendingLogin = null;
+
+function readStoredToken() {
+  try {
+    return globalThis.localStorage?.getItem(SESSION_KEY) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function keepSession(token) {
+  apiToken = token;
+  try {
+    globalThis.localStorage?.setItem(SESSION_KEY, token);
+  } catch {
+    // Private browsing: the session lasts as long as the page.
+  }
+}
+
+function forgetSession() {
+  apiToken = null;
+  try {
+    globalThis.localStorage?.removeItem(SESSION_KEY);
+  } catch {
+    // Nothing kept, nothing to remove.
+  }
+}
+
+function showSession({ user, demo }) {
+  document.querySelector("#session-name").textContent = user?.name ?? "";
+  document.querySelector("#session-box").hidden = demo === true;
+}
+
+// One sign-in at a time: every request waiting for a token waits for this one.
+function askLogin() {
+  pendingLogin ??= new Promise((resolve) => {
+    loginScreen.hidden = false;
+    loginError.hidden = true;
+    document.querySelector("#login-email").focus();
+    loginForm.onsubmit = async (event) => {
+      event.preventDefault();
+      const submit = document.querySelector("#login-submit");
+      submit.disabled = true;
+      try {
+        const response = await nativeFetch("/api/auth/login", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email: loginForm.email.value, password: loginForm.password.value })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          loginError.textContent = response.status === 429
+            ? "Trop d'essais. Patientez une minute avant de réessayer."
+            : payload.error ?? "Connexion impossible.";
+          loginError.hidden = false;
+          return;
+        }
+        keepSession(payload.token);
+        loginForm.password.value = "";
+        loginScreen.hidden = true;
+        pendingLogin = null;
+        resolve({ user: payload.user, demo: false });
+      } catch {
+        loginError.textContent = "Le serveur ne répond pas. Vérifiez la connexion internet.";
+        loginError.hidden = false;
+      } finally {
+        submit.disabled = false;
+      }
+    };
+  });
+  return pendingLogin;
+}
+
+// True when a session is open: one kept from an earlier visit that the server
+// still accepts, or a demo token. False means the sign-in has to be shown.
+async function ensureSession() {
+  apiToken ??= readStoredToken();
+  if (apiToken) {
+    const me = await nativeFetch("/api/auth/me", { headers: { authorization: `Bearer ${apiToken}` } });
+    if (me.ok) {
+      showSession(await me.json());
+      return true;
+    }
+    forgetSession();
+  }
+  const demo = await nativeFetch("/api/auth/demo-session");
+  if (demo.ok) {
+    const payload = await demo.json();
+    keepSession(payload.token);
+    showSession({ user: payload.user, demo: true });
+    return true;
+  }
+  return false;
+}
+
+// A session that expires or is revoked while the page is open brings the
+// sign-in back, instead of every panel failing one after the other.
+globalThis.fetch = async (input, init) => {
+  const response = await nativeFetch(input, init);
+  const sentToken = Boolean(init?.headers?.authorization);
+  if (response.status === 401 && sentToken && apiToken) {
+    forgetSession();
+    askLogin().then(showSession);
+  }
+  return response;
+};
+
+document.querySelector("#logout-button").addEventListener("click", async () => {
+  if (apiToken) {
+    await nativeFetch("/api/auth/logout", { method: "POST", headers: { authorization: `Bearer ${apiToken}` } }).catch(() => {});
+  }
+  forgetSession();
+  showSession(await askLogin());
+});
 
 async function resolveApiToken() {
-  if (apiToken) {
-    return apiToken;
+  if (!apiToken && pendingLogin) {
+    await pendingLogin;
   }
-
-  const stored = sessionStorage.getItem("aiAgentsApiToken");
-  if (stored) {
-    apiToken = stored;
-    return apiToken;
+  if (!apiToken) {
+    throw new Error("Authentification requise : connectez-vous.");
   }
-
-  const response = await fetch("/api/auth/demo-session");
-  if (!response.ok) {
-    throw new Error("Authentification requise: aucun jeton disponible.");
-  }
-  const payload = await response.json();
-  apiToken = payload.token;
-  sessionStorage.setItem("aiAgentsApiToken", apiToken);
   return apiToken;
 }
 
@@ -2000,7 +2110,19 @@ showView(globalThis.location?.hash?.slice(1));
 currentTheme = applyTheme(readStoredTheme());
 renderGreeting();
 renderAgentRoster([]);
-await checkAgentStatus();
-refreshPlans();
-renderHistory();
-await refreshApprovals();
+async function loadPanels() {
+  await checkAgentStatus();
+  refreshPlans();
+  renderHistory();
+  await refreshApprovals();
+}
+// Without a session the page finishes loading behind the sign-in, and the
+// panels load once the person has signed in.
+if (await ensureSession()) {
+  await loadPanels();
+} else {
+  askLogin().then(async (session) => {
+    showSession(session);
+    await loadPanels();
+  });
+}

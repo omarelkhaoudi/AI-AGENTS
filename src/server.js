@@ -5,6 +5,7 @@ import { loadDotEnvIfPresent } from "./load-dotenv.js";
 import { createRepository } from "./persistence/repository-factory.js";
 import { createMvpToolRegistry } from "./tools/mvp-tools.js";
 import { createFilePlanStore } from "./agent/plan-store.js";
+import { createFileConversationStore } from "./agent/conversation-store.js";
 
 // The first statement, because everything below reads process.env: the port, the
 // configuration, the repository factory and the workflow client. Without this the
@@ -33,7 +34,11 @@ const toolRegistry = workflowClient
 // survive a restart and can be followed over several days.
 const planStore = createFilePlanStore(process.env.HKIDS_PLANS_PATH ? { path: process.env.HKIDS_PLANS_PATH } : {});
 
-const app = buildApi({ repository, config, toolRegistry, planStore });
+// The Director's conversations, under data/conversations/, so a restart does
+// not make it forget what it was just told.
+const conversationStore = createFileConversationStore();
+
+const app = buildApi({ repository, config, toolRegistry, planStore, conversationStore });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.once(signal, async () => {

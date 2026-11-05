@@ -18,6 +18,7 @@
     "db:seed": "node scripts/db-seed.mjs",
     "db:seed:business": "node scripts/db-seed-business.mjs",
     "auth:create-token": "node scripts/create-api-token.mjs",
+    "auth:create-user": "node scripts/create-user.mjs",
     "data:ingest": "node scripts/ingest-business-data.mjs",
     "data:import-hkids": "node scripts/import-hkids-workbook.mjs",
     "css:build": "tailwindcss -i src/frontend/tailwind.css -o src/frontend/styles.css --minify"

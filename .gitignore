@@ -18,3 +18,8 @@ assets/documents/hkids-local/
 
 # Company data read by the agents (catalogue, prices). The repository is public.
 data/
+
+!deploy/.env.production.example
+
+# Database dumps and document archives made by scripts/backup.sh.
+backups/

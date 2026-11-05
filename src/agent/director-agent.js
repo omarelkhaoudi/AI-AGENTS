@@ -9,6 +9,7 @@ import { createCatalogueLoader, searchCatalogue } from "./catalogue.js";
 import { SPECIALISTS, SPECIALIST_IDS, runSpecialist } from "./agent-team.js";
 import { draftWhatsAppMessage } from "./whatsapp.js";
 import { STEP_LABELS, createMemoryPlanStore } from "./plan-store.js";
+import { createMemoryConversationStore } from "./conversation-store.js";
 import { OBJECTIVE_INDICATORS, currentMonth, measureObjective } from "./sales-objective.js";
 
 // The Director as a conversational agent, and as a director: it carries the
@@ -327,12 +328,12 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
   const loadCatalogue = createCatalogueLoader(cataloguePath ? { path: cataloguePath } : {});
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -347,12 +348,10 @@ export function createDirectorAgent({
   checkCoherence = null,
   loadObjectiveRecords = null,
   planStore = createMemoryPlanStore(),
+  conversationStore = createMemoryConversationStore(),
   clock = () => new Date(),
   clientFactory = defaultClientFactory
 } = {}) {
-  const conversations = new Map();
-  const photoAlbums = new Map();
-  const fileCounts = new Map();
   let resolvedClient = client;
 
   return Object.freeze({
@@ -362,9 +361,11 @@ export function createDirectorAgent({
     },
 
     async chat({ message, photos = [], files = [], conversationId = null, userId = null } = {}) {
-      const id = conversationId && conversations.has(conversationId) ? conversationId : randomUUID();
+      const stored = conversationId ? await conversationStore.get(conversationId) : null;
+      const previous = stored && stored.userId === (userId ?? null) ? stored : null;
+      const id = previous ? conversationId : randomUUID();
       const newPhotos = checkPhotos(photos);
-      const newFiles = checkFiles(files, (fileCounts.get(id) ?? 0) + 1);
+      const newFiles = checkFiles(files, (previous?.fileCount ?? 0) + 1);
       const typed = typeof message === "string" ? message.trim() : "";
       if (typed === "" && newPhotos.length === 0 && newFiles.length === 0) {
         throw new DirectorAgentError("Le message est vide.", "AGENT_MESSAGE_EMPTY");
@@ -374,10 +375,10 @@ export function createDirectorAgent({
       }
       resolvedClient ??= await clientFactory({ apiKey });
 
-      const items = conversations.get(id) ?? [];
+      const items = previous?.items ?? [];
       // Photos are numbered across the conversation, so "la photo n° 2" keeps
       // meaning the same picture from one message to the next.
-      const conversationPhotos = [...(photoAlbums.get(id) ?? []), ...newPhotos];
+      const conversationPhotos = [...(previous?.photos ?? []), ...newPhotos];
       const numbers = newPhotos.map((_, index) => conversationPhotos.length - newPhotos.length + index + 1);
       const fallback = newPhotos.length > 0 ? "Voici une photo." : "Voici un document.";
       const text = [typed || fallback, ...(numbers.length > 0 ? [`[Photos jointes : ${numbers.map((n) => `n° ${n}`).join(", ")}]`] : [])].join("\n\n");
@@ -435,9 +436,13 @@ export function createDirectorAgent({
         ];
         items[items.indexOf(userItem)] = { role: "user", content: remembered.join("\n") };
       }
-      fileCounts.set(id, (fileCounts.get(id) ?? 0) + newFiles.length);
-      conversations.set(id, items.slice(-MAX_CONVERSATION_ITEMS));
-      photoAlbums.set(id, conversationPhotos);
+      await conversationStore.save(id, {
+        userId: userId ?? null,
+        updatedAt: clock().toISOString(),
+        items: items.slice(-MAX_CONVERSATION_ITEMS),
+        photos: conversationPhotos,
+        fileCount: (previous?.fileCount ?? 0) + newFiles.length
+      });
       return Object.freeze({
         conversationId: id,
         reply: reply || "Je n'ai pas pu formuler de réponse. Pouvez-vous reformuler ?",

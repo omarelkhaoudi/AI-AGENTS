@@ -110,6 +110,10 @@
             <p class="eyebrow first-letter:uppercase" id="today-label">Plateforme AI Agents</p>
             <h1 id="director-title" class="max-md:text-[25px]">Director IA</h1>
           </div>
+          <div class="session-box flex items-center gap-2 text-[13px] text-muted" id="session-box" hidden>
+            <span id="session-name" class="max-md:hidden"></span>
+            <button type="button" class="rounded-full border border-line bg-surface/70 px-3 py-1.5 text-ink-2 hover:bg-surface-2" id="logout-button">Déconnexion</button>
+          </div>
           <div class="topbar-actions flex items-center gap-3 max-md:hidden">
             <span class="kbd-hint rounded-full border border-line bg-surface/70 px-3 py-1.5 backdrop-blur"><kbd>/</kbd> écrire au Director</span>
           </div>
@@ -484,6 +488,25 @@
           </section>
         </section>
       </main>
+    </div>
+
+    <!-- Sign-in. Shown when no valid session is kept; the cockpit stays hidden behind it. -->
+    <div id="login-screen" class="login-screen fixed inset-0 z-[60] grid place-items-center bg-bg px-4" hidden>
+      <form id="login-form" class="w-full max-w-[380px] rounded-[28px] border border-line bg-surface p-6 shadow-card md:p-8">
+        <span class="mb-5 grid size-12 place-items-center rounded-2xl bg-linear-140 from-brand-2 to-brand text-brand-ink" aria-hidden="true"><svg class="i size-[22px]!"><use href="#i-sparkles"/></svg></span>
+        <h1 class="text-[26px]">Director IA</h1>
+        <p class="mt-1 mb-6 text-muted">Connectez-vous pour ouvrir le cockpit H&#8209;KIDS.</p>
+        <div class="field">
+          <label for="login-email">Email</label>
+          <input id="login-email" name="email" type="email" autocomplete="username" required>
+        </div>
+        <div class="field mt-4">
+          <label for="login-password">Mot de passe</label>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <p id="login-error" class="mt-4 text-[14px] text-danger" role="alert" hidden></p>
+        <button type="submit" class="primary mt-6 w-full justify-center" id="login-submit">Se connecter</button>
+      </form>
     </div>
 
     <div id="toast-region" class="toast-region pointer-events-none fixed inset-x-4 bottom-24 z-50 flex flex-col gap-2.5 md:inset-x-auto md:right-6 md:bottom-6" role="status" aria-live="polite"></div>

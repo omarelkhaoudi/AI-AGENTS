@@ -110,7 +110,7 @@ test("every Prisma model is documented", async () => {
   const prisma = await readFile("prisma/schema.prisma", "utf8");
   const models = [...prisma.matchAll(/^model (\w+) \{/gm)].map((match) => match[1]);
 
-  assert.equal(models.length, 27, "the count in the document is stated per family");
+  assert.equal(models.length, 28, "the count in the document is stated per family");
   for (const model of models) {
     assert.ok(schema.includes(`\`${model}\``), `${model} exists in the schema but is documented nowhere`);
   }

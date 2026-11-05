@@ -28,8 +28,9 @@ import { CONSISTENCY_DOMAINS, checkConsistency } from "../agent/consistency.js";
 import { PlanStoreError, createMemoryPlanStore } from "../agent/plan-store.js";
 import { authenticatePrincipal, extractBearerToken } from "../security/authentication.js";
 import { assertCapability } from "../security/authorization.js";
-import { createSecurityConfig } from "../security/security-config.js";
+import { DEFAULT_RATE_LIMITS, createSecurityConfig } from "../security/security-config.js";
 import { createApiTokenMaterial, hashApiTokenSecret } from "../security/api-token.js";
+import { burnPasswordCheck, verifyPassword } from "../security/password.js";
 import { HkidsDocumentService, normalizeDocumentError } from "../documents/document-service.js";
 import { createCommercialFileService, normalizeCommercialFileError } from "../documents/commercial-file-service.js";
 
@@ -65,6 +66,9 @@ export function buildApi({
   // Where the Director's action plans are kept. The server process passes a
   // file store; a test gets a store of its own in memory.
   planStore = null,
+  // Where the Director's conversations are kept, the same way: a file store for
+  // the server process, memory for a test.
+  conversationStore = undefined,
   documentOutputDir = null,
   // A seam, not a feature: the derived idempotency key names a day, and a test
   // cannot cross a day boundary by waiting for one.
@@ -158,13 +162,14 @@ export function buildApi({
     checkCoherence: checkTeamCoherence,
     loadObjectiveRecords,
     planStore: plans,
+    conversationStore,
     client: agentClient
   });
   // Writes to the same directory as the document service, so both kinds of
   // produced file land where the generated documents already live.
   const commercialFiles = createCommercialFileService({ repository, outputDir: documentOutputDir });
 
-  const app = Fastify({ logger, bodyLimit: securityConfig.bodyLimitBytes });
+  const app = Fastify({ logger, bodyLimit: securityConfig.bodyLimitBytes, trustProxy: securityConfig.trustProxy === true });
   let seedPromise = null;
   let demoSessionPromise = null;
 
@@ -291,6 +296,32 @@ export function buildApi({
         }
       });
     }
+
+    // Sign-in for the hosted cockpit: an email and a password give a session
+    // token, an ordinary API token that expires and is revoked at sign-out. One
+    // answer for every failure, so the page never tells which emails exist.
+    app.post("/api/auth/login", { config: { login: true } }, async (request, reply) => {
+      const email = typeof request.body?.email === "string" ? request.body.email : "";
+      const password = typeof request.body?.password === "string" ? request.body.password : "";
+      const found = typeof repository.findUserCredentialByEmail === "function"
+        ? await repository.findUserCredentialByEmail(email)
+        : null;
+      const valid = found ? await verifyPassword(password, found.passwordHash) : await burnPasswordCheck(password);
+      if (!valid || (found.user.status ?? "active") !== "active") {
+        await auditSecurityEvent(repository, {
+          type: "authentication_failed",
+          resourceType: "endpoint",
+          resourceId: "/api/auth/login",
+          metadata: { method: "POST", code: "INVALID_LOGIN" }
+        });
+        return reply.code(401).send({ error: "Email ou mot de passe incorrect.", details: { code: "INVALID_LOGIN" } });
+      }
+      const expiresAt = new Date(clock().getTime() + (securityConfig.sessionDays ?? 30) * 24 * 60 * 60 * 1000).toISOString();
+      const material = createApiTokenMaterial({ userId: found.user.id, name: "session", expiresAt });
+      await repository.createApiToken(material.record);
+      await auditSecurityEvent(repository, { type: "login_succeeded", actorUserId: found.user.id, resourceType: "endpoint", resourceId: "/api/auth/login" });
+      return reply.code(200).send({ token: material.secret, expiresAt, user: { name: found.user.name, role: found.user.role } });
+    });
 
     // Routes are declared after the rate limiter has loaded, so its per-route
     // onRoute hook can attach a limiter to each of them.
@@ -493,6 +524,21 @@ export function buildApi({
 
     // Photos and documents travel with the message: up to four of each, a
     // photo shrunk by the cockpit, a document up to 5 MB, base64 included.
+    // Who is signed in, so the cockpit can show the name and check that a token
+    // kept from an earlier visit still works.
+    app.get("/api/auth/me", readRouteOptions(), async (request) => ({
+      user: { name: request.principal.name, role: request.principal.role },
+      demo: securityConfig.demoModeEnabled
+    }));
+
+    app.post("/api/auth/logout", readRouteOptions(), async (request, reply) => {
+      if (request.principal.tokenId) {
+        await repository.revokeApiToken(request.principal.tokenId);
+      }
+      await auditSecurityEvent(repository, { type: "logout", actorUserId: request.principal.userId, resourceType: "endpoint", resourceId: "/api/auth/logout" });
+      return reply.code(200).send({ ok: true });
+    });
+
     app.post("/api/agent/chat", { ...writeRouteOptions(), bodyLimit: Math.max(securityConfig.bodyLimitBytes, CHAT_BODY_LIMIT_BYTES) }, async (request, reply) => {
       try {
         return reply.code(200).send(await agent.chat({
@@ -722,7 +768,7 @@ export function buildApi({
   return app;
 }
 
-const PUBLIC_API_ROUTES = Object.freeze(["/api/auth/demo-session"]);
+const PUBLIC_API_ROUTES = Object.freeze(["/api/auth/demo-session", "/api/auth/login"]);
 export const DEMO_USER_ID = "demo-leader";
 
 // Rate limiting runs before authentication, so it keys on the credential that
@@ -748,6 +794,9 @@ function rateLimitBucket(request) {
 }
 
 function rateLimitForRoute(securityConfig, request) {
+  if (request.routeOptions?.config?.login) {
+    return securityConfig.rateLimits.login ?? DEFAULT_RATE_LIMITS.login;
+  }
   const capability = request.routeOptions?.config?.capability ?? null;
   if (capability === "decide_approvals") {
     return securityConfig.rateLimits.decision;

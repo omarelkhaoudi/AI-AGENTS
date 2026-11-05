@@ -1,0 +1,21 @@
+# HTTPS in front of the cockpit. Caddy obtains the certificate from Let's
+# Encrypt for the domain in deploy/.env and renews it by itself; the domain's DNS
+# must point at this server first.
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Photos and documents joined to the Director can weigh up to 40 MB.
+	request_body {
+		max_size 45MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	reverse_proxy app:3000
+}

@@ -7,7 +7,10 @@ export const DEFAULT_BODY_LIMIT_BYTES = 65536;
 export const DEFAULT_RATE_LIMITS = Object.freeze({
   read: Object.freeze({ max: 240, timeWindow: 60000 }),
   write: Object.freeze({ max: 60, timeWindow: 60000 }),
-  decision: Object.freeze({ max: 20, timeWindow: 60000 })
+  decision: Object.freeze({ max: 20, timeWindow: 60000 }),
+  // Sign-in attempts per address: enough for a mistyped password, far too few
+  // to guess one.
+  login: Object.freeze({ max: 5, timeWindow: 60000 })
 });
 
 export function createSecurityConfig(env = process.env) {
@@ -27,11 +30,16 @@ export function createSecurityConfig(env = process.env) {
     environment,
     authMode,
     demoModeEnabled: authMode === "demo",
+    // Behind the HTTPS proxy every request comes from the proxy: trusting it is
+    // what lets the limiter tell one visitor from another.
+    trustProxy: env.TRUST_PROXY === "true",
+    sessionDays: normalizePositiveInteger(env.SESSION_DAYS, 30),
     bodyLimitBytes: normalizePositiveInteger(env.API_BODY_LIMIT_BYTES, DEFAULT_BODY_LIMIT_BYTES),
     rateLimits: Object.freeze({
       read: normalizeRateLimit(env.RATE_LIMIT_READ_MAX, DEFAULT_RATE_LIMITS.read),
       write: normalizeRateLimit(env.RATE_LIMIT_WRITE_MAX, DEFAULT_RATE_LIMITS.write),
-      decision: normalizeRateLimit(env.RATE_LIMIT_DECISION_MAX, DEFAULT_RATE_LIMITS.decision)
+      decision: normalizeRateLimit(env.RATE_LIMIT_DECISION_MAX, DEFAULT_RATE_LIMITS.decision),
+      login: normalizeRateLimit(env.RATE_LIMIT_LOGIN_MAX, DEFAULT_RATE_LIMITS.login)
     })
   });
 }

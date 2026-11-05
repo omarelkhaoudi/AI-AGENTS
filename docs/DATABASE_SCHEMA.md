@@ -1,7 +1,7 @@
 # Database Schema
 
 PostgreSQL through Prisma 7, with the `@prisma/adapter-pg` driver adapter. The
-schema lives in `prisma/schema.prisma` and is applied by the seven committed
+schema lives in `prisma/schema.prisma` and is applied by the eight committed
 migrations under `prisma/migrations/`.
 
 This document describes what the schema holds and how the application reaches
@@ -17,12 +17,13 @@ the company is: customers, quotes, invoices, orders, production, purchasing.
 An agent reads business memory through a tool. It never reaches orchestration
 tables, and orchestration never carries business content.
 
-## Orchestration tables (11)
+## Orchestration tables (12)
 
 | Model | Holds |
 | --- | --- |
 | `User` | The people the system acts for. Requests and approvals name one. |
 | `ApiToken` | Bearer credentials. Only the hash is stored, never the secret. |
+| `UserCredential` | Sign-in password of a user, as a salted scrypt hash, kept apart from `User`. |
 | `Agent` | The ten agent rows, with their permissions. Written by `npm run db:seed`. |
 | `Request` | One leader request, its payload and its final status. Carries the optional `idempotencyKey`. |
 | `Plan` | The plan a planner produced for a request. |
@@ -130,6 +131,7 @@ become a column.
 | `20260820000000_add_business_reference_models` | Products, prices, stock, bills of material, payment terms |
 | `20260824000000_add_request_idempotency_key` | `Request.idempotencyKey` and its unique index |
 | `20260929000000_add_social_publications` | `social_publications`, the state of a social post |
+| `20261105000000_add_user_credentials` | `UserCredential`, sign-in passwords |
 
 Apply them with `npm run db:migrate`. Never edit a committed migration: add a
 new one. See `docs/POSTGRESQL_SETUP.md` for the full install path and

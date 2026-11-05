@@ -12,6 +12,7 @@ import {
 export class InMemoryRepository extends AgentPlatformRepository {
   #users = new Map();
   #apiTokens = new Map();
+  #passwords = new Map();
   #agents = new Map();
   #requests = new Map();
   // The index PostgreSQL gets from a unique constraint. Checking it and writing
@@ -104,6 +105,22 @@ export class InMemoryRepository extends AgentPlatformRepository {
     const record = freezeRecord({ ...existing, revokedAt, updatedAt: revokedAt });
     this.#apiTokens.set(record.id, record);
     return record;
+  }
+
+  // Sign-in passwords, kept apart from the user record so a user read for any
+  // other purpose never carries the hash.
+  setUserPassword(userId, passwordHash) {
+    if (!this.#users.has(userId)) {
+      throw new RepositoryContractError(`A password requires an existing user: ${userId}`);
+    }
+    this.#passwords.set(userId, passwordHash);
+  }
+
+  findUserCredentialByEmail(email) {
+    const wanted = normalizeEmail(email);
+    const user = wanted ? [...this.#users.values()].find((entry) => normalizeEmail(entry.email) === wanted) : null;
+    const passwordHash = user ? this.#passwords.get(user.id) : null;
+    return user && passwordHash ? { user, passwordHash } : null;
   }
 
   upsertAgent(agent) {
@@ -587,6 +604,12 @@ export class InMemoryRepository extends AgentPlatformRepository {
   async disconnect() {
     return undefined;
   }
+}
+
+// Emails are compared the way people type them: case and surrounding spaces do
+// not make a different account.
+export function normalizeEmail(email) {
+  return typeof email === "string" ? email.trim().toLowerCase() : "";
 }
 
 function cloneValue(value) {

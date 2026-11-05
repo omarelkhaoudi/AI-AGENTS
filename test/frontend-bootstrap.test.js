@@ -138,10 +138,10 @@ test("the approvals request carries a token obtained from the demo session", asy
   );
 });
 
-// A server that refuses to hand out a token must produce a readable message,
-// not a crash. This is the path the operator sees outside demo mode.
-test("a refused session is reported without breaking the page", async () => {
-  const { doc, error } = await loadCockpit({
+// Outside demo mode the server refuses to hand out a token: the page finishes
+// loading behind the sign-in, and nothing is requested before someone signs in.
+test("a refused demo session shows the sign-in without breaking the page", async () => {
+  const { doc, calls, error } = await loadCockpit({
     fetchImpl: (url) => {
       if (String(url).includes("/api/auth/demo-session")) {
         return { ok: false, json: async () => ({}) };
@@ -149,11 +149,10 @@ test("a refused session is reported without breaking the page", async () => {
       return serve(url);
     }
   });
-  const approvals = doc.nodes.get("#approval-list");
 
   assert.equal(error, null, "a refused token must not break module evaluation");
-  assert.match(approvals.innerHTML, /Authentification requise/);
-  assert.doesNotMatch(approvals.innerHTML, /before initialization/);
+  assert.equal(doc.nodes.get("#login-screen").hidden, false);
+  assert.equal(calls.some((call) => String(call.url).includes("/api/approvals")), false);
 });
 
 // CDC section 29 asks the situation question to answer with revenue, collections

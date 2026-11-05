@@ -44,6 +44,31 @@ export class PrismaRepository extends AgentPlatformRepository {
     return this.prisma.user.findUnique({ where: { id: userId } });
   }
 
+  async setUserPassword(userId, passwordHash) {
+    await this.prisma.userCredential.upsert({
+      where: { userId },
+      create: { userId, passwordHash },
+      update: { passwordHash }
+    });
+  }
+
+  // Emails are matched without regard to case, the way people type them.
+  async findUserCredentialByEmail(email) {
+    const wanted = typeof email === "string" ? email.trim() : "";
+    if (wanted === "") {
+      return null;
+    }
+    const user = await this.prisma.user.findFirst({
+      where: { email: { equals: wanted, mode: "insensitive" } },
+      include: { credential: true }
+    });
+    if (!user?.credential) {
+      return null;
+    }
+    const { credential, ...record } = user;
+    return { user: record, passwordHash: credential.passwordHash };
+  }
+
   async createApiToken({ id, userId, name = "api-token", tokenHash, expiresAt = null } = {}) {
     return this.prisma.apiToken.create({
       data: {

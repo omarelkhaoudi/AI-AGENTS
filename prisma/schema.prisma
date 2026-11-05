@@ -20,6 +20,17 @@ model User {
   approvals   Approval[]   @relation("ApprovalApprover")
   auditEvents AuditEvent[] @relation("AuditActor")
   documents   Document[]   @relation("DocumentUploader")
+  credential  UserCredential?
+}
+
+// Sign-in password, kept apart from User so that reading a user for any other
+// purpose never loads the hash. Only a salted scrypt hash is stored.
+model UserCredential {
+  userId       String   @id
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 // API credentials. Only the SHA-256 hash of a token is stored, so the table

@@ -779,6 +779,7 @@ function documentCard(entry, index) {
         <span class="tag warning doc-status">À valider</span>
       </header>
       ${entry.replaces ? `<p class="doc-replaces">${icon("refresh")}<span>Correction du n° ${escapeHtml(preview.documentNumber)} : l'ancienne version sera archivée quand vous validerez.</span></p>` : ""}
+      ${(entry.preview.notices ?? []).map((notice) => `<p class="doc-replaces">${icon("route")}<span>${escapeHtml(notice)}</span></p>`).join("")}
       <table class="document-table">
         <thead><tr><th>Désignation</th><th>Qté</th><th>Montant HT</th></tr></thead>
         <tbody>${preview.items.map((item) => `<tr><td>${escapeHtml(item.designation)}</td><td>${escapeHtml(String(item.quantity))}</td><td>${escapeHtml(formatDh(item.netAmountHt ?? item.amountHt))}</td></tr>`).join("")}</tbody>

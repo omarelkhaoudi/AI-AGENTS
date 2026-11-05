@@ -8,7 +8,8 @@ import {
   HKIDS_LOGO_PATH,
   deliveryNoteReferences,
   documentTitleFor,
-  invoiceUpstreamReference
+  invoiceUpstreamReference,
+  purchaseOrderQuoteReference
 } from "./hkids-template.js";
 import { computeInstalments, parseReferenceImage, purchaseOrderPaymentPlan } from "./purchase-order.js";
 
@@ -334,6 +335,10 @@ function referenceLine(document) {
       ? String(upstream.value).replace(/^BL\s*n°?\s*/i, "")
       : upstream.value;
     return `${upstream.label} : ${value}`;
+  }
+  const quote = purchaseOrderQuoteReference(document);
+  if (quote) {
+    return `Référence devis : ${quote}`;
   }
   return document.reference ? `Référence : ${document.reference}` : null;
 }

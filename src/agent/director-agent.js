@@ -197,7 +197,7 @@ const DOCUMENT_TOOL = Object.freeze({
         },
         caracteristiques: { type: "array", items: { type: "string" }, description: "Finitions, coloris, dimensions… (bon de commande surtout). Liste vide si aucune." },
         conditions_paiement: { type: "string", enum: Object.keys(PAYMENT_RULES), description: "60/20/20 par défaut ; 50/50 seulement pour un bon de commande." },
-        reference_devis: { type: "string", description: "Numéro du devis lié (facture, bon de livraison). Chaîne vide si aucun." },
+        reference_devis: { type: "string", description: "Numéro du devis lié (bon de commande fait à partir d'un devis, facture, bon de livraison). Chaîne vide si aucun." },
         reference_bl: { type: "string", description: "Numéro du bon de livraison lié (facture). Chaîne vide si aucun." },
         numero: { type: "string", description: "Numéro imposé par l'utilisatrice. Chaîne vide pour prendre le prochain numéro libre." },
         photo: { type: "integer", description: "Bon de commande : numéro de la photo jointe par la direction à mettre comme visuel de référence (« visuel : photo n° 2 » → 2). 0 si aucune." },
@@ -217,6 +217,21 @@ const CONSULT_DOCUMENT_TOOL = Object.freeze({
       additionalProperties: false,
       properties: {
         type: { type: "string", enum: Object.keys(DOCUMENT_TYPES), description: "Le type du document." },
+        numero: { type: "string", description: "Son numéro, par exemple « 170 »." }
+      },
+      required: ["type", "numero"]
+    }
+});
+
+const FOLLOW_DOSSIER_TOOL = Object.freeze({
+    type: "function",
+    name: "suivre_dossier",
+    description: "Où en est une vente, à partir d'un de ses documents (devis, bon de commande, bon de livraison ou facture) : le devis et son montant, le bon de commande qui l'a accepté, les bons de livraison, les factures déjà faites, le total facturé, le reste à facturer et les anomalies (facture en double…). À appeler pour « où en est le devis 170 », et AVANT toute facture.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        type: { type: "string", enum: Object.keys(DOCUMENT_TYPES), description: "Le type du document connu." },
         numero: { type: "string", description: "Son numéro, par exemple « 170 »." }
       },
       required: ["type", "numero"]
@@ -261,6 +276,7 @@ const TOOLS = Object.freeze([
   LIST_PLANS_TOOL,
   ADJUST_PLAN_TOOL,
   COHERENCE_TOOL,
+  FOLLOW_DOSSIER_TOOL,
   {
     type: "function",
     name: "point_entreprise",
@@ -297,6 +313,8 @@ function instructions(today) {
     "",
     "Correction d'un document déjà généré (« refais le devis 170 », « corrige le BC 165, la date est fausse », « enlève la ligne des chevets du devis 170 ») : confie-la tout de suite au responsable du document (devis, bon de commande, bon de livraison → commercial ; facture → finance) avec son type, son numéro et TOUTES les corrections demandées, en écrivant « correction du document existant n° X, même numéro ». Ne demande pas le contenu du document : le responsable le relit lui-même. Annonce ensuite ce qui a changé et que l'ancienne version sera archivée quand la direction validera.",
     "",
+    "Chaîne d'une vente : devis → bon de commande (le client accepte) → bon de livraison → factures (acompte, solde). Chaque document cite le devis : écris toujours son numéro dans la mission. « Le client a accepté le devis 170 », « fais le BC du devis 170 » → commercial : « bon de commande à partir du devis n° 170 », avec les conditions et l'acompte s'ils sont donnés ; il reprend le devis lui-même, rien n'est à ressaisir. « Facture l'acompte du devis 170 », « facture le solde » → finance avec le numéro du devis. « Où en est le devis 170 », « qu'est-ce qui reste à facturer » → suivre_dossier toi-même, puis réponds avec l'étape, le déjà facturé, le reste à facturer et les anomalies. Une facture refusée parce qu'elle facturerait la vente deux fois ne se contourne pas : dis-le à la direction avec les factures déjà faites.",
+    "",
     "Photos : la direction peut joindre des photos (numérotées « photo n° 1 », « photo n° 2 »… dans la conversation). Regarde-les et dis en une phrase ce que tu y vois d'utile (meuble, modèle, coloris, finitions, dimensions apparentes, texte lisible). Les responsables ne voient pas les photos : recopie dans la mission ce qu'elles montrent. Pour un bon de commande, écris aussi « visuel : photo n° X » dans la mission pour que la photo figure sur le document. N'invente rien que la photo ne montre pas.",
     "Documents : la direction peut joindre des documents (PDF, Word, Excel, texte), numérotés « document n° 1 »… Lis-les et sers-t'en : réponds à la question posée dessus, ou résume en quelques lignes ce qui compte pour H KIDS (client, montants, dates, quantités, conditions, échéances). Les responsables ne voient pas les documents : recopie dans leur mission les informations utiles, chiffres compris. Si un document ne contient pas l'information demandée, dis-le.",
     "",
@@ -304,6 +322,7 @@ function instructions(today) {
     "- Les plans sont CONSERVÉS et suivis dans le temps. Quand la direction parle d'un plan existant ou d'un fait qui le fait avancer (« où en est le plan », « on continue », « l'acompte Atlas est arrivé »), appelle lister_plans puis : relance les étapes encore à faire avec deleguer_a_un_agent (l'étape du responsable se met à jour seule), mets à jour avec ajuster_plan (fait, bloqué, nouvelle échéance, nouvelles étapes, note), et réponds avec l'avancement et la prochaine action. Ne crée pas un nouveau plan pour un sujet qui a déjà un plan en cours : ajuste-le.",
     "- Statut des étapes : après le travail d'un responsable, son étape passe « en cours ». Marque-la « fait » avec ajuster_plan SEULEMENT si la tâche est entièrement accomplie par ce travail (une analyse, un plan chiffré, une liste). Une action réelle (message envoyé, vente signée, paiement reçu, commande passée, livraison) reste « en cours » tant que la direction n'a pas confirmé qu'elle a eu lieu. Un plan est « proposé » à la direction, jamais « validé » par toi.",
     "- Quand la direction t'annonce qu'une action a eu lieu (« l'acompte est arrivé », « Meriem a signé »), c'est une confirmation : marque tout de suite les étapes correspondantes « fait » avec ajuster_plan, sans demander de preuve, et note le fait au journal. Ne fais travailler que les étapes que cette nouvelle débloque.",
+    "- N'invente aucun moyen, service ou option dont les données ne parlent pas (lien de paiement, livraison express…). Une information présente dans les données (fournisseur, délai, montant) se cite telle quelle ; elle n'est jamais « à confirmer ».",
     "- N'écris jamais qu'une chose « est lancée », « est faite » ou « a eu lieu » si ni la direction ni une donnée ne l'a confirmé : c'est « prêt à lancer » ou « proposé ».",
     "- Donne une échéance réaliste aux étapes qui ne se font pas tout de suite. Marque toi-même tes étapes « director » avec ajuster_plan quand elles sont faites.",
     "- Signale toujours les incohérences renvoyées par verifier_coherence, avec les responsables concernés et l'action proposée ; ne les invente jamais.",
@@ -554,6 +573,9 @@ async function runTool(call, context) {
     if (call.name === COHERENCE_TOOL.name) {
       return await runCoherence(context);
     }
+    if (call.name === FOLLOW_DOSSIER_TOOL.name) {
+      return await followDossier(args, context);
+    }
     if (call.name === "deleguer_a_un_agent") {
       return withCoherence(await delegate(args, context), context);
     }
@@ -639,6 +661,13 @@ async function prepareDocument(args, { documentService, clock, outcome }, prepar
     if (error?.code === "PURCHASE_ORDER_NUMBER_USED" || error?.code === "DOCUMENT_NUMBER_USED") {
       return { ok: false, erreur: `Le numéro ${error.details.documentNumber} est déjà pris par un document généré ; prochain libre : ${error.details.nextNumber}. Pour corriger ce document-là, le relire avec consulter_document puis remplace = true.` };
     }
+    if (error?.code === "INVOICE_EXCEEDS_SALE") {
+      const { ceiling, ceilingFrom, invoicedBefore, remainingBefore, previousInvoices } = error.details;
+      return {
+        ok: false,
+        erreur: `Facture refusée : elle ferait facturer cette vente deux fois. Montant de la vente : ${ceiling} DH TTC (selon le ${ceilingFrom}) ; déjà facturé : ${invoicedBefore} DH (factures n° ${previousInvoices.map((entry) => entry.number).join(", ")}) ; reste à facturer : ${remainingBefore} DH. Ne prépare pas de facture au-delà de ce reste ; dis-le à la direction.`
+      };
+    }
     throw error;
   }
 
@@ -657,7 +686,35 @@ async function prepareDocument(args, { documentService, clock, outcome }, prepar
     conditions: document.payment?.terms ?? null,
     ...(newImage ? { visuel: `photo n° ${photoNumber}` } : keptImage ? { visuel: "celui du document d'origine, conservé" } : {}),
     ...(replaces ? { remplace: `l'ancienne version du n° ${document.documentNumber} sera archivée à la validation` } : {}),
+    ...(preview.notices?.length > 0 ? { dossier: preview.notices } : {}),
     statut: "Aperçu prêt : l'utilisatrice doit cliquer « Valider et générer » dans le cockpit."
+  };
+}
+
+// Where a sale stands, from any one of its documents, in the words the agents
+// and the direction use.
+async function followDossier(args, { documentService }) {
+  const documentType = DOCUMENT_TYPES[args.type];
+  const number = text(args.numero);
+  if (!documentType || !number) {
+    return { ok: false, erreur: "Donner le type et le numéro du document." };
+  }
+  const dossier = await documentService.dossier(documentType, number);
+  if (!dossier) {
+    return { ok: false, erreur: `Aucun ${args.type.replace(/_/g, " ")} n° ${number} n'a été généré par le cockpit : je n'ai pas l'information.` };
+  }
+  const line = (entry) => ({ numero: entry.number, date: entry.date, client: entry.client, total_ttc: entry.totalTtc });
+  return {
+    ok: true,
+    etape: dossier.stage,
+    devis: dossier.quoteNumber ? { numero: dossier.quoteNumber, ...(dossier.quote ? { date: dossier.quote.date, client: dossier.quote.client, total_ttc: dossier.quote.totalTtc } : { genere: false }) } : null,
+    bons_de_commande: dossier.orders.map(line),
+    bons_de_livraison: dossier.deliveryNotes.map(line),
+    factures: dossier.invoices.map(line),
+    montant_de_la_vente: dossier.ceiling === null ? "inconnu" : `${dossier.ceiling} DH TTC (selon le ${dossier.ceilingFrom})`,
+    deja_facture: dossier.invoiced,
+    reste_a_facturer: dossier.remaining ?? "inconnu",
+    anomalies: dossier.anomalies
   };
 }
 
@@ -724,6 +781,8 @@ async function delegate(args, context) {
     lookUpCatalogue: (catalogueArgs) => lookUpCatalogue(catalogueArgs, context),
     consultDocumentTool: CONSULT_DOCUMENT_TOOL,
     consultDocument: (consultArgs) => consultDocument(consultArgs, context),
+    followDossierTool: FOLLOW_DOSSIER_TOOL,
+    followDossier: (dossierArgs) => followDossier(dossierArgs, context),
     prepareMessage: (messageArgs, agentId) => recordMessage(messageArgs, agentId, outcome)
   });
   outcome.agentRuns.push(run);

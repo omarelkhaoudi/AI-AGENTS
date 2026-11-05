@@ -20,6 +20,10 @@ const MAX_TOOL_OUTPUT_CHARS = 7000;
 // How an agent that prepares documents corrects one already generated.
 const CORRECTION_RULE = "Corriger ou refaire un document déjà généré (« refais le devis 170 », « corrige la date du BC 165 ») : consulter_document (type, numéro), puis preparer_document avec remplace = true et le même numéro, en reprenant TOUT le contenu relu (client, adresse, objet, chaque ligne avec son prix_unitaire HT et prix_ttc = false, caractéristiques, conditions, références, et la date d'origine sauf si la correction la change) et en n'appliquant QUE les corrections demandées. Ne change rien d'autre, et dis précisément ce qui a changé. L'ancienne version est archivée quand la direction valide.";
 
+// How the documents of one sale follow each other without anything retyped.
+const ORDER_FROM_QUOTE_RULE = "Bon de commande à partir d'un devis (« le client a accepté le devis 170 », « fais le BC du devis 170 ») : consulter_document (devis, 170), puis preparer_document (bon_de_commande) en reprenant le client, l'adresse, l'objet et chaque ligne avec son prix_unitaire HT et prix_ttc = false, avec reference_devis = 170 et remplace = false ; conditions données par la mission, sinon celles du devis. Ne ressaisis rien de mémoire. Le devis passe à « accepté » quand la direction valide le bon de commande.";
+const INVOICE_RULE = "AVANT toute facture, appelle suivre_dossier sur son devis (ou son bon de livraison) : tu vois le montant de la vente, les factures déjà faites et le reste à facturer. Facture d'acompte ou de solde : une ligne « Acompte de X % sur devis n° N » (ou « Solde sur devis n° N ») au montant TTC de l'échéance ; facture complète : relis le devis avec consulter_document et reprends ses lignes (prix_unitaire HT, prix_ttc = false). Mets toujours reference_devis (ou reference_bl), et objet = « Vente de mobilier ». Jamais plus que le reste à facturer : si la vente est déjà entièrement facturée, ne prépare rien et dis-le avec les numéros des factures existantes.";
+
 const COMMON_RULES = [
   "Tu fais partie de l'équipe d'agents IA de H KIDS (mobilier et aménagement sur mesure pour enfants, Marrakech). Le Director IA te confie une mission ; tu lui réponds, il fera la synthèse pour la direction (Hiba, Omar).",
   "Réponds en français, de façon concrète et courte : d'abord l'essentiel (chiffres, noms, dates), puis tes recommandations, puis les brouillons que tu as préparés.",
@@ -33,7 +37,8 @@ const COMMON_RULES = [
   "Chaque message à envoyer à un client ou à un fournisseur (relance, rappel de paiement, retard, commande…) : appelle preparer_message_whatsapp, un appel par destinataire, avec le texte exact. Dans ta réponse, dis seulement pour qui tu l'as préparé.",
   "N'annonce jamais une action que tu ne peux pas faire toi-même (« je lance », « j'appelle », « j'envoie », « je passe commande ») : formule-la comme une recommandation pour l'équipe.",
   "Quand le Director te confie ta part d'un objectif chiffré (chiffre d'affaires, encaissements…), réponds avec TON plan d'action : 2 à 4 actions concrètes tirées de tes données, et pour chacune le résultat attendu en dirhams (hypothèse justifiée), le délai et ce dont tu as besoin des autres responsables ou de la direction. Termine par le total que ton plan peut apporter et ce qui manque pour atteindre ta part.",
-  "Si une information manque pour faire ta tâche (adresse d'un client, prix, numéro de devis…), ne l'invente pas : dis exactement ce qui manque, le Director le demandera à la direction."
+  "Si une information manque pour faire ta tâche (adresse d'un client, prix, numéro de devis…), ne l'invente pas : dis exactement ce qui manque, le Director le demandera à la direction.",
+  "N'invente aucun moyen, service ou option dont tes données ne parlent pas (lien de paiement, livraison express…). Une information présente dans tes données (fournisseur, délai, montant) se cite telle quelle : elle n'est jamais « à confirmer »."
 ];
 
 export const SPECIALISTS = Object.freeze({
@@ -49,6 +54,8 @@ export const SPECIALISTS = Object.freeze({
       "Pour chaque relance, rédige un message court, chaleureux et professionnel, prêt à envoyer par WhatsApp (tutoiement interdit, « Bonjour Madame/Monsieur … »), signé « L'équipe H-KIDS ».",
       "C'est toi qui prépares les devis, bons de commande et bons de livraison avec preparer_document. Un prix est TTC (prix_ttc = true) sauf si la mission écrit explicitement « HT ». Prix non donné : cherche-le avec chercher_catalogue (un seul produit correspond → son nom exact et son prix TTC, en précisant que c'est le prix catalogue ; plusieurs → cite-les avec leur prix sans choisir ; aucun → dis que le prix manque). Quantité non précisée = 1. 60/20/20 par défaut, 50/50 seulement sur un bon de commande si c'est demandé. Le numéro est attribué automatiquement.",
       CORRECTION_RULE,
+      ORDER_FROM_QUOTE_RULE,
+      "Où en est une vente (« le devis 170 a-t-il été accepté ? ») : suivre_dossier.",
       "Si la mission impose une date au document (« date du document : 08/08/2026 », « daté du 8 août »), mets-la dans le champ date au format JJ/MM/AAAA ; sinon chaîne vide (date du jour). Dans ta réponse, donne la date, le numéro et le total renvoyés par preparer_document.",
       "Si la mission indique « visuel : photo n° X », mets X dans le champ photo du bon de commande ; sinon 0. Reprends dans les caractéristiques ce que la mission dit de la photo (modèle, coloris, finitions).",
       "Après preparer_document, donne le type, le numéro, le client, le total TTC et les échéances : l'aperçu attend la validation de la direction (« Valider et générer »). Ne dis jamais qu'il est envoyé."
@@ -58,6 +65,9 @@ export const SPECIALISTS = Object.freeze({
     label: "Finance",
     mission: "Encaissements, créances, factures, échéances et trésorerie simple.",
     documentTypes: Object.freeze(["facture"]),
+    // Finance reads the quote and the delivery note an invoice comes from; it
+    // still prepares only invoices.
+    readableDocumentTypes: Object.freeze(["facture", "devis", "bon_de_commande", "bon_de_livraison"]),
     instructions: [
       "Tu es l'agent Administration / Finance.",
       "Tu dis ce qui doit être encaissé (cette semaine, en retard), les créances par client, le chiffre d'affaires facturé, et les décisions de trésorerie à prendre.",
@@ -65,6 +75,7 @@ export const SPECIALISTS = Object.freeze({
       "Pour un paiement en retard, rédige une relance de paiement polie et ferme, prête à envoyer, avec le montant et l'échéance.",
       CORRECTION_RULE,
       "C'est toi qui prépares les factures avec preparer_document : elle doit citer son devis ou son bon de livraison (sinon, dis que le numéro manque). Un prix est TTC (prix_ttc = true) sauf si la mission écrit explicitement « HT ».",
+      INVOICE_RULE,
       "Pour un objectif de chiffre d'affaires, ta part est de transformer les ventes en encaissements : acomptes et soldes à encaisser dans la période, et les conditions qui protègent la trésorerie."
     ]
   }),
@@ -156,15 +167,19 @@ export async function runSpecialist({
   lookUpCatalogue = null,
   consultDocumentTool = null,
   consultDocument = null,
+  followDossierTool = null,
+  followDossier = null,
   prepareMessage = null
 }) {
   const specialist = SPECIALISTS[agentId];
   const readTools = readToolsFor(agentId, toolRegistry);
   const documentTypes = specialist.documentTypes ?? [];
+  const readableTypes = specialist.readableDocumentTypes ?? documentTypes;
   const documentTool = documentTypes.length > 0 && prepareDocumentTool ? restrictDocumentTypes(prepareDocumentTool, documentTypes) : null;
   // Whoever prepares a type of document can read back the ones already issued,
-  // to correct one under its own number.
-  const consultTool = documentTool && consultDocumentTool && consultDocument ? restrictDocumentTypes(consultDocumentTool, documentTypes) : null;
+  // to correct one under its own number, and follow the sale it belongs to.
+  const consultTool = documentTool && consultDocumentTool && consultDocument ? restrictDocumentTypes(consultDocumentTool, readableTypes) : null;
+  const dossierTool = documentTool && followDossierTool && followDossier ? followDossierTool : null;
   const catalogue = specialist.usesCatalogue && catalogueTool && lookUpCatalogue ? catalogueTool : null;
   const tools = [
     ...readTools.map((tool) => ({
@@ -175,6 +190,7 @@ export async function runSpecialist({
     })),
     ...(documentTool ? [documentTool] : []),
     ...(consultTool ? [consultTool] : []),
+    ...(dossierTool ? [dossierTool] : []),
     ...(catalogue ? [catalogue] : []),
     ...(prepareMessage ? [WHATSAPP_MESSAGE_TOOL] : [])
   ];
@@ -208,9 +224,11 @@ export async function runSpecialist({
           : { ok: false, erreur: `Ce document n'est pas du ressort de l'agent ${specialist.label}.` };
       } else if (consultTool && call.name === consultTool.name) {
         const args = parseArguments(call.arguments);
-        result = documentTypes.includes(args.type)
+        result = readableTypes.includes(args.type)
           ? await consultDocument(args)
           : { ok: false, erreur: `Ce document n'est pas du ressort de l'agent ${specialist.label}.` };
+      } else if (dossierTool && call.name === dossierTool.name) {
+        result = await followDossier(parseArguments(call.arguments));
       } else if (catalogue && call.name === catalogue.name) {
         result = await lookUpCatalogue(parseArguments(call.arguments));
       } else if (readTools.some((tool) => tool.id === call.name)) {

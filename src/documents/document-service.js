@@ -9,6 +9,7 @@ import { logoPath, renderHkidsPdf } from "./pdf-renderer.js";
 import { isPurchaseOrderNumberUsed, nextPurchaseOrderNumber } from "./purchase-order.js";
 import { renderHkidsDocx } from "./docx-renderer.js";
 import { documentLayoutFor } from "./hkids-template.js";
+import { checkInvoice, dossierNotices, dossierOf, summarizeIssuedContent, summarizeIssuedWord } from "./document-ledger.js";
 
 export class DocumentGenerationError extends Error {
   constructor(message, code, details = {}) {
@@ -21,6 +22,9 @@ export class DocumentGenerationError extends Error {
 
 export class HkidsDocumentService {
   #previewTokens = new Map();
+  // What an issued document says, read once per file name. A correction that
+  // keeps the date is written under the same name, so generate forgets it.
+  #summaries = new Map();
 
   constructor({ repository, outputDir = null } = {}) {
     this.repository = repository;
@@ -38,6 +42,7 @@ export class HkidsDocumentService {
       await this.#assertPurchaseOrderNumberFree(document);
       await this.#assertNumberFree(document);
     }
+    const chain = await this.#checkChain(document, { replaceExisting });
     const template = await templateFor(document.documentType);
     const previewHash = hashPayload({ document: stripRuntimeFields(document), templateChecksum: template.checksum, replaceExisting });
     const previewToken = randomUUID();
@@ -46,6 +51,7 @@ export class HkidsDocumentService {
       status: "ready_for_confirmation",
       template: publicTemplateInfo(template),
       document,
+      notices: dossierNotices(document, chain),
       previewToken
     });
   }
@@ -69,6 +75,7 @@ export class HkidsDocumentService {
       await this.#assertPurchaseOrderNumberFree(document);
       await this.#assertNumberFree(document);
     }
+    await this.#checkChain(document, { replaceExisting });
 
     const pdfBuffer = await renderHkidsPdf(document);
     const docxBuffer = await renderHkidsDocx(document);
@@ -84,6 +91,7 @@ export class HkidsDocumentService {
     // What the document says, kept beside its files so that an agent asked to
     // correct it later starts from its exact content, visual included.
     await writeFile(resolve(this.outputDir, `${stem}.json`), JSON.stringify(issuedContent(input), null, 2));
+    this.#summaries.delete(stem);
 
     const pdf = await this.repository.createDocument({
       requestId: null,
@@ -135,7 +143,7 @@ export class HkidsDocumentService {
       return null;
     }
     const used = (await this.#outputNames())
-      .map((name) => Number(new RegExp(`^${prefix}_HKIDS_(\d+)_`).exec(name)?.[1]))
+      .map((name) => Number(new RegExp(`^${prefix}_HKIDS_(\\d+)_`).exec(name)?.[1]))
       .filter((number) => Number.isInteger(number) && number > 0);
     const highest = Math.max(ISSUED_BY_HAND[documentType] ?? 0, ...used, 0);
     return highest > 0 ? String(highest + 1) : null;
@@ -229,6 +237,68 @@ export class HkidsDocumentService {
         ? await referenceImageFromPdf(await readFile(join(this.outputDir, pdf)))
         : null
     };
+  }
+
+  // One line per issued document: what it is, for whom, how much, and which
+  // document it names before it. Read from its kept content, or from its Word
+  // file when it was issued before the content was kept.
+  async listIssued() {
+    const stems = new Map();
+    for (const name of await this.#outputNames()) {
+      const match = ISSUED_FILE.exec(name);
+      if (match) {
+        const [, prefix, number, rest, extension] = match;
+        const stem = `${prefix}_HKIDS_${number}_${rest}`;
+        const entry = stems.get(stem) ?? { type: TYPE_BY_PREFIX[prefix], number, stem, extensions: new Set() };
+        entry.extensions.add(extension);
+        stems.set(stem, entry);
+      }
+    }
+    const summaries = [];
+    for (const entry of [...stems.values()].sort((a, b) => a.stem.localeCompare(b.stem))) {
+      // Read again when the files of the document changed (its content removed).
+      const files = [...entry.extensions].sort().join(",");
+      if (this.#summaries.get(entry.stem)?.files !== files) {
+        this.#summaries.set(entry.stem, { files, summary: await this.#summarize(entry) });
+      }
+      summaries.push(this.#summaries.get(entry.stem).summary);
+    }
+    return summaries;
+  }
+
+  async #summarize({ type, number, stem, extensions }) {
+    if (extensions.has("json")) {
+      return summarizeIssuedContent({ type, number, stem }, JSON.parse(await readFile(join(this.outputDir, `${stem}.json`), "utf8")));
+    }
+    const text = extensions.has("docx") ? readWordText(await readFile(join(this.outputDir, `${stem}.docx`))) : "";
+    return summarizeIssuedWord({ type, number, stem }, text);
+  }
+
+  // Where the sale of a document stands: its quote, order, delivery notes and
+  // invoices, what is invoiced and what remains. Null if it was never issued.
+  async dossier(documentType, documentNumber) {
+    return dossierOf(await this.listIssued(), { type: documentType, number: documentNumber });
+  }
+
+  // An invoice that would take the invoices of its sale past the sale itself is
+  // refused: the same sale is never invoiced twice. Other documents only learn
+  // which sale they belong to.
+  async #checkChain(document, { replaceExisting }) {
+    if (document.documentType !== HKIDS_DOCUMENT_TYPES.INVOICE) {
+      return {};
+    }
+    const check = checkInvoice(await this.listIssued(), document, { replaceExisting });
+    if (!check.ok) {
+      throw new DocumentGenerationError("This invoice would invoice the sale more than its amount.", "INVOICE_EXCEEDS_SALE", {
+        totalTtc: document.totals.totalTtc,
+        ceiling: check.dossier.ceiling,
+        ceilingFrom: check.dossier.ceilingFrom,
+        invoicedBefore: check.invoicedBefore,
+        remainingBefore: check.remainingBefore,
+        previousInvoices: check.previous.map((entry) => ({ number: entry.number, date: entry.date, totalTtc: entry.totalTtc }))
+      });
+    }
+    return check;
   }
 
   async #assertPurchaseOrderNumberFree(document) {
@@ -335,6 +405,11 @@ const FILE_PREFIXES = Object.freeze({
   [HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE]: "bon_livraison",
   [HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER]: PURCHASE_ORDER_FILE_PREFIX
 });
+
+const TYPE_BY_PREFIX = Object.freeze(Object.fromEntries(Object.entries(FILE_PREFIXES).map(([type, prefix]) => [prefix, type])));
+// An issued file at the top of the output folder; archived ones live in a
+// subfolder and never match.
+const ISSUED_FILE = /^(devis|facture|bon_livraison|bon_commande)_HKIDS_(\d+)_(.+)\.(pdf|docx|json)$/;
 
 // The highest number issued by hand before the generator, per series. Quotes
 // 160 to 163 were written by hand; the purchase orders have their own register.

@@ -99,7 +99,20 @@ export function referenceLabelFor(document) {
     const upstream = invoiceUpstreamReference(document);
     return upstream ? `${upstream.label}: ${upstream.value}` : "";
   }
+  const quote = purchaseOrderQuoteReference(document);
+  if (quote) {
+    return `Référence devis: ${quote}`;
+  }
   return document.reference ? `Référence: ${document.reference}` : "";
+}
+
+// A purchase order made from a quote names it, so the order on paper says which
+// quote the client accepted.
+export function purchaseOrderQuoteReference(document) {
+  if (document?.documentType !== HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER) {
+    return "";
+  }
+  return typeof document.quoteReference === "string" ? document.quoteReference.trim() : "";
 }
 
 // Describes how a document is drawn, in the place the template descriptor used

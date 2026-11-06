@@ -1427,7 +1427,7 @@
   }
 
   .track-steps strong {
-    @apply block text-[13.5px] font-semibold;
+    @apply block text-[13.5px] font-semibold break-words;
   }
 
   .track-steps small {
@@ -1449,6 +1449,19 @@
 
   .track-steps select {
     @apply w-auto min-w-[112px] px-2 py-1.5 text-[12.5px];
+  }
+
+  /* The number of a workshop step, where a plan step shows its agent. */
+  .step-index {
+    @apply mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-surface-3 text-[12px] font-semibold text-ink-2;
+  }
+
+  .track-steps li.done .step-index {
+    @apply bg-good/15 text-good;
+  }
+
+  .track-steps li.blocked .step-index {
+    @apply bg-danger/15 text-danger;
   }
 
   .journal {

@@ -10,6 +10,7 @@ import { SPECIALISTS, SPECIALIST_IDS, runSpecialist } from "./agent-team.js";
 import { draftWhatsAppMessage } from "./whatsapp.js";
 import { STEP_LABELS, createMemoryPlanStore } from "./plan-store.js";
 import { createMemoryConversationStore } from "./conversation-store.js";
+import { WORKSHOP_STATUSES, WORKSHOP_STATUS_LABELS, WORKSHOP_STEPS, WORKSHOP_STEP_IDS, WorkshopError, createMemoryWorkshopStore, createWorkshop, frenchDay } from "./workshop-book.js";
 import { OBJECTIVE_INDICATORS, currentMonth, measureObjective } from "./sales-objective.js";
 
 // The Director as a conversational agent, and as a director: it carries the
@@ -238,6 +239,42 @@ const FOLLOW_DOSSIER_TOOL = Object.freeze({
     }
 });
 
+// The workshop book: each purchase order validated in the cockpit, through the
+// seven steps of the manufacturing route.
+const WORKSHOP_BOOK_TOOL = Object.freeze({
+    type: "function",
+    name: "carnet_atelier",
+    description: `Le carnet d'atelier : chaque bon de commande validé dans le cockpit et son parcours de fabrication (${WORKSHOP_STEPS.map((step) => step.label).join(", ")}), avec pour chaque étape son statut, son responsable, sa date prévue et sa date réelle, l'avancement calculé sur les étapes terminées, les alertes (étape bloquée, en retard, installée mais pas soldée) et le journal. À appeler pour « où en est la commande de… », « quelles commandes sont en retard », le planning de l'atelier, et pour tout point de situation.`,
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        numero: { type: "string", description: "Numéro du bon de commande pour son détail complet ; chaîne vide pour tout le carnet." }
+      },
+      required: ["numero"]
+    }
+});
+
+const ADVANCE_ORDER_TOOL = Object.freeze({
+    type: "function",
+    name: "avancer_commande",
+    description: "Enregistre au carnet d'atelier ce qui s'est passé sur UNE étape d'un bon de commande : commencée, terminée, bloquée (avec ce qui bloque), son responsable, sa date prévue. Seulement pour un fait annoncé par la direction ou l'atelier, jamais supposé. Un appel par étape.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        numero: { type: "string", description: "Numéro du bon de commande." },
+        etape: { type: "string", enum: WORKSHOP_STEP_IDS, description: WORKSHOP_STEPS.map((step) => `${step.id} = ${step.label} (${step.detail})`).join(" ; ") },
+        statut: { type: "string", enum: ["", ...WORKSHOP_STATUSES], description: "Nouveau statut ; chaîne vide pour ne pas le changer." },
+        responsable: { type: "string", description: "Qui s'en charge, tel que nommé ; chaîne vide pour ne pas le changer." },
+        date_prevue: { type: "string", description: "Date prévue JJ/MM/AAAA ; chaîne vide pour ne pas la changer." },
+        date_reelle: { type: "string", description: "Date de fin JJ/MM/AAAA pour une étape terminée un autre jour qu'aujourd'hui ; chaîne vide sinon." },
+        note: { type: "string", description: "Ce qui bloque (obligatoire pour « bloquee »), ou une précision ; chaîne vide sinon." }
+      },
+      required: ["numero", "etape", "statut", "responsable", "date_prevue", "date_reelle", "note"]
+    }
+});
+
 const CATALOGUE_TOOL = Object.freeze({
     type: "function",
     name: "chercher_catalogue",
@@ -277,6 +314,8 @@ const TOOLS = Object.freeze([
   ADJUST_PLAN_TOOL,
   COHERENCE_TOOL,
   FOLLOW_DOSSIER_TOOL,
+  WORKSHOP_BOOK_TOOL,
+  ADVANCE_ORDER_TOOL,
   {
     type: "function",
     name: "point_entreprise",
@@ -315,6 +354,8 @@ function instructions(today) {
     "",
     "Chaîne d'une vente : devis → bon de commande (le client accepte) → bon de livraison → factures (acompte, solde). Chaque document cite le devis : écris toujours son numéro dans la mission. « Le client a accepté le devis 170 », « fais le BC du devis 170 » → commercial : « bon de commande à partir du devis n° 170 », avec les conditions et l'acompte s'ils sont donnés ; il reprend le devis lui-même, rien n'est à ressaisir. « Facture l'acompte du devis 170 », « facture le solde » → finance avec le numéro du devis. « Où en est le devis 170 », « qu'est-ce qui reste à facturer » → suivre_dossier toi-même, puis réponds avec l'étape, le déjà facturé, le reste à facturer et les anomalies. Une facture refusée parce qu'elle facturerait la vente deux fois ne se contourne pas : dis-le à la direction avec les factures déjà faites.",
     "",
+    `Atelier, après le bon de commande : chaque bon de commande validé suit ${WORKSHOP_STEPS.length} étapes (${WORKSHOP_STEPS.map((step) => step.label).join(", ")}). « Le BC 166 est en découpe », « l'assemblage du 166 est fini », « la peinture est bloquée, il manque la laque », « Youssef s'occupe de l'étude, prévue pour le 12/11 » → c'est un fait que la direction t'annonce : avancer_commande toi-même, un appel par étape (une étape commencée = en_cours ; les étapes d'avant qu'elle dit finies = terminee), puis confirme en une ligne avec l'avancement. « Où en est la commande de Mme X / le BC 166 », « quelles commandes sont en retard » → carnet_atelier, puis l'étape en cours, l'avancement (calculé sur les étapes terminées, jamais estimé), les dates prévues et les alertes. Planning, priorités ou charge de l'atelier → production. Suite de la chaîne, tout de suite après l'avoir enregistrée : contrôle qualité terminé → commercial : préparer le message au client pour convenir de la date de livraison et d'installation ; livraison et installation terminée → finance : facture du solde du devis (si le dossier n'est pas soldé). Pour tout point de situation ou toute question d'urgences, regarde aussi carnet_atelier et signale les commandes bloquées ou en retard.`,
+    "",
     "Photos : la direction peut joindre des photos (numérotées « photo n° 1 », « photo n° 2 »… dans la conversation). Regarde-les et dis en une phrase ce que tu y vois d'utile (meuble, modèle, coloris, finitions, dimensions apparentes, texte lisible). Les responsables ne voient pas les photos : recopie dans la mission ce qu'elles montrent. Pour un bon de commande, écris aussi « visuel : photo n° X » dans la mission pour que la photo figure sur le document. N'invente rien que la photo ne montre pas.",
     "Documents : la direction peut joindre des documents (PDF, Word, Excel, texte), numérotés « document n° 1 »… Lis-les et sers-t'en : réponds à la question posée dessus, ou résume en quelques lignes ce qui compte pour H KIDS (client, montants, dates, quantités, conditions, échéances). Les responsables ne voient pas les documents : recopie dans leur mission les informations utiles, chiffres compris. Si un document ne contient pas l'information demandée, dis-le.",
     "",
@@ -347,12 +388,12 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
   const loadCatalogue = createCatalogueLoader(cataloguePath ? { path: cataloguePath } : {});
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -368,10 +409,12 @@ export function createDirectorAgent({
   loadObjectiveRecords = null,
   planStore = createMemoryPlanStore(),
   conversationStore = createMemoryConversationStore(),
+  workshopStore = createMemoryWorkshopStore(),
   clock = () => new Date(),
   clientFactory = defaultClientFactory
 } = {}) {
   let resolvedClient = client;
+  const workshop = createWorkshop({ store: workshopStore, documentService, clock });
 
   return Object.freeze({
     model,
@@ -436,7 +479,8 @@ export function createDirectorAgent({
             team: { client: resolvedClient, model, toolRegistry, executeTool },
             checkCoherence,
             loadObjectiveRecords,
-            planStore
+            planStore,
+            workshop
           })));
         calls.forEach((call, index) => {
           items.push({ type: "function_call_output", call_id: call.call_id, output: JSON.stringify(results[index]) });
@@ -575,6 +619,12 @@ async function runTool(call, context) {
     }
     if (call.name === FOLLOW_DOSSIER_TOOL.name) {
       return await followDossier(args, context);
+    }
+    if (call.name === WORKSHOP_BOOK_TOOL.name) {
+      return await readWorkshopBook(args, context);
+    }
+    if (call.name === ADVANCE_ORDER_TOOL.name) {
+      return await advanceOrder(args, context, "director");
     }
     if (call.name === "deleguer_a_un_agent") {
       return withCoherence(await delegate(args, context), context);
@@ -718,6 +768,85 @@ async function followDossier(args, { documentService }) {
   };
 }
 
+// The workshop book in the words of the agents: the whole book in short, or one
+// order in full.
+async function readWorkshopBook(args, { workshop }) {
+  const number = text(args.numero);
+  if (number) {
+    const order = await workshop.order(number);
+    if (!order) {
+      return { ok: false, erreur: `Aucun bon de commande n° ${number} n'a été généré par le cockpit : je n'ai pas l'information.` };
+    }
+    return {
+      ok: true,
+      ...orderLine(order),
+      total_ttc: order.totalTtc,
+      etapes: order.steps.map((step) => ({
+        etape: step.id,
+        nom: step.label,
+        statut: WORKSHOP_STATUS_LABELS[step.status],
+        responsable: step.responsible || null,
+        date_prevue: step.plannedDate ? frenchDay(step.plannedDate) : null,
+        commencee_le: step.startedDate ? frenchDay(step.startedDate) : null,
+        terminee_le: step.doneDate ? frenchDay(step.doneDate) : null,
+        note: step.note || null,
+        en_retard: step.late
+      })),
+      bons_de_livraison: order.deliveryNotes,
+      factures: order.invoices,
+      deja_facture: order.invoiced,
+      reste_a_facturer: order.remaining ?? "inconnu",
+      journal: order.journal.slice(-10).map((entry) => `${frenchDay(entry.at.slice(0, 10))} ${entry.at.slice(11, 16)} (${entry.by}) ${entry.text}`)
+    };
+  }
+  const book = await workshop.book();
+  if (book.length === 0) {
+    return { ok: true, commandes: [], info: "Aucun bon de commande généré par le cockpit : le carnet est vide." };
+  }
+  return {
+    ok: true,
+    commandes: book.map(orderLine),
+    alertes: book.flatMap((order) => order.alerts.map((alert) => `BC ${order.number} (${order.client}) : ${alert}`))
+  };
+}
+
+function orderLine(order) {
+  return {
+    bc: order.number,
+    date: order.date,
+    client: order.client,
+    objet: order.object || null,
+    devis: order.quoteNumber,
+    statut: order.status,
+    avancement: `${order.progress.done}/${order.progress.total} étapes terminées (${order.progress.percent} %)`,
+    etape_en_cours: order.currentStep,
+    alertes: order.alerts
+  };
+}
+
+async function advanceOrder(args, { workshop }, by) {
+  try {
+    const { changed, order } = await workshop.advance(text(args.numero), text(args.etape), {
+      status: text(args.statut),
+      responsible: text(args.responsable),
+      plannedDate: text(args.date_prevue),
+      doneDate: text(args.date_reelle),
+      note: text(args.note),
+      by
+    });
+    return {
+      ok: true,
+      enregistre: changed ? order.journal.at(-1).text : "rien de nouveau : le carnet disait déjà cela",
+      ...orderLine(order)
+    };
+  } catch (error) {
+    if (error instanceof WorkshopError) {
+      return { ok: false, erreur: error.message };
+    }
+    throw error;
+  }
+}
+
 // An issued document as the agent needs it to prepare its correction: the same
 // fields preparer_document takes, prices HT so that they come back to the
 // cent. The visual itself is not sent, only whether there is one.
@@ -783,6 +912,10 @@ async function delegate(args, context) {
     consultDocument: (consultArgs) => consultDocument(consultArgs, context),
     followDossierTool: FOLLOW_DOSSIER_TOOL,
     followDossier: (dossierArgs) => followDossier(dossierArgs, context),
+    workshopBookTool: WORKSHOP_BOOK_TOOL,
+    readWorkshopBook: (bookArgs) => readWorkshopBook(bookArgs, context),
+    advanceOrderTool: ADVANCE_ORDER_TOOL,
+    advanceOrder: (advanceArgs, agentId) => advanceOrder(advanceArgs, context, agentId),
     prepareMessage: (messageArgs, agentId) => recordMessage(messageArgs, agentId, outcome)
   });
   outcome.agentRuns.push(run);

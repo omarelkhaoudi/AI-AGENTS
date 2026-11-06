@@ -720,11 +720,17 @@ Ce que fait le modèle et ce qu'il ne fait pas :
   domaines de sécurité et journal d'audit s'appliquent comme au planificateur ;
 - les incohérences entre métiers sont **calculées par le code**
   (`src/agent/consistency.js`), jamais rédigées par le modèle ;
+- la chaîne d'une vente (devis → bon de commande → factures) est lue sur les
+  documents générés (`src/documents/document-ledger.js`) : une facture qui
+  dépasserait le montant de la vente est refusée ;
+- le carnet d'atelier (`src/agent/workshop-book.js`, fichier `data/atelier.json`)
+  suit chaque bon de commande validé à travers les 7 étapes de fabrication ;
+  l'avancement est calculé sur les étapes terminées, jamais estimé ;
 - rien n'est envoyé, payé ni commandé par un agent : messages WhatsApp, documents
   et plans attendent la validation de la direction.
 
 Le code : `src/agent/` (Director, équipe, catalogue, WhatsApp, plans,
-cohérence) et les routes `/api/agent/*` et `/api/plans*`.
+cohérence, atelier) et les routes `/api/agent/*`, `/api/plans*` et `/api/workshop*`.
 
 L'ancien planificateur LLM (`PLANNER_PROVIDER="llm_openai"`) reste disponible
 pour l'endpoint `/api/director/requests` ; il est indépendant de l'agent

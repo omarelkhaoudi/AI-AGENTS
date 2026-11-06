@@ -23,6 +23,7 @@ export function summarizeIssuedContent({ type, number, stem }, input) {
     stem,
     date: document.date,
     client: document.client.name,
+    object: document.object ?? "",
     totalTtc: Number.isFinite(document.totals.totalTtc) ? document.totals.totalTtc : null,
     quoteReference: document.quoteReference,
     deliveryNoteReference: bareDeliveryNoteNumber(document.deliveryNoteReference),
@@ -42,6 +43,7 @@ export function summarizeIssuedWord({ type, number, stem }, text = "") {
     stem,
     date: /Date : (\d{2}\/\d{2}\/\d{4})/.exec(text)?.[1] ?? "",
     client: (addressedTo >= 0 ? lines[addressedTo + 1] : "") || signedBy,
+    object: /^Objet : (.+)$/m.exec(text)?.[1].trim() ?? "",
     totalTtc: parseAmount(/TOTAL TTC \| ([^|\n]+?) DH/.exec(text)?.[1]),
     quoteReference: /Référence devis\s*:\s*([^\s|]+)/.exec(text)?.[1] ?? "",
     deliveryNoteReference: bareDeliveryNoteNumber(/Référence BL\s*:\s*([^|\n]+)/.exec(text)?.[1] ?? ""),
@@ -116,6 +118,11 @@ export function dossierOf(documents, { type, number }) {
     stage: stageOf({ quoteNumber, orders, deliveryNotes, invoiced, ceiling }),
     anomalies: Object.freeze(anomalies)
   });
+}
+
+// The documents of one type, one per number: the latest copy of each.
+export function latestIssued(documents, type) {
+  return latestPerNumber(documents.filter((entry) => entry.type === type), [], "");
 }
 
 // Whether an invoice may be issued: with the invoices already issued for the

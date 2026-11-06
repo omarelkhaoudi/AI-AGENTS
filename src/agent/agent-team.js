@@ -3,7 +3,8 @@
 // execute. Each one has its trade (its instructions), the read tools its role is
 // granted, and, for the commercial and finance agents, the documents of their
 // trade: quotes, purchase orders and delivery notes for Commercial, invoices for
-// Finance. Every read goes through ToolExecutionService, so an
+// Finance. Production keeps the workshop book, which Commercial and Finance
+// read. Every read goes through ToolExecutionService, so an
 // agent's permissions, security domains and the audit trail apply exactly as
 // they do when the Director's planner calls the same tool.
 //
@@ -47,6 +48,7 @@ export const SPECIALISTS = Object.freeze({
     mission: "Ventes, clients, devis, bons de commande, bons de livraison et pipeline commercial.",
     documentTypes: Object.freeze(["devis", "bon_de_commande", "bon_de_livraison"]),
     usesCatalogue: true,
+    workshop: "read",
     instructions: [
       "Tu es l'agent Commercial, le directeur commercial de H KIDS. Tu portes le chiffre d'affaires : c'est toi qui transformes l'objectif de la direction en ventes.",
       "Pour atteindre un objectif de ventes : pars des devis ouverts (montant, ancienneté), dis lesquels relancer en priorité et combien ils peuvent rapporter, puis ce qu'il faut de nouvelles affaires (nombre de devis à faire, panier moyen, cible), en t'appuyant sur le catalogue.",
@@ -55,7 +57,7 @@ export const SPECIALISTS = Object.freeze({
       "C'est toi qui prépares les devis, bons de commande et bons de livraison avec preparer_document. Un prix est TTC (prix_ttc = true) sauf si la mission écrit explicitement « HT ». Prix non donné : cherche-le avec chercher_catalogue (un seul produit correspond → son nom exact et son prix TTC, en précisant que c'est le prix catalogue ; plusieurs → cite-les avec leur prix sans choisir ; aucun → dis que le prix manque). Quantité non précisée = 1. 60/20/20 par défaut, 50/50 seulement sur un bon de commande si c'est demandé. Le numéro est attribué automatiquement.",
       CORRECTION_RULE,
       ORDER_FROM_QUOTE_RULE,
-      "Où en est une vente (« le devis 170 a-t-il été accepté ? ») : suivre_dossier.",
+      "Où en est une vente (« le devis 170 a-t-il été accepté ? ») : suivre_dossier ; où en est sa fabrication : carnet_atelier. Message au client sur sa commande (date de livraison, avancement) : appuie-toi sur le carnet, jamais sur une date supposée.",
       "Si la mission impose une date au document (« date du document : 08/08/2026 », « daté du 8 août »), mets-la dans le champ date au format JJ/MM/AAAA ; sinon chaîne vide (date du jour). Dans ta réponse, donne la date, le numéro et le total renvoyés par preparer_document.",
       "Si la mission indique « visuel : photo n° X », mets X dans le champ photo du bon de commande ; sinon 0. Reprends dans les caractéristiques ce que la mission dit de la photo (modèle, coloris, finitions).",
       "Après preparer_document, donne le type, le numéro, le client, le total TTC et les échéances : l'aperçu attend la validation de la direction (« Valider et générer »). Ne dis jamais qu'il est envoyé."
@@ -68,6 +70,7 @@ export const SPECIALISTS = Object.freeze({
     // Finance reads the quote and the delivery note an invoice comes from; it
     // still prepares only invoices.
     readableDocumentTypes: Object.freeze(["facture", "devis", "bon_de_commande", "bon_de_livraison"]),
+    workshop: "read",
     instructions: [
       "Tu es l'agent Administration / Finance.",
       "Tu dis ce qui doit être encaissé (cette semaine, en retard), les créances par client, le chiffre d'affaires facturé, et les décisions de trésorerie à prendre.",
@@ -76,14 +79,21 @@ export const SPECIALISTS = Object.freeze({
       CORRECTION_RULE,
       "C'est toi qui prépares les factures avec preparer_document : elle doit citer son devis ou son bon de livraison (sinon, dis que le numéro manque). Un prix est TTC (prix_ttc = true) sauf si la mission écrit explicitement « HT ».",
       INVOICE_RULE,
+      "Le carnet d'atelier (carnet_atelier) dit où en est la fabrication : une commande livrée et installée rend dû le dernier versement (20 % après installation en 60/20/20).",
       "Pour un objectif de chiffre d'affaires, ta part est de transformer les ventes en encaissements : acomptes et soldes à encaisser dans la période, et les conditions qui protègent la trésorerie."
     ]
   }),
   production: Object.freeze({
     label: "Production",
     mission: "Planning atelier, avancement des commandes, retards et blocages.",
+    // Production reads what an order is to make; it prepares no document.
+    readableDocumentTypes: Object.freeze(["bon_de_commande"]),
+    workshop: "write",
     instructions: [
       "Tu es l'agent Production.",
+      "Les vraies commandes sont au carnet d'atelier (carnet_atelier) : chaque bon de commande validé dans le cockpit et ses étapes (étude technique, approvisionnement, découpe CNC, assemblage, peinture et finition, contrôle qualité, livraison et installation). Lis-le en premier ; consulter_document (bon_de_commande) donne ce qu'il faut fabriquer (lignes, caractéristiques). Tes autres outils de production lisent des données de démonstration : ne les mélange pas avec le carnet.",
+      "avancer_commande seulement pour un fait que la mission rapporte (la direction ou l'atelier l'a dit) : étape commencée, terminée, bloquée avec ce qui bloque, responsable, date prévue. Une date que tu proposes reste une proposition dans ta réponse, pas une date prévue au carnet. L'avancement est calculé sur les étapes terminées : ne l'estime jamais.",
+      "Pour une commande bloquée ou en retard : ce qui bloque, l'impact sur la livraison, et la décision à prendre par la direction.",
       "Classe chaque commande : à l'heure, à surveiller, en danger, en retard ; donne la date prévue, l'étape et ce qui bloque.",
       "Propose un ordre de priorité pour l'atelier cette semaine et ce qu'il faut décider (décaler une livraison, commander en urgence…).",
       "Si un client doit être prévenu d'un retard, rédige le message à lui envoyer.",
@@ -169,6 +179,10 @@ export async function runSpecialist({
   consultDocument = null,
   followDossierTool = null,
   followDossier = null,
+  workshopBookTool = null,
+  readWorkshopBook = null,
+  advanceOrderTool = null,
+  advanceOrder = null,
   prepareMessage = null
 }) {
   const specialist = SPECIALISTS[agentId];
@@ -178,8 +192,11 @@ export async function runSpecialist({
   const documentTool = documentTypes.length > 0 && prepareDocumentTool ? restrictDocumentTypes(prepareDocumentTool, documentTypes) : null;
   // Whoever prepares a type of document can read back the ones already issued,
   // to correct one under its own number, and follow the sale it belongs to.
-  const consultTool = documentTool && consultDocumentTool && consultDocument ? restrictDocumentTypes(consultDocumentTool, readableTypes) : null;
+  // Production reads the orders it makes.
+  const consultTool = readableTypes.length > 0 && consultDocumentTool && consultDocument ? restrictDocumentTypes(consultDocumentTool, readableTypes) : null;
   const dossierTool = documentTool && followDossierTool && followDossier ? followDossierTool : null;
+  const bookTool = specialist.workshop && workshopBookTool && readWorkshopBook ? workshopBookTool : null;
+  const advanceTool = specialist.workshop === "write" && advanceOrderTool && advanceOrder ? advanceOrderTool : null;
   const catalogue = specialist.usesCatalogue && catalogueTool && lookUpCatalogue ? catalogueTool : null;
   const tools = [
     ...readTools.map((tool) => ({
@@ -191,6 +208,8 @@ export async function runSpecialist({
     ...(documentTool ? [documentTool] : []),
     ...(consultTool ? [consultTool] : []),
     ...(dossierTool ? [dossierTool] : []),
+    ...(bookTool ? [bookTool] : []),
+    ...(advanceTool ? [advanceTool] : []),
     ...(catalogue ? [catalogue] : []),
     ...(prepareMessage ? [WHATSAPP_MESSAGE_TOOL] : [])
   ];
@@ -229,6 +248,10 @@ export async function runSpecialist({
           : { ok: false, erreur: `Ce document n'est pas du ressort de l'agent ${specialist.label}.` };
       } else if (dossierTool && call.name === dossierTool.name) {
         result = await followDossier(parseArguments(call.arguments));
+      } else if (bookTool && call.name === bookTool.name) {
+        result = await readWorkshopBook(parseArguments(call.arguments));
+      } else if (advanceTool && call.name === advanceTool.name) {
+        result = await advanceOrder(parseArguments(call.arguments), agentId);
       } else if (catalogue && call.name === catalogue.name) {
         result = await lookUpCatalogue(parseArguments(call.arguments));
       } else if (readTools.some((tool) => tool.id === call.name)) {

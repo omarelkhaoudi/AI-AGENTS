@@ -1,6 +1,7 @@
 #!/bin/sh
 # Backs up the hosted cockpit: the database, the documents issued (with their
-# numbering) and the company data (catalogue, plans, conversations). Run it on
+# numbering) and the company data (catalogue, plans, conversations, workshop
+# book). Run it on
 # the server, from the deploy/ folder, every night from cron:
 #
 #   0 3 * * * cd /opt/hkids/deploy && sh ../scripts/backup.sh >> backups/backup.log 2>&1

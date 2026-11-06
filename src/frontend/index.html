@@ -74,6 +74,10 @@
               <span class="nav-badge" id="approval-count" hidden>0</span>
             </button>
             <p class="nav-caption mx-3 mt-5 mb-1.5 text-[10.5px] font-semibold tracking-[0.14em] text-sidebar-muted/80 uppercase max-md:hidden">Atelier</p>
+            <button type="button" class="nav-item" data-view="orders">
+              <svg class="i" aria-hidden="true"><use href="#i-wrench"/></svg><span class="nav-label">Commandes</span>
+              <span class="nav-badge" id="orders-count" hidden>0</span>
+            </button>
             <button type="button" class="nav-item" data-view="documents">
               <svg class="i" aria-hidden="true"><use href="#i-file"/></svg><span class="nav-label">Documents</span>
             </button>
@@ -229,6 +233,20 @@
               <button type="button" class="secondary shrink-0" id="refresh-plans"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Rafraîchir</button>
             </div>
             <div id="plans-list" class="plans-list"></div>
+          </section>
+        </section>
+
+        <!-- Carnet d'atelier -->
+        <section class="view flex animate-rise flex-col gap-6" data-view-panel="orders" hidden aria-labelledby="orders-title">
+          <section class="panel">
+            <div class="panel-heading">
+              <div>
+                <h2 id="orders-title">Carnet d'atelier</h2>
+                <p>Chaque bon de commande validé, de l'étude technique à l'installation. L'avancement compte les étapes terminées. Changez le statut d'une étape ici, ou dites simplement au Director ce qui a avancé.</p>
+              </div>
+              <button type="button" class="secondary shrink-0" id="refresh-orders"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Rafraîchir</button>
+            </div>
+            <div id="orders-list" class="plans-list"></div>
           </section>
         </section>
 

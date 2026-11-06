@@ -6,6 +6,7 @@ import { createRepository } from "./persistence/repository-factory.js";
 import { createMvpToolRegistry } from "./tools/mvp-tools.js";
 import { createFilePlanStore } from "./agent/plan-store.js";
 import { createFileConversationStore } from "./agent/conversation-store.js";
+import { createFileWorkshopStore } from "./agent/workshop-book.js";
 
 // The first statement, because everything below reads process.env: the port, the
 // configuration, the repository factory and the workflow client. Without this the
@@ -38,7 +39,10 @@ const planStore = createFilePlanStore(process.env.HKIDS_PLANS_PATH ? { path: pro
 // not make it forget what it was just told.
 const conversationStore = createFileConversationStore();
 
-const app = buildApi({ repository, config, toolRegistry, planStore, conversationStore });
+// The workshop book, in data/atelier.json: what happened to each order.
+const workshopStore = createFileWorkshopStore();
+
+const app = buildApi({ repository, config, toolRegistry, planStore, conversationStore, workshopStore });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.once(signal, async () => {

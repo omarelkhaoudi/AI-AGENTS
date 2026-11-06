@@ -657,6 +657,127 @@ async function sendPlanChange(url, method, body) {
   await refreshPlans();
 }
 
+// --- Workshop book view -------------------------------------------------------
+const WORKSHOP_STATUS_OPTIONS = Object.freeze({ a_faire: "À faire", en_cours: "En cours", bloquee: "Bloquée", terminee: "Terminée" });
+// The plan's step styles, reused: same colours for the same meaning.
+const WORKSHOP_STEP_CLASSES = Object.freeze({ a_faire: "todo", en_cours: "in_progress", bloquee: "blocked", terminee: "done" });
+const ORDER_STATUS_TONES = Object.freeze({ "livrée et installée": "ok", "bloquée": "danger", "en retard": "danger", "en cours": "info" });
+const ordersList = document.querySelector("#orders-list");
+const ordersCount = document.querySelector("#orders-count");
+document.querySelector("#refresh-orders").addEventListener("click", () => refreshOrders());
+
+async function refreshOrders() {
+  try {
+    const response = await fetch("/api/workshop", { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("Impossible de charger le carnet d'atelier.");
+    }
+    renderOrders((await response.json()).orders ?? []);
+  } catch (error) {
+    ordersList.innerHTML = card("Carnet indisponible", escapeHtml(error.message), "warning");
+  }
+}
+
+function renderOrders(orders) {
+  const flagged = orders.filter((order) => order.alerts.length > 0).length;
+  ordersCount.textContent = String(flagged);
+  ordersCount.hidden = flagged === 0;
+  if (orders.length === 0) {
+    ordersList.innerHTML = `
+      <div class="all-clear">
+        <span class="badge">${icon("wrench")}</span>
+        <h3>Aucune commande au carnet</h3>
+        <p>Un bon de commande entre au carnet dès que vous le validez. Demandez au Director « Le client a accepté le devis 170 » : le Commercial prépare le bon de commande.</p>
+      </div>
+    `;
+    return;
+  }
+  ordersList.innerHTML = orders.map((order) => `
+    <article class="plan-track ${order.finished ? "done" : ""}" data-order="${escapeHtml(order.number)}">
+      <header>
+        <div>
+          <span class="eyebrow">BC n° ${escapeHtml(order.number)} · du ${escapeHtml(order.date)}${order.quoteNumber ? ` · devis n° ${escapeHtml(order.quoteNumber)}` : ""}</span>
+          <h3>${escapeHtml(order.client)}${order.object ? ` · ${escapeHtml(order.object)}` : ""}</h3>
+          <p class="muted">${escapeHtml(orderDocuments(order))}</p>
+        </div>
+        <span class="tag ${ORDER_STATUS_TONES[order.status] ?? ""}">${escapeHtml(order.status)}</span>
+      </header>
+      <div class="progress" title="${order.progress.done}/${order.progress.total} étapes terminées">
+        <span style="width:${order.progress.percent}%"></span>
+      </div>
+      <p class="progress-label">
+        ${order.progress.done}/${order.progress.total} étapes terminées (${order.progress.percent} %)${order.currentStep ? ` · étape suivante : ${escapeHtml(order.currentStep)}` : ""}
+      </p>
+      ${order.alerts.map((alert) => `<p class="progress-label"><span class="late">${escapeHtml(alert)}</span></p>`).join("")}
+      <ul class="track-steps">
+        ${order.steps.map((step, index) => `
+          <li class="${WORKSHOP_STEP_CLASSES[step.status] ?? ""}">
+            <span class="step-index">${index + 1}</span>
+            <div>
+              <strong>${escapeHtml(step.label)}</strong>
+              <small>${escapeHtml(step.detail)}${step.responsible ? ` · ${escapeHtml(step.responsible)}` : ""}${step.plannedDate ? ` · prévue le <span class="${step.late ? "late" : ""}">${escapeHtml(formatIsoDay(step.plannedDate))}</span>` : ""}${step.doneDate ? ` · terminée le ${escapeHtml(formatIsoDay(step.doneDate))}` : ""}</small>
+              ${step.note ? `<small class="block">${escapeHtml(step.note)}</small>` : ""}
+            </div>
+            <select data-step="${escapeHtml(step.id)}" aria-label="Statut : ${escapeHtml(step.label)}">
+              ${Object.entries(WORKSHOP_STATUS_OPTIONS).map(([value, label]) => `<option value="${value}" ${value === step.status ? "selected" : ""}>${label}</option>`).join("")}
+            </select>
+          </li>
+        `).join("")}
+      </ul>
+      ${order.journal.length > 0 ? `
+        <details class="journal">
+          <summary>Journal de la commande</summary>
+          <ul>${[...order.journal].reverse().map((entry) => `<li><small>${escapeHtml(formatIsoDay(entry.at.slice(0, 10)))} ${escapeHtml(entry.at.slice(11, 16))}</small> ${escapeHtml(entry.text)}</li>`).join("")}</ul>
+        </details>` : ""}
+    </article>
+  `).join("");
+
+  ordersList.querySelectorAll("[data-order]").forEach((article) => {
+    article.querySelectorAll("select[data-step]").forEach((select) => {
+      select.addEventListener("change", async () => {
+        // A blocked step says what blocks it, as the Director would ask.
+        const note = select.value === "bloquee" ? globalThis.prompt?.("Qu'est-ce qui bloque cette étape ?") ?? "" : "";
+        if (select.value === "bloquee" && note.trim() === "") {
+          await refreshOrders();
+          return;
+        }
+        await sendOrderChange(article.dataset.order, select.dataset.step, { status: select.value, note });
+      });
+    });
+  });
+}
+
+function orderDocuments(order) {
+  const parts = [`${formatDh(order.totalTtc)} TTC`];
+  if (order.deliveryNotes.length > 0) {
+    parts.push(`BL n° ${order.deliveryNotes.join(", ")}`);
+  }
+  if (order.invoices.length > 0) {
+    parts.push(`facture${order.invoices.length > 1 ? "s" : ""} n° ${order.invoices.join(", ")}`);
+  }
+  if (order.quoteNumber && order.remaining !== null) {
+    parts.push(order.remaining > 0 ? `reste à facturer ${formatDh(order.remaining)}` : "facturée en totalité");
+  }
+  return parts.join(" · ");
+}
+
+async function sendOrderChange(number, step, body) {
+  try {
+    const response = await fetch(`/api/workshop/${encodeURIComponent(number)}/steps/${encodeURIComponent(step)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      throw new Error((await response.json()).error ?? "La mise à jour a échoué.");
+    }
+    showToast(`BC n° ${number} mis à jour.`);
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshOrders();
+}
+
 // What the cross-checks between the trades found. Computed from the data,
 // never written by the model.
 function alertsCard(alerts) {
@@ -1819,6 +1940,7 @@ const COCKPIT_VIEWS = Object.freeze({
   director: "Briefing du jour",
   approvals: "Validations",
   plans: "Plans d'action",
+  orders: "Carnet d'atelier",
   documents: "Documents H-KIDS",
   quotes: "Préparation de devis",
   file: "Dossier commercial",
@@ -1829,6 +1951,9 @@ function showView(name) {
   const view = Object.hasOwn(COCKPIT_VIEWS, name ?? "") ? name : "director";
   if (view === "plans") {
     refreshPlans();
+  }
+  if (view === "orders") {
+    refreshOrders();
   }
   document.querySelector("#director-title").textContent = COCKPIT_VIEWS[view];
   document.querySelectorAll("[data-view-panel]").forEach((panel) => {
@@ -2114,6 +2239,7 @@ renderAgentRoster([]);
 async function loadPanels() {
   await checkAgentStatus();
   refreshPlans();
+  refreshOrders();
   renderHistory();
   await refreshApprovals();
 }

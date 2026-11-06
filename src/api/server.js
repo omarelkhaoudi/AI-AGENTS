@@ -26,6 +26,7 @@ import { ToolExecutionService, ToolExecutionServiceError } from "../tools/execut
 import { createMvpToolRegistry } from "../tools/mvp-tools.js";
 import { CONSISTENCY_DOMAINS, checkConsistency } from "../agent/consistency.js";
 import { PlanStoreError, createMemoryPlanStore } from "../agent/plan-store.js";
+import { WorkshopError, createMemoryWorkshopStore, createWorkshop } from "../agent/workshop-book.js";
 import { authenticatePrincipal, extractBearerToken } from "../security/authentication.js";
 import { assertCapability } from "../security/authorization.js";
 import { DEFAULT_RATE_LIMITS, createSecurityConfig } from "../security/security-config.js";
@@ -69,6 +70,8 @@ export function buildApi({
   // Where the Director's conversations are kept, the same way: a file store for
   // the server process, memory for a test.
   conversationStore = undefined,
+  // Where the workshop book is kept, the same way again.
+  workshopStore = null,
   documentOutputDir = null,
   // A seam, not a feature: the derived idempotency key names a day, and a test
   // cannot cross a day boundary by waiting for one.
@@ -154,6 +157,8 @@ export function buildApi({
   };
   const measured = (plan) => withObjectiveMeasure(plan, { loadObjectiveRecords });
   const plans = planStore ?? createMemoryPlanStore();
+  const workshopBook = workshopStore ?? createMemoryWorkshopStore();
+  const workshop = createWorkshop({ store: workshopBook, documentService: hkidsDocuments, clock });
   const agent = directorAgent ?? createDirectorAgentFromEnv({
     documentService: hkidsDocuments,
     runDirectorRequest,
@@ -163,6 +168,7 @@ export function buildApi({
     loadObjectiveRecords,
     planStore: plans,
     conversationStore,
+    workshopStore: workshopBook,
     client: agentClient
   });
   // Writes to the same directory as the document service, so both kinds of
@@ -519,6 +525,36 @@ export function buildApi({
           return reply.code(404).send({ error: error.message, details: { code: error.code } });
         }
         return sendDomainError(reply, "Plan update failed.", error);
+      }
+    });
+
+    app.get("/api/workshop", readRouteOptions(), async (_request, reply) => {
+      try {
+        return { orders: await workshop.book() };
+      } catch (error) {
+        return sendDomainError(reply, "Workshop book unavailable.", error);
+      }
+    });
+
+    // Hiba moves a step from the cockpit as she would tell the Director; the
+    // journal says it was her.
+    app.patch("/api/workshop/:number/steps/:step", writeRouteOptions(), async (request, reply) => {
+      const field = (name) => (typeof request.body?.[name] === "string" ? request.body[name] : "");
+      try {
+        const { order } = await workshop.advance(request.params.number, request.params.step, {
+          status: field("status"),
+          responsible: field("responsible"),
+          plannedDate: field("plannedDate"),
+          doneDate: field("doneDate"),
+          note: field("note"),
+          by: request.principal.userId ?? "direction"
+        });
+        return reply.code(200).send({ order });
+      } catch (error) {
+        if (error instanceof WorkshopError) {
+          return reply.code(error.code === "WORKSHOP_ORDER_NOT_FOUND" ? 404 : 400).send({ error: error.message, details: { code: error.code } });
+        }
+        return sendDomainError(reply, "Workshop update failed.", error);
       }
     });
 

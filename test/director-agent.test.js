@@ -188,3 +188,19 @@ test("a refused key is reported in words a manager can act on", async (t) => {
   assert.equal(response.statusCode, 503);
   assert.match(JSON.parse(response.body).error, /clé OpenAI est refusée/);
 });
+
+// The error the OpenAI client raises when no answer comes back at all, as when
+// the internet is down. The message points at the connection, not at OpenAI.
+test("a lost internet connection is reported as such", async (t) => {
+  const { APIConnectionError, APIConnectionTimeoutError } = await import("openai");
+  for (const lost of [new APIConnectionError({ message: "Connection error." }), new APIConnectionTimeoutError()]) {
+    const { inject } = await createApi(t, scriptedClient([lost]));
+    const response = await inject({ method: "POST", url: "/api/agent/chat", payload: { message: "bonjour" } });
+    assert.equal(response.statusCode, 503);
+    assert.match(JSON.parse(response.body).error, /connexion internet semble coupée/);
+  }
+
+  const { inject } = await createApi(t, scriptedClient([new Error("Bad gateway")]));
+  const other = await inject({ method: "POST", url: "/api/agent/chat", payload: { message: "bonjour" } });
+  assert.match(JSON.parse(other.body).error, /n'a pas répondu/, "any other failure keeps its own message");
+});

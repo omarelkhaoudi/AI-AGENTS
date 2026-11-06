@@ -573,12 +573,17 @@ async function callModel(client, payload) {
     return await client.responses.create(withReasoning(payload));
   } catch (cause) {
     const status = cause?.status ?? null;
+    // No answer at all, as when the internet is down: saying so tells Hiba what
+    // to check, where "did not answer" sent her looking at OpenAI.
+    const unreachable = status === null && /^APIConnection/.test(cause?.constructor?.name ?? "");
     const message = status === 401
       ? "La clé OpenAI est refusée : vérifiez OPENAI_API_KEY dans .env."
       : status === 429
         ? "Le compte OpenAI n'a plus de crédit ou est limité pour le moment."
-        : "Le service OpenAI n'a pas répondu. Réessayez dans un instant.";
-    throw new DirectorAgentError(message, "AGENT_MODEL_UNAVAILABLE", { status });
+        : unreachable
+          ? "Impossible de joindre OpenAI : la connexion internet semble coupée. Vérifiez le Wi-Fi ou la box, puis réessayez."
+          : "Le service OpenAI n'a pas répondu. Réessayez dans un instant.";
+    throw new DirectorAgentError(message, "AGENT_MODEL_UNAVAILABLE", { status, unreachable });
   }
 }
 

@@ -80,6 +80,7 @@ const form = document.querySelector("#director-form");
 const messageInput = document.querySelector("#director-message");
 const summarySubtitle = document.querySelector("#summary-subtitle");
 const summaryContent = document.querySelector("#summary-content");
+const briefingReport = document.querySelector("#briefing-report");
 const planList = document.querySelector("#plan-list");
 const agentResults = document.querySelector("#agent-results");
 const agentRoster = document.querySelector("#agent-roster");
@@ -548,6 +549,65 @@ function formatIsoDay(value) {
   return day && month ? `${day}/${month}/${year}` : value;
 }
 
+// --- The day at a glance --------------------------------------------------------
+// Four cards on the briefing, read from what the other views already load: the
+// validations waiting, the orders in the workshop, the plans under way and the
+// orders installed. Each opens its view.
+const overviewGrid = document.querySelector("#overview");
+const overview = { approvals: null, orders: null, plans: null };
+overviewGrid.addEventListener("click", (event) => {
+  const tile = event.target.closest?.("[data-goto]");
+  if (tile) {
+    if (tile.dataset.filter) {
+      workshopView.filter = tile.dataset.filter;
+    }
+    showView(tile.dataset.goto);
+  }
+});
+
+function updateOverview(part) {
+  Object.assign(overview, part);
+  const { approvals, orders, plans } = overview;
+  const plural = (count, word) => `${count} ${word}${count > 1 ? "s" : ""}`;
+  const watch = orders?.filter((order) => order.alerts.length > 0).length ?? 0;
+  const installed = orders?.filter((order) => order.finished) ?? [];
+  const toInvoice = installed.filter((order) => order.remaining > 0).length;
+  const activePlans = plans?.filter((plan) => plan.status === "active") ?? [];
+  const overdue = activePlans.reduce((sum, plan) => sum + (plan.progress?.overdue ?? 0), 0);
+  const tiles = [
+    {
+      view: "approvals", icon: "shield", label: "À valider", value: approvals,
+      tone: approvals > 0 ? "warn" : "good",
+      hint: approvals === null ? "chargement…" : approvals > 0 ? `${plural(approvals, "action")} en attente de votre accord` : "rien n'attend votre accord"
+    },
+    {
+      view: "orders", filter: watch > 0 ? "watch" : "active", icon: "wrench", label: "En atelier",
+      value: orders ? orders.filter((order) => !order.finished).length : null,
+      tone: watch > 0 ? "danger" : "brand",
+      hint: orders === null ? "chargement…" : watch > 0 ? `${plural(watch, "commande")} à surveiller` : orders.length > 0 ? "aucune alerte" : "aucune commande au carnet"
+    },
+    {
+      view: "plans", icon: "route", label: "Plans en cours", value: plans ? activePlans.length : null,
+      tone: overdue > 0 ? "danger" : "info",
+      hint: plans === null ? "chargement…" : overdue > 0 ? `${plural(overdue, "étape")} en retard` : activePlans.length > 0 ? "dans les temps" : "donnez un objectif au Director"
+    },
+    {
+      view: "orders", filter: "done", icon: "check-circle", label: "Installées", value: orders ? installed.length : null,
+      tone: toInvoice > 0 ? "warn" : "good",
+      hint: orders === null ? "chargement…" : toInvoice > 0 ? `${plural(toInvoice, "commande")} reste à facturer` : installed.length > 0 ? "facturées en totalité" : "aucune pour l'instant"
+    }
+  ];
+  overviewGrid.innerHTML = tiles.map((tile) => `
+    <button type="button" class="overview-tile" data-tone="${tile.tone}" data-goto="${tile.view}" ${tile.filter ? `data-filter="${tile.filter}"` : ""}>
+      <span class="overview-icon">${icon(tile.icon)}</span>
+      <span class="overview-label">${escapeHtml(tile.label)}</span>
+      <strong class="overview-value">${tile.value ?? "–"}</strong>
+      <small>${escapeHtml(tile.hint)}</small>
+      <span class="overview-go" aria-hidden="true">${icon("arrow")}</span>
+    </button>
+  `).join("");
+}
+
 // --- Plans view ---------------------------------------------------------------
 const plansList = document.querySelector("#plans-list");
 const plansCount = document.querySelector("#plans-count");
@@ -569,6 +629,7 @@ function renderPlans(plans) {
   const active = plans.filter((plan) => plan.status === "active");
   plansCount.textContent = String(active.length);
   plansCount.hidden = active.length === 0;
+  updateOverview({ plans });
   if (plans.length === 0) {
     plansList.innerHTML = `
       <div class="all-clear">
@@ -662,9 +723,28 @@ const WORKSHOP_STATUS_OPTIONS = Object.freeze({ a_faire: "À faire", en_cours: "
 // The plan's step styles, reused: same colours for the same meaning.
 const WORKSHOP_STEP_CLASSES = Object.freeze({ a_faire: "todo", en_cours: "in_progress", bloquee: "blocked", terminee: "done" });
 const ORDER_STATUS_TONES = Object.freeze({ "livrée et installée": "ok", "bloquée": "danger", "en retard": "danger", "en cours": "info" });
+// The filters above the book: each says how many orders it holds.
+const ORDER_FILTERS = Object.freeze([
+  { id: "all", label: "Toutes", hint: "au carnet", test: () => true },
+  { id: "watch", label: "À surveiller", hint: "bloquées, en retard ou à facturer", test: (order) => order.alerts.length > 0 },
+  { id: "active", label: "En atelier", hint: "pas encore installées", test: (order) => !order.finished },
+  { id: "todo", label: "À lancer", hint: "aucune étape commencée", test: (order) => order.status === "à lancer" },
+  { id: "done", label: "Installées", hint: "livrées et installées", test: (order) => order.finished }
+]);
 const ordersList = document.querySelector("#orders-list");
 const ordersCount = document.querySelector("#orders-count");
+const ordersFilters = document.querySelector("#orders-filters");
+// What the book shows: the orders last read, the filter chosen, and the
+// sections of each card left open, kept across refreshes.
+const workshopView = { orders: [], filter: "all", open: new Set() };
 document.querySelector("#refresh-orders").addEventListener("click", () => refreshOrders());
+ordersFilters.addEventListener("click", (event) => {
+  const tile = event.target.closest?.("[data-filter]");
+  if (tile) {
+    workshopView.filter = tile.dataset.filter;
+    renderOrders(workshopView.orders);
+  }
+});
 
 async function refreshOrders() {
   try {
@@ -679,10 +759,13 @@ async function refreshOrders() {
 }
 
 function renderOrders(orders) {
+  workshopView.orders = orders;
   const flagged = orders.filter((order) => order.alerts.length > 0).length;
   ordersCount.textContent = String(flagged);
   ordersCount.hidden = flagged === 0;
+  updateOverview({ orders });
   if (orders.length === 0) {
+    ordersFilters.innerHTML = "";
     ordersList.innerHTML = `
       <div class="all-clear">
         <span class="badge">${icon("wrench")}</span>
@@ -692,48 +775,31 @@ function renderOrders(orders) {
     `;
     return;
   }
-  ordersList.innerHTML = orders.map((order) => `
-    <article class="plan-track ${order.finished ? "done" : ""}" data-order="${escapeHtml(order.number)}">
-      <header>
-        <div>
-          <span class="eyebrow">BC n° ${escapeHtml(order.number)} · du ${escapeHtml(order.date)}${order.quoteNumber ? ` · devis n° ${escapeHtml(order.quoteNumber)}` : ""}</span>
-          <h3>${escapeHtml(order.client)}${order.object ? ` · ${escapeHtml(order.object)}` : ""}</h3>
-          <p class="muted">${escapeHtml(orderDocuments(order))}</p>
-        </div>
-        <span class="tag ${ORDER_STATUS_TONES[order.status] ?? ""}">${escapeHtml(order.status)}</span>
-      </header>
-      <div class="progress" title="${order.progress.done}/${order.progress.total} étapes terminées">
-        <span style="width:${order.progress.percent}%"></span>
-      </div>
-      <p class="progress-label">
-        ${order.progress.done}/${order.progress.total} étapes terminées (${order.progress.percent} %)${order.currentStep ? ` · étape suivante : ${escapeHtml(order.currentStep)}` : ""}
-      </p>
-      ${order.alerts.map((alert) => `<p class="progress-label"><span class="late">${escapeHtml(alert)}</span></p>`).join("")}
-      <ul class="track-steps">
-        ${order.steps.map((step, index) => `
-          <li class="${WORKSHOP_STEP_CLASSES[step.status] ?? ""}">
-            <span class="step-index">${index + 1}</span>
-            <div>
-              <strong>${escapeHtml(step.label)}</strong>
-              <small>${escapeHtml(step.detail)}${step.responsible ? ` · ${escapeHtml(step.responsible)}` : ""}${step.plannedDate ? ` · prévue le <span class="${step.late ? "late" : ""}">${escapeHtml(formatIsoDay(step.plannedDate))}</span>` : ""}${step.doneDate ? ` · terminée le ${escapeHtml(formatIsoDay(step.doneDate))}` : ""}</small>
-              ${step.note ? `<small class="block">${escapeHtml(step.note)}</small>` : ""}
-            </div>
-            <select data-step="${escapeHtml(step.id)}" aria-label="Statut : ${escapeHtml(step.label)}">
-              ${Object.entries(WORKSHOP_STATUS_OPTIONS).map(([value, label]) => `<option value="${value}" ${value === step.status ? "selected" : ""}>${label}</option>`).join("")}
-            </select>
-          </li>
-        `).join("")}
-      </ul>
-      ${clientAccess(order)}
-      ${order.journal.length > 0 ? `
-        <details class="journal">
-          <summary>Journal de la commande</summary>
-          <ul>${[...order.journal].reverse().map((entry) => `<li><small>${escapeHtml(formatIsoDay(entry.at.slice(0, 10)))} ${escapeHtml(entry.at.slice(11, 16))}</small> ${escapeHtml(entry.text)}</li>`).join("")}</ul>
-        </details>` : ""}
-    </article>
-  `).join("");
+  const filter = ORDER_FILTERS.find((entry) => entry.id === workshopView.filter) ?? ORDER_FILTERS[0];
+  ordersFilters.innerHTML = ORDER_FILTERS.map((entry) => {
+    const count = orders.filter(entry.test).length;
+    return `
+      <button type="button" class="stat-tile ${entry.id === "watch" && count > 0 ? "is-alert" : ""}" data-filter="${entry.id}" aria-pressed="${entry.id === filter.id}">
+        <strong>${count}</strong><span>${escapeHtml(entry.label)}</span><small>${escapeHtml(entry.hint)}</small>
+      </button>
+    `;
+  }).join("");
+  const shown = orders.filter(filter.test);
+  ordersList.innerHTML = shown.length > 0
+    ? shown.map((order) => orderCard(order)).join("")
+    : `<p class="empty-filter">Aucune commande dans « ${escapeHtml(filter.label)} ».</p>`;
 
   ordersList.querySelectorAll("[data-order]").forEach((article) => {
+    article.querySelectorAll("details[data-panel]").forEach((panel) => {
+      panel.addEventListener("toggle", () => {
+        const key = `${article.dataset.order}:${panel.dataset.panel}`;
+        if (panel.open) {
+          workshopView.open.add(key);
+        } else {
+          workshopView.open.delete(key);
+        }
+      });
+    });
     article.querySelectorAll("select[data-step]").forEach((select) => {
       select.addEventListener("change", async () => {
         // A blocked step says what blocks it, as the Director would ask.
@@ -758,9 +824,9 @@ function renderOrders(orders) {
         await sendPortalChange(number, "fermer");
       }
     });
-    const photoInput = article.querySelector("[data-photo-input]");
-    photoInput?.addEventListener("change", async () => {
-      const file = photoInput.files?.[0];
+    const photoField = article.querySelector("[data-photo-input]");
+    photoField?.addEventListener("change", async () => {
+      const file = photoField.files?.[0];
       if (file) {
         await publishOrderPhoto(number, file);
       }
@@ -775,6 +841,93 @@ function renderOrders(orders) {
   });
 }
 
+// One order of the book: who and what, the route of its seven steps, what
+// needs attention, then three sections that open on demand.
+function orderCard(order) {
+  const current = order.steps.findIndex((step) => step.status !== "terminee");
+  const { done, total, percent } = order.progress;
+  const where = order.finished
+    ? "livrée et installée"
+    : `${current >= 0 && order.steps[current].status === "a_faire" ? "étape suivante" : "étape en cours"} : <b>${escapeHtml(order.currentStep)}</b>`;
+  return `
+    <article class="order-card ${order.finished ? "is-done" : ""} ${order.alerts.length > 0 ? "is-flagged" : ""}" data-order="${escapeHtml(order.number)}">
+      <header class="order-head">
+        <div class="min-w-0">
+          <span class="eyebrow">BC n° ${escapeHtml(order.number)} · du ${escapeHtml(order.date)}${order.quoteNumber ? ` · devis n° ${escapeHtml(order.quoteNumber)}` : ""}</span>
+          <h3>${escapeHtml(order.client)}</h3>
+          ${order.object ? `<p class="order-object">${escapeHtml(order.object)}</p>` : ""}
+        </div>
+        <div class="order-figures">
+          <span class="tag ${ORDER_STATUS_TONES[order.status] ?? ""}">${escapeHtml(order.status)}</span>
+          <strong>${escapeHtml(formatDh(order.totalTtc))} <small>TTC</small></strong>
+          ${orderDocuments(order) ? `<small>${escapeHtml(orderDocuments(order))}</small>` : ""}
+        </div>
+      </header>
+      <ol class="order-route" aria-label="${done} étape${done > 1 ? "s" : ""} terminée${done > 1 ? "s" : ""} sur ${total}">
+        ${order.steps.map((step, index) => routeStep(step, index, index === current)).join("")}
+      </ol>
+      <p class="order-progress">${done}/${total} étapes terminées · ${percent} % · ${where}</p>
+      ${order.alerts.length > 0 ? `
+        <ul class="order-alerts">
+          ${order.alerts.map((alert) => `<li class="${alert.startsWith("Installée") ? "warn" : ""}">${icon("alert")}<span>${escapeHtml(alert)}</span></li>`).join("")}
+        </ul>` : ""}
+      <div class="order-panels">
+        ${orderPanel(order, "steps", `${icon("wrench")}<span>Étapes de fabrication</span><small>mettre à jour</small>`, `
+          <ul class="track-steps">
+            ${order.steps.map((step, index) => `
+              <li class="${WORKSHOP_STEP_CLASSES[step.status] ?? ""}">
+                <span class="step-index">${index + 1}</span>
+                <div>
+                  <strong>${escapeHtml(step.label)}</strong>
+                  <small>${escapeHtml(step.detail)}${step.responsible ? ` · ${escapeHtml(step.responsible)}` : ""}${step.plannedDate ? ` · prévue le <span class="${step.late ? "late" : ""}">${escapeHtml(formatIsoDay(step.plannedDate))}</span>` : ""}${step.doneDate ? ` · terminée le ${escapeHtml(formatIsoDay(step.doneDate))}` : ""}</small>
+                  ${step.note ? `<small class="block">${escapeHtml(step.note)}</small>` : ""}
+                </div>
+                <select data-step="${escapeHtml(step.id)}" aria-label="Statut : ${escapeHtml(step.label)}">
+                  ${Object.entries(WORKSHOP_STATUS_OPTIONS).map(([value, label]) => `<option value="${value}" ${value === step.status ? "selected" : ""}>${label}</option>`).join("")}
+                </select>
+              </li>
+            `).join("")}
+          </ul>
+        `)}
+        ${clientAccess(order)}
+        ${order.journal.length > 0 ? orderPanel(order, "journal", `${icon("history")}<span>Journal</span><small>${order.journal.length} entrée${order.journal.length > 1 ? "s" : ""}</small>`, `
+          <ul class="order-journal">${[...order.journal].reverse().map((entry) => `<li><small>${escapeHtml(formatIsoDay(entry.at.slice(0, 10)))} ${escapeHtml(entry.at.slice(11, 16))}</small> ${escapeHtml(entry.text)}</li>`).join("")}</ul>
+        `) : ""}
+      </div>
+    </article>
+  `;
+}
+
+// A step of the route: a dot that says its state, and its name under it.
+function routeStep(step, index, isCurrent) {
+  const state = step.status === "terminee" ? "done"
+    : step.status === "bloquee" ? "blocked"
+      : step.late ? "late"
+        : step.status === "en_cours" ? "active"
+          : "todo";
+  const when = step.doneDate ? ` le ${formatIsoDay(step.doneDate)}` : step.plannedDate ? `, prévue le ${formatIsoDay(step.plannedDate)}` : "";
+  const status = `${WORKSHOP_STATUS_OPTIONS[step.status] ?? step.status}${when}`;
+  return `
+    <li class="route-step ${state} ${isCurrent ? "is-current" : ""}" title="${escapeHtml(`${step.label} : ${status.toLowerCase()}`)}">
+      <span class="route-dot" aria-hidden="true">${state === "done" ? icon("check") : state === "blocked" ? "!" : index + 1}</span>
+      <span class="route-label">${escapeHtml(step.label)}</span>
+      <span class="visually-hidden">${escapeHtml(`${step.label} : ${status.toLowerCase()}`)}</span>
+    </li>
+  `;
+}
+
+// A section of an order card that opens on demand and stays open across
+// refreshes.
+function orderPanel(order, id, summary, content) {
+  const open = workshopView.open.has(`${order.number}:${id}`);
+  return `
+    <details class="order-panel" data-panel="${id}" ${open ? "open" : ""}>
+      <summary>${summary}</summary>
+      <div class="order-panel-body">${content}</div>
+    </details>
+  `;
+}
+
 // What the client sees of the order, and the controls of the link: made,
 // copied, switched off; photos published and removed. Thumbnails come through
 // the client's own link, so they only show while it is active.
@@ -782,22 +935,20 @@ function clientAccess(order) {
   const thumbnail = (photo) => order.portal
     ? `<img src="/api/public${escapeHtml(order.portal.path)}/photos/${encodeURIComponent(photo.id)}" alt="${escapeHtml(photo.caption || "Photo publiée")}" loading="lazy">`
     : `<span class="client-photo-placeholder">${icon("image")}</span>`;
-  return `
-    <section class="client-access" aria-label="Suivi client du BC n° ${escapeHtml(order.number)}">
-      <header>
-        <div>
-          <strong>${icon("link")} Suivi client</strong>
-          <small>${order.portal
-            ? `Lien actif depuis le ${escapeHtml(formatIsoDay(order.portal.createdAt.slice(0, 10)))} : le client voit l'avancement, les photos et ses documents, jamais les notes.`
-            : "Aucun lien actif. Le client verra l'avancement, la livraison prévue, l'échéancier, les photos et ses documents, jamais les notes."}</small>
-        </div>
+  const photos = order.photos.length > 0 ? ` · ${order.photos.length} photo${order.photos.length > 1 ? "s" : ""}` : "";
+  return orderPanel(order, "client", `${icon("link")}<span>Suivi client</span>${order.portal ? `<span class="tag ok">lien actif</span>` : ""}<small>${order.portal ? "" : "aucun lien"}${escapeHtml(photos)}</small>`, `
+    <div class="client-access">
+      <div class="client-access-head">
+        <p>${order.portal
+          ? `Lien actif depuis le ${escapeHtml(formatIsoDay(order.portal.createdAt.slice(0, 10)))} : le client voit l'avancement, la livraison prévue, l'échéancier, les photos et ses documents, jamais les notes.`
+          : "Créez le lien, puis envoyez-le au client : il verra l'avancement, la livraison prévue, l'échéancier, les photos et ses documents, jamais les notes."}</p>
         <div class="client-access-actions">
           ${order.portal
-            ? `<button type="button" class="secondary" data-portal-copy="${escapeHtml(order.portal.path)}">Copier le lien</button>
+            ? `<button type="button" class="secondary" data-portal-copy="${escapeHtml(order.portal.path)}">${icon("link")}Copier le lien</button>
                <button type="button" class="link-button" data-portal-close>Couper le lien</button>`
-            : `<button type="button" class="secondary" data-portal-open>Créer le lien</button>`}
+            : `<button type="button" class="secondary" data-portal-open>${icon("link")}Créer et copier le lien</button>`}
         </div>
-      </header>
+      </div>
       <ul class="client-photos">
         ${order.photos.map((photo) => `
           <li>
@@ -809,8 +960,8 @@ function clientAccess(order) {
           <label>${icon("image")} Publier une photo<input type="file" accept="image/jpeg,image/png" data-photo-input class="visually-hidden"></label>
         </li>
       </ul>
-    </section>
-  `;
+    </div>
+  `);
 }
 
 async function sendPortalChange(number, action) {
@@ -883,8 +1034,10 @@ async function removeOrderPhoto(number, id) {
   await refreshOrders();
 }
 
+// The paperwork of the sale, the amount aside: delivery notes, invoices, and
+// what is left to invoice.
 function orderDocuments(order) {
-  const parts = [`${formatDh(order.totalTtc)} TTC`];
+  const parts = [];
   if (order.deliveryNotes.length > 0) {
     parts.push(`BL n° ${order.deliveryNotes.join(", ")}`);
   }
@@ -892,7 +1045,8 @@ function orderDocuments(order) {
     parts.push(`facture${order.invoices.length > 1 ? "s" : ""} n° ${order.invoices.join(", ")}`);
   }
   if (order.quoteNumber && order.remaining !== null) {
-    parts.push(order.remaining > 0 ? `reste à facturer ${formatDh(order.remaining)}` : "facturée en totalité");
+    // Non-breaking spaces, so an amount never splits across two lines.
+    parts.push(order.remaining > 0 ? `reste à facturer ${formatDh(order.remaining).replace(/ /g, " ")}` : "facturée en totalité");
   }
   return parts.join(" · ");
 }
@@ -1173,6 +1327,8 @@ async function postJson(url, body) {
 }
 
 function renderCurrent(response) {
+  // The report section stays out of the way until there is a report to show.
+  briefingReport.hidden = false;
   apiStatus.textContent = formatStatus(response.status);
   apiStatus.style.color = response.status === "requires_approval" ? "#e0763f" : "";
   uiState.textContent = response.status === "partial"
@@ -1298,6 +1454,7 @@ function renderApprovals() {
   const pending = approvals.filter((approval) => approval.status === "pending").length;
   approvalCount.textContent = String(pending);
   approvalCount.hidden = pending === 0;
+  updateOverview({ approvals: pending });
   if (approvals.length === 0) {
     approvalList.innerHTML = `
       <div class="all-clear">
@@ -2083,8 +2240,31 @@ const COCKPIT_VIEWS = Object.freeze({
   team: "Équipe IA"
 });
 
+// On a phone the tab bar keeps the four views of every day; the others open
+// from « Plus », which stays lit while one of them is shown.
+const SHEET_VIEWS = Object.freeze(["team", "documents", "quotes", "file"]);
+const moreButton = document.querySelector("#more-button");
+const moreSheet = document.querySelector("#more-sheet");
+
+function toggleMoreSheet(open) {
+  moreSheet.hidden = !open;
+  moreButton.setAttribute?.("aria-expanded", String(open));
+}
+
+moreButton.addEventListener("click", (event) => {
+  event.stopPropagation?.();
+  toggleMoreSheet(moreSheet.hidden);
+});
+globalThis.addEventListener?.("click", (event) => {
+  if (!moreSheet.hidden && !event.target.closest?.("#more-sheet")) {
+    toggleMoreSheet(false);
+  }
+});
+
 function showView(name) {
   const view = Object.hasOwn(COCKPIT_VIEWS, name ?? "") ? name : "director";
+  moreButton.dataset.active = String(SHEET_VIEWS.includes(view));
+  toggleMoreSheet(false);
   if (view === "plans") {
     refreshPlans();
   }
@@ -2116,6 +2296,10 @@ globalThis.addEventListener?.("hashchange", () => showView(globalThis.location.h
 globalThis.addEventListener?.("keydown", (event) => {
   const target = event.target;
   const typing = target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+  if (event.key === "Escape" && !moreSheet.hidden) {
+    toggleMoreSheet(false);
+    moreButton.focus?.();
+  }
   if (event.key === "/" && !typing) {
     event.preventDefault();
     showView("director");
@@ -2372,6 +2556,7 @@ showView(globalThis.location?.hash?.slice(1));
 currentTheme = applyTheme(readStoredTheme());
 renderGreeting();
 renderAgentRoster([]);
+updateOverview({});
 async function loadPanels() {
   await checkAgentStatus();
   refreshPlans();

@@ -269,6 +269,18 @@
   [hidden] {
     display: none !important;
   }
+
+  /* Whoever asks the system for less motion gets none. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }
 
 /* ================= Components ================= */
@@ -324,6 +336,41 @@
 
   .nav-label {
     @apply flex-1 max-md:flex-none;
+  }
+
+  /* « Plus » stays lit while one of the views it opens is shown. */
+  .nav-item[data-active="true"] {
+    @apply bg-white/10 text-white;
+  }
+
+  .nav-item[data-active="true"] .i {
+    @apply text-sage;
+  }
+
+  /* The views a phone's tab bar has no room for, in a sheet above it. */
+  .more-sheet {
+    @apply fixed inset-x-3 bottom-[calc(70px+env(safe-area-inset-bottom))] z-40 flex flex-col gap-0.5 rounded-3xl border border-white/10 bg-sidebar-2 p-2 shadow-float;
+    animation: toast-in 0.2s var(--ease-out-soft) both;
+  }
+
+  .more-sheet-title {
+    @apply px-3 pt-2 pb-1 text-[10.5px] font-semibold tracking-[0.14em] text-sidebar-muted uppercase;
+  }
+
+  .sheet-item {
+    @apply min-h-12 justify-start gap-3 rounded-2xl border-0 bg-transparent px-3 text-[15px] font-medium text-sidebar-ink shadow-none hover:bg-white/8;
+  }
+
+  .sheet-item .i {
+    @apply text-sidebar-muted;
+  }
+
+  .sheet-item[aria-current="page"] {
+    @apply bg-white/10;
+  }
+
+  .sheet-item[aria-current="page"] .i {
+    @apply text-sage;
   }
 
   .nav-badge {
@@ -476,7 +523,293 @@
   }
 
   .all-clear {
-    @apply flex flex-col items-center gap-2 px-4 py-9 text-center text-muted;
+    @apply flex flex-col items-center gap-2 rounded-3xl border border-dashed border-line-strong bg-surface/60 px-4 py-10 text-center text-muted;
+  }
+
+  .all-clear p {
+    @apply max-w-[460px];
+  }
+
+  /* The line under a view's title: what the view is for, and its action. */
+  .view-head {
+    @apply -mt-2 flex flex-wrap items-start justify-between gap-x-6 gap-y-3;
+  }
+
+  .view-head p {
+    @apply max-w-[72ch] min-w-0 flex-1 basis-80 text-[14px] leading-relaxed text-ink-2;
+  }
+
+  /* ---------- The day at a glance ---------- */
+
+  .overview-grid {
+    @apply grid grid-cols-2 gap-3 lg:grid-cols-4;
+  }
+
+  .overview-tile {
+    --tone: var(--brand);
+    --tone-soft: var(--brand-soft);
+    @apply relative block min-h-0 overflow-hidden rounded-3xl border border-line bg-surface p-4 text-left font-normal text-ink shadow-card transition duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface md:p-5;
+  }
+
+  .overview-tile:hover {
+    box-shadow: var(--shadow-float);
+  }
+
+  .overview-tile[data-tone="good"] { --tone: var(--good); --tone-soft: var(--good-soft); }
+  .overview-tile[data-tone="warn"] { --tone: var(--warn); --tone-soft: var(--warn-soft); }
+  .overview-tile[data-tone="danger"] { --tone: var(--danger); --tone-soft: var(--danger-soft); }
+  .overview-tile[data-tone="info"] { --tone: var(--info); --tone-soft: var(--info-soft); }
+
+  .overview-icon {
+    @apply mb-3.5 grid size-9 place-items-center rounded-xl;
+    background: var(--tone-soft);
+    color: var(--tone);
+  }
+
+  .overview-label {
+    @apply block text-[11.5px] font-semibold tracking-[0.08em] text-muted uppercase;
+  }
+
+  .overview-value {
+    @apply mt-1 block font-display text-[34px] leading-none font-semibold tracking-[-0.02em] text-ink tabular-nums md:text-[38px];
+  }
+
+  .overview-tile small {
+    @apply mt-2 block text-[12.5px] leading-snug text-ink-2;
+  }
+
+  .overview-tile:is([data-tone="warn"], [data-tone="danger"]) small {
+    @apply font-semibold;
+    color: var(--tone);
+  }
+
+  .overview-go {
+    @apply absolute top-4 right-4 text-muted opacity-0 transition duration-200 md:top-5 md:right-5;
+  }
+
+  .overview-tile:hover .overview-go,
+  .overview-tile:focus-visible .overview-go {
+    @apply translate-x-0.5 opacity-100;
+  }
+
+  /* ---------- The workshop book ---------- */
+
+  /* A row the thumb scrolls on a phone, a grid from there up. */
+  .stat-tiles {
+    @apply -mx-4 flex gap-2.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none] sm:mx-0 sm:grid sm:grid-cols-3 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-5;
+  }
+
+  .stat-tiles:empty {
+    display: none;
+  }
+
+  .stat-tile {
+    @apply min-h-0 flex-col items-start justify-start gap-0 rounded-2xl border border-line bg-surface px-4 py-3 text-left font-normal text-ink-2 shadow-none hover:border-line-strong hover:bg-surface-2 max-sm:min-w-[124px] max-sm:shrink-0;
+  }
+
+  .stat-tile strong {
+    @apply font-display text-[26px] leading-none font-semibold text-ink tabular-nums;
+  }
+
+  .stat-tile span {
+    @apply mt-2 text-[13px] font-semibold text-ink;
+  }
+
+  .stat-tile small {
+    @apply text-[11.5px] leading-snug text-muted max-sm:hidden;
+  }
+
+  .stat-tile.is-alert strong {
+    @apply text-danger;
+  }
+
+  .stat-tile[aria-pressed="true"] {
+    @apply border-brand bg-brand-soft hover:border-brand hover:bg-brand-soft;
+    box-shadow: inset 0 0 0 1px var(--brand);
+  }
+
+  .empty-filter {
+    @apply rounded-3xl border border-dashed border-line-strong px-5 py-10 text-center text-muted;
+  }
+
+  .order-card {
+    @apply rounded-3xl border border-line bg-surface px-5 pt-5 shadow-card transition md:px-6 md:pt-6;
+  }
+
+  .order-card.is-flagged {
+    @apply border-danger/30;
+  }
+
+  .order-card.is-done {
+    @apply bg-surface-2 shadow-none;
+  }
+
+  .order-head {
+    @apply flex flex-wrap items-start justify-between gap-x-6 gap-y-3;
+  }
+
+  .order-head > div:first-child {
+    @apply flex-1 basis-64;
+  }
+
+  .order-head h3 {
+    @apply font-display text-[21px] leading-tight font-semibold tracking-[-0.01em] break-words;
+  }
+
+  .order-object {
+    @apply mt-0.5 text-[13.5px] text-ink-2 break-words;
+  }
+
+  .order-figures {
+    @apply flex flex-col items-end gap-1.5 text-right max-sm:w-full max-sm:flex-row max-sm:flex-wrap max-sm:items-center max-sm:justify-between max-sm:text-left;
+  }
+
+  .order-figures strong {
+    @apply text-[17px] font-semibold text-ink tabular-nums;
+  }
+
+  .order-figures strong small {
+    @apply text-[11.5px] font-semibold text-muted;
+  }
+
+  .order-figures > small {
+    @apply max-w-[300px] text-[12px] text-muted max-sm:max-w-none max-sm:basis-full;
+  }
+
+  /* The seven steps as a route: a dot per step, joined by a line that turns
+     green once the step before is finished. */
+  .order-route {
+    @apply relative mt-5 grid list-none grid-cols-7 p-0;
+  }
+
+  .route-step {
+    @apply relative flex min-w-0 flex-col items-center gap-1.5 text-center;
+  }
+
+  .route-step + .route-step::before {
+    content: "";
+    @apply absolute top-[13px] right-1/2 h-0.5 w-full bg-line-strong;
+  }
+
+  .route-step.done + .route-step::before {
+    @apply bg-good;
+  }
+
+  .route-dot {
+    @apply relative z-[1] grid size-7 place-items-center rounded-full border-2 border-line-strong bg-surface text-[11.5px] font-bold text-muted transition;
+  }
+
+  .route-dot .i {
+    @apply size-3.5;
+    stroke-width: 2.6;
+  }
+
+  .route-step.done .route-dot {
+    @apply border-good bg-good;
+    color: var(--surface);
+  }
+
+  .route-step.active .route-dot {
+    @apply border-brand bg-brand-soft text-brand;
+    box-shadow: 0 0 0 4px var(--ring);
+  }
+
+  .route-step.late .route-dot {
+    @apply border-warn bg-warn-soft text-warn;
+  }
+
+  .route-step.blocked .route-dot {
+    @apply border-danger bg-danger;
+    color: var(--surface);
+  }
+
+  .route-label {
+    @apply line-clamp-2 px-0.5 text-[11.5px] leading-tight text-muted max-sm:hidden;
+  }
+
+  .route-step.is-current .route-label {
+    @apply font-semibold text-ink;
+  }
+
+  .route-step.blocked .route-label {
+    @apply font-semibold text-danger;
+  }
+
+  .order-progress {
+    @apply mt-4 text-[13px] text-ink-2;
+  }
+
+  .order-progress b {
+    @apply font-semibold text-ink;
+  }
+
+  .order-alerts {
+    @apply mt-3 flex list-none flex-col gap-1.5 p-0;
+  }
+
+  .order-alerts li {
+    @apply flex items-start gap-2 rounded-xl bg-danger-soft px-3 py-2 text-[13px] font-medium text-danger;
+  }
+
+  .order-alerts li.warn {
+    @apply bg-warn-soft text-warn;
+  }
+
+  .order-alerts .i {
+    @apply mt-px size-4 shrink-0;
+  }
+
+  .order-panels {
+    @apply mt-4 border-t border-line;
+  }
+
+  .order-panel + .order-panel {
+    @apply border-t border-line;
+  }
+
+  .order-panel > summary {
+    @apply flex min-h-[52px] cursor-pointer list-none items-center gap-2.5 text-[13.5px] font-semibold text-ink;
+  }
+
+  .order-panel > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .order-panel > summary .i {
+    @apply text-muted;
+  }
+
+  .order-panel > summary small {
+    @apply truncate text-[12.5px] font-normal text-muted;
+  }
+
+  .order-panel > summary::after {
+    content: "";
+    @apply mr-1 ml-auto size-2 shrink-0 rotate-45 border-r-2 border-b-2 border-muted transition-transform;
+  }
+
+  .order-panel[open] > summary::after {
+    @apply rotate-[225deg];
+  }
+
+  .order-panel > summary:hover {
+    @apply text-brand;
+  }
+
+  .order-panel-body {
+    @apply pb-5;
+  }
+
+  .order-panel-body > .track-steps {
+    @apply mt-0;
+  }
+
+  .order-journal {
+    @apply flex flex-col gap-1 pl-4 text-[12.5px] text-ink-2;
+  }
+
+  .order-journal small {
+    @apply text-muted;
   }
 
   .all-clear .badge {
@@ -1480,23 +1813,15 @@
 
   /* What the client sees of an order: the link and the published photos. */
   .client-access {
-    @apply mt-3.5 rounded-xl border border-dashed border-line-strong bg-surface-2 p-3.5;
+    @apply rounded-2xl border border-line bg-surface-2 p-3.5;
   }
 
-  .client-access header {
-    @apply flex flex-wrap items-start justify-between gap-3;
+  .client-access-head {
+    @apply flex flex-wrap items-center justify-between gap-3;
   }
 
-  .client-access header > div:first-child {
-    @apply min-w-0 flex-1 basis-64;
-  }
-
-  .client-access strong {
-    @apply flex items-center gap-1.5 text-[13.5px] font-semibold;
-  }
-
-  .client-access header small {
-    @apply mt-0.5 block text-[12.5px] text-muted;
+  .client-access-head p {
+    @apply min-w-0 flex-1 basis-64 text-[12.5px] text-muted;
   }
 
   .client-access-actions {
@@ -1513,7 +1838,12 @@
 
   .client-photos img,
   .client-photo-placeholder {
-    @apply grid size-11 shrink-0 place-items-center rounded-md bg-surface-3 object-cover text-muted;
+    @apply grid size-11 shrink-0 place-items-center overflow-hidden rounded-md bg-surface-3 object-cover text-muted;
+  }
+
+  /* A picture that does not load shows its frame, not its alt text spilling out. */
+  .client-photos img {
+    @apply text-[0px];
   }
 
   .client-photos li > span:not(.client-photo-placeholder) {

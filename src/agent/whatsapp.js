@@ -6,7 +6,7 @@
 // (Meta), a dedicated number and message templates approved by Meta for every
 // message the company starts; that is a separate decision, not this module.
 
-export const MESSAGE_KINDS = Object.freeze(["relance_devis", "relance_paiement", "retard", "commande_fournisseur", "sav", "autre"]);
+export const MESSAGE_KINDS = Object.freeze(["relance_devis", "relance_paiement", "retard", "commande_fournisseur", "sav", "tache_equipe", "autre"]);
 
 export const WHATSAPP_MESSAGE_TOOL = Object.freeze({
   type: "function",

@@ -7,6 +7,10 @@ import { createMvpToolRegistry } from "./tools/mvp-tools.js";
 import { createFilePlanStore } from "./agent/plan-store.js";
 import { createFileConversationStore } from "./agent/conversation-store.js";
 import { createFileWorkshopStore } from "./agent/workshop-book.js";
+import { createFileCashBook } from "./agent/cash-book.js";
+import { createFileImprovementBook } from "./agent/improvement-book.js";
+import { createFileTeamBook } from "./agent/team-book.js";
+import { SPECIALIST_IDS } from "./agent/agent-team.js";
 
 // The first statement, because everything below reads process.env: the port, the
 // configuration, the repository factory and the workflow client. Without this the
@@ -42,7 +46,23 @@ const conversationStore = createFileConversationStore();
 // The workshop book, in data/atelier.json: what happened to each order.
 const workshopStore = createFileWorkshopStore();
 
-const app = buildApi({ repository, config, toolRegistry, planStore, conversationStore, workshopStore });
+// The cash book (data/caisse.json), the anomalies and their rules
+// (data/amelioration.json), and the team with its feed (data/equipe.json).
+const cashBook = createFileCashBook();
+const improvementBook = createFileImprovementBook();
+const teamBook = createFileTeamBook({ agents: SPECIALIST_IDS });
+
+// A late or blocked step is analysed by its agent as soon as it is found;
+// HKIDS_AUTO_ANALYSIS=off leaves it for the direction to ask.
+const autoAnalyseAnomalies = process.env.HKIDS_AUTO_ANALYSIS !== "off";
+
+const app = buildApi({ repository, config, toolRegistry, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, autoAnalyseAnomalies });
+
+// Every half hour, the workshop book is read for steps that became late.
+const sweep = setInterval(() => {
+  app.sweepAnomalies().catch((error) => app.log.error(error));
+}, 30 * 60 * 1000);
+sweep.unref();
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.once(signal, async () => {

@@ -12,6 +12,24 @@ import { STEP_LABELS, createMemoryPlanStore } from "./plan-store.js";
 import { createMemoryConversationStore } from "./conversation-store.js";
 import { WORKSHOP_STATUSES, WORKSHOP_STATUS_LABELS, WORKSHOP_STEPS, WORKSHOP_STEP_IDS, WorkshopError, createMemoryWorkshopStore, createWorkshop, frenchDay } from "./workshop-book.js";
 import { OBJECTIVE_INDICATORS, currentMonth, measureObjective } from "./sales-objective.js";
+import { createMemoryCashBook } from "./cash-book.js";
+import { createMemoryImprovementBook } from "./improvement-book.js";
+import { createMemoryTeamBook } from "./team-book.js";
+import {
+  ANOMALIES_TOOL,
+  CASH_BALANCE_TOOL,
+  LINK_MEMBER_TOOL,
+  REPORT_ANOMALY_TOOL,
+  agentBriefing,
+  cashBalance,
+  cashTools,
+  describeAnomaly,
+  directorBriefing,
+  improvementTools,
+  linkMember,
+  listAnomalies,
+  reportAnomaly
+} from "./company-tools.js";
 
 // The Director as a conversational agent, and as a director: it carries the
 // strategy, not the execution. Hiba gives it an objective — "je veux 100 000 DH
@@ -350,6 +368,10 @@ const TOOLS = Object.freeze([
   ADVANCE_ORDER_TOOL,
   CLIENT_LINK_TOOL,
   PUBLISH_PHOTO_TOOL,
+  CASH_BALANCE_TOOL,
+  ANOMALIES_TOOL,
+  REPORT_ANOMALY_TOOL,
+  LINK_MEMBER_TOOL,
   {
     type: "function",
     name: "point_entreprise",
@@ -365,7 +387,7 @@ const TOOLS = Object.freeze([
   }
 ]);
 
-function instructions(today) {
+function instructions(today, briefing = []) {
   return [
     "Tu es le Director IA de H KIDS, fabricant marocain de mobilier et d'aménagement sur mesure pour enfants (Marrakech).",
     `Tu parles à la direction (Hiba, Omar). Nous sommes le ${today}. Réponds toujours en français, de façon courte, claire et chaleureuse.`,
@@ -389,6 +411,13 @@ function instructions(today) {
     "Chaîne d'une vente : devis → bon de commande (le client accepte) → bon de livraison → factures (acompte, solde). Chaque document cite le devis : écris toujours son numéro dans la mission. « Le client a accepté le devis 170 », « fais le BC du devis 170 » → commercial : « bon de commande à partir du devis n° 170 », avec les conditions et l'acompte s'ils sont donnés ; il reprend le devis lui-même, rien n'est à ressaisir. « Facture l'acompte du devis 170 », « facture le solde » → finance avec le numéro du devis. « Où en est le devis 170 », « qu'est-ce qui reste à facturer » → suivre_dossier toi-même, puis réponds avec l'étape, le déjà facturé, le reste à facturer et les anomalies. Une facture refusée parce qu'elle facturerait la vente deux fois ne se contourne pas : dis-le à la direction avec les factures déjà faites.",
     "",
     `Atelier, après le bon de commande : chaque bon de commande validé suit ${WORKSHOP_STEPS.length} étapes (${WORKSHOP_STEPS.map((step) => step.label).join(", ")}). « Le BC 166 est en découpe », « l'assemblage du 166 est fini », « la peinture est bloquée, il manque la laque », « Youssef s'occupe de l'étude, prévue pour le 12/11 » → c'est un fait que la direction t'annonce : avancer_commande toi-même, un appel par étape (une étape commencée = en_cours ; les étapes d'avant qu'elle dit finies = terminee), puis confirme en une ligne avec l'avancement. « Où en est la commande de Mme X / le BC 166 », « quelles commandes sont en retard » → carnet_atelier, puis l'étape en cours, l'avancement (calculé sur les étapes terminées, jamais estimé), les dates prévues et les alertes. Planning, priorités ou charge de l'atelier → production. Suite de la chaîne, tout de suite après l'avoir enregistrée : contrôle qualité terminé → commercial : préparer le message au client pour convenir de la date de livraison et d'installation ; livraison et installation terminée → finance : facture du solde du devis (si le dossier n'est pas soldé). Pour tout point de situation ou toute question d'urgences, regarde aussi carnet_atelier et signale les commandes bloquées ou en retard.`,
+    "",
+    "Caisse et bilan du jour : chaque entrée ou sortie d'argent que la direction t'annonce (« j'ai reçu 3 000 DH d'acompte de Mme Alami en espèces pour le devis 170 », « j'ai payé 1 200 DH de laque à Sodipeint par chèque », « j'ai versé les salaires, 18 000 DH par virement », « il y a 5 000 DH en caisse au départ ») → confie-la tout de suite au Directeur financier (finance) avec deleguer_a_un_agent, en recopiant tout : entrée ou sortie, montant, ce que c'est, moyen de paiement, qui a payé ou a été payé, numéro du devis ou du BC, la date si ce n'est pas aujourd'hui, et qui l'annonce. Plusieurs mouvements annoncés ensemble → une seule mission qui les liste tous. Finance l'enregistre au journal de caisse et te rend le bilan du jour : réponds en deux ou trois lignes (mouvement n°, montant, solde du jour, et pour un client ce qui reste à encaisser sur sa vente). « Où en est la caisse », « bilan du jour », « combien j'ai en caisse » → bilan_caisse toi-même. Pour tout point de situation, donne aussi le bilan de caisse du jour. Une erreur de saisie (« ce n'était pas 3 000 mais 2 000 ») → finance : annuler le mouvement et enregistrer le bon.",
+    "",
+    "Amélioration continue : un retard ou un blocage au carnet d'atelier devient une anomalie, analysée automatiquement par son responsable (production pour l'atelier, achats pour l'approvisionnement) qui en trouve la cause et propose une règle pour qu'elle ne se reproduise pas. Un problème que la direction rapporte (client mécontent, fournisseur en retard, erreur de livraison, paiement oublié) → signaler_anomalie, puis deleguer_a_un_agent au responsable : « Analyse l'anomalie n° X : … Trouve la cause dans tes données et enregistre-la avec analyser_anomalie, avec la règle qui l'aurait évitée. » Une anomalie encore « à analyser » que la direction veut voir tout de suite → même délégation. Une règle ne s'applique qu'une fois validée par la direction dans le cockpit (vue Amélioration) : dis toujours qu'elle attend sa validation, jamais qu'elle est en place. Les règles actives sont données à leurs agents à chaque mission ; signale quand une situation en déclenche une.",
+    "",
+    "Équipe : chaque agent est relié à une vraie personne de l'équipe, qui reçoit ses tâches et rend compte. « Youssef, le chef d'atelier, s'occupe de la production, son numéro est 06… » → relier_responsable. Ce que la personne rapporte (« Youssef dit que la découpe est finie ») est un fait annoncé : enregistre-le comme tel. Chaque agent sait ce que les autres ont fait : le fil d'activité de l'équipe lui est donné à chaque mission.",
+    "",
     "Suivi client : « envoie le lien de suivi au client du BC 166 » → lien_suivi_client (creer), puis commercial : message WhatsApp au client avec ce lien, recopié tel quel dans la mission. « Mets cette photo sur le suivi du BC 166 » → publier_photo_suivi avec le numéro de la photo et une légende courte et neutre ; une photo n'est publiée que si la direction le demande. « Coupe le lien du BC 166 » → lien_suivi_client (desactiver). Le client ne voit jamais les notes, les responsables ni la raison d'un blocage.",
     "",
     "Photos : la direction peut joindre des photos (numérotées « photo n° 1 », « photo n° 2 »… dans la conversation). Regarde-les et dis en une phrase ce que tu y vois d'utile (meuble, modèle, coloris, finitions, dimensions apparentes, texte lisible). Les responsables ne voient pas les photos : recopie dans la mission ce qu'elles montrent. Pour un bon de commande, écris aussi « visuel : photo n° X » dans la mission pour que la photo figure sur le document. N'invente rien que la photo ne montre pas.",
@@ -410,7 +439,8 @@ function instructions(today) {
     "- Vouvoie toujours la direction. H KIDS est au Maroc : dirhams, droit et organismes marocains uniquement.",
     "- Réponse : d'abord l'essentiel en quelques lignes (chiffres, noms, décisions), ensuite le détail par responsable, chacun sous un titre court.",
     "",
-    `Informations société : ${HKIDS_FIXED_IDENTITY.companyName}, ${HKIDS_FIXED_IDENTITY.addressLines.join(" ").replace(/^Adresse : /, "")}, tél. ${HKIDS_FIXED_IDENTITY.phone}, ${HKIDS_FIXED_IDENTITY.email}. TVA 20 %.`
+    `Informations société : ${HKIDS_FIXED_IDENTITY.companyName}, ${HKIDS_FIXED_IDENTITY.addressLines.join(" ").replace(/^Adresse : /, "")}, tél. ${HKIDS_FIXED_IDENTITY.phone}, ${HKIDS_FIXED_IDENTITY.email}. TVA 20 %.`,
+    ...(briefing.length > 0 ? ["", ...briefing] : [])
   ].join("\n");
 }
 
@@ -423,12 +453,12 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
   const loadCatalogue = createCatalogueLoader(cataloguePath ? { path: cataloguePath } : {});
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, publicBaseUrl, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, autoAnalyse, publicBaseUrl, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -445,17 +475,101 @@ export function createDirectorAgent({
   planStore = createMemoryPlanStore(),
   conversationStore = createMemoryConversationStore(),
   workshopStore = createMemoryWorkshopStore(),
+  cashBook = null,
+  improvementBook = null,
+  teamBook = null,
+  // A new anomaly found in the workshop book is handed to its agent at once,
+  // in the background, for its cause and a rule. Off unless the server asks.
+  autoAnalyse = false,
   publicBaseUrl = "",
   clock = () => new Date(),
   clientFactory = defaultClientFactory
 } = {}) {
   let resolvedClient = client;
   const workshop = createWorkshop({ store: workshopStore, documentService, clock, publicBaseUrl });
+  const books = Object.freeze({
+    cash: cashBook ?? createMemoryCashBook({ clock }),
+    improvement: improvementBook ?? createMemoryImprovementBook({ clock }),
+    team: teamBook ?? createMemoryTeamBook({ clock, agents: SPECIALIST_IDS })
+  });
+  const configured = () => Boolean(client) || apiKey !== "";
+  // The context every tool runs in; a turn adds its own outcome and user.
+  const baseContext = (outcome, userId = null) => ({
+    documentService,
+    runDirectorRequest,
+    loadCatalogue,
+    clock,
+    userId,
+    outcome,
+    team: { client: resolvedClient, model, toolRegistry, executeTool },
+    checkCoherence,
+    loadObjectiveRecords,
+    planStore,
+    workshop,
+    books,
+    onNewAnomalies: (found) => queueAnalyses(found)
+  });
+  const freshOutcome = (photos = []) => ({ documents: [], directorResponse: null, agentRuns: [], messages: [], plan: null, planId: null, alerts: null, photos });
+
+  // One analysis at a time, in the background; a failure is written to the
+  // team feed and never reaches whoever read the book.
+  let analyses = Promise.resolve();
+  function queueAnalyses(found) {
+    if (!autoAnalyse || !configured() || found.length === 0) {
+      return;
+    }
+    for (const anomaly of found) {
+      analyses = analyses.then(() => analyse(anomaly.number)).catch(async (error) => {
+        await books.team.log({ agent: anomaly.owner, kind: "amelioration", text: `Analyse automatique de l'anomalie n° ${anomaly.number} impossible : ${error.message}`, by: "director" }).catch(() => {});
+      });
+    }
+  }
+
+  // The agent in charge of an anomaly gets it as a mission, with the order's
+  // full record when it comes from the workshop, and answers with its cause
+  // and a rule through analyser_anomalie.
+  async function analyse(reference) {
+    resolvedClient ??= await clientFactory({ apiKey });
+    const { anomalies } = await books.improvement.state();
+    const anomaly = anomalies.find((entry) => String(entry.number) === String(reference) || entry.id === reference);
+    if (!anomaly) {
+      throw new DirectorAgentError(`Aucune anomalie n° ${reference}.`, "AGENT_ANOMALY_NOT_FOUND");
+    }
+    const context = baseContext(freshOutcome());
+    const agentId = SPECIALISTS[anomaly.owner] ? anomaly.owner : "production";
+    const record = anomaly.orderNumber ? await readWorkshopBook({ numero: anomaly.orderNumber }, { ...context, onNewAnomalies: () => {} }) : null;
+    const mission = [
+      `Analyse l'anomalie n° ${anomaly.number} : ${anomaly.fact}.`,
+      "Trouve sa cause réelle dans tes données et enregistre-la avec analyser_anomalie, avec la règle concrète qui l'aurait évitée (quand, action, qui) ; si une règle active couvre déjà cette cause, cite-la. Si la cause n'apparaît pas dans les données, dis exactement quoi demander à l'équipe et propose quand même la règle de prévention la plus utile.",
+      ...(record?.ok ? [`Dossier du BC ${anomaly.orderNumber} au carnet d'atelier : ${JSON.stringify(record)}`] : [])
+    ].join("\n");
+    const run = await runAgent(agentId, mission, context);
+    return Object.freeze({ anomaly: describeAnomaly((await books.improvement.state()).anomalies.find((entry) => entry.id === anomaly.id)), agent: run.label, answer: run.answer });
+  }
 
   return Object.freeze({
     model,
-    isConfigured() {
-      return Boolean(client) || apiKey !== "";
+    isConfigured: configured,
+    books,
+
+    analyseAnomaly(reference) {
+      if (!configured()) {
+        throw new DirectorAgentError("L'agent IA n'est pas configuré : renseignez OPENAI_API_KEY dans .env.", "AGENT_NOT_CONFIGURED");
+      }
+      return analyse(reference);
+    },
+
+    // The workshop book as just read: new anomalies are recorded, and handed
+    // to their agents when the automatic analysis is on.
+    async syncAnomalies(orders) {
+      const found = await books.improvement.sync(orders);
+      queueAnalyses(found);
+      return found;
+    },
+
+    // For tests and for a clean shutdown: resolves once queued analyses ran.
+    idle() {
+      return analyses;
     },
 
     async chat({ message, photos = [], files = [], conversationId = null, userId = null } = {}) {
@@ -489,12 +603,14 @@ export function createDirectorAgent({
         ] };
       items.push(userItem);
 
-      const outcome = { documents: [], directorResponse: null, agentRuns: [], messages: [], plan: null, planId: null, alerts: null, photos: conversationPhotos };
+      const outcome = freshOutcome(conversationPhotos);
+      const context = baseContext(outcome, userId);
+      const briefing = await directorBriefing(context);
       let reply = "";
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
         const response = await callModel(resolvedClient, {
           model,
-          instructions: instructions(formatDate(clock())),
+          instructions: instructions(formatDate(clock()), briefing),
           input: items,
           tools: TOOLS
         });
@@ -505,19 +621,7 @@ export function createDirectorAgent({
           reply = outputText(response);
           break;
         }
-        const results = await Promise.all(calls.map((call) => runTool(call, {
-            documentService,
-            runDirectorRequest,
-            loadCatalogue,
-            clock,
-            userId,
-            outcome,
-            team: { client: resolvedClient, model, toolRegistry, executeTool },
-            checkCoherence,
-            loadObjectiveRecords,
-            planStore,
-            workshop
-          })));
+        const results = await Promise.all(calls.map((call) => runTool(call, context)));
         calls.forEach((call, index) => {
           items.push({ type: "function_call_output", call_id: call.call_id, output: JSON.stringify(results[index]) });
         });
@@ -673,6 +777,18 @@ async function runTool(call, context) {
     if (call.name === PUBLISH_PHOTO_TOOL.name) {
       return await publishPhoto(args, context, "director");
     }
+    if (call.name === CASH_BALANCE_TOOL.name) {
+      return await cashBalance(args, context);
+    }
+    if (call.name === ANOMALIES_TOOL.name) {
+      return await listAnomalies(args, context);
+    }
+    if (call.name === REPORT_ANOMALY_TOOL.name) {
+      return await reportAnomaly(args, context, "director");
+    }
+    if (call.name === LINK_MEMBER_TOOL.name) {
+      return await linkMember(args, context, "director");
+    }
     if (call.name === "deleguer_a_un_agent") {
       return withCoherence(await delegate(args, context), context);
     }
@@ -687,7 +803,7 @@ async function runTool(call, context) {
 
 // Builds the document exactly as the documents panel would send it, then asks
 // the document service for the same preview a person would get.
-async function prepareDocument(args, { documentService, clock, outcome }, preparedBy = null) {
+async function prepareDocument(args, { documentService, clock, outcome, books }, preparedBy = null) {
   const documentType = DOCUMENT_TYPES[args.type];
   if (!documentType) {
     return { ok: false, erreur: "Type de document inconnu." };
@@ -770,6 +886,13 @@ async function prepareDocument(args, { documentService, clock, outcome }, prepar
 
   outcome.documents.push(Object.freeze({ input, preview, preparedBy, replaces }));
   const document = preview.document;
+  await books?.team.log({
+    agent: preparedBy ?? "director",
+    kind: "document",
+    text: `${replaces ? "Correction du" : "Aperçu"} ${args.type.replace(/_/g, " ")} n° ${document.documentNumber} pour ${document.client.name} (${document.totals.totalTtc} DH TTC), à valider par la direction.`,
+    ref: `${args.type}:${document.documentNumber}`,
+    by: preparedBy ?? "director"
+  });
   return {
     ok: true,
     type: args.type,
@@ -817,8 +940,10 @@ async function followDossier(args, { documentService }) {
 
 // The workshop book in the words of the agents: the whole book in short, or one
 // order in full.
-async function readWorkshopBook(args, { workshop }) {
+async function readWorkshopBook(args, context) {
+  const { workshop } = context;
   const number = text(args.numero);
+  const anomalies = await syncAnomalies(context);
   if (number) {
     const order = await workshop.order(number);
     if (!order) {
@@ -843,7 +968,8 @@ async function readWorkshopBook(args, { workshop }) {
       factures: order.invoices,
       deja_facture: order.invoiced,
       reste_a_facturer: order.remaining ?? "inconnu",
-      journal: order.journal.slice(-10).map((entry) => `${frenchDay(entry.at.slice(0, 10))} ${entry.at.slice(11, 16)} (${entry.by}) ${entry.text}`)
+      journal: order.journal.slice(-10).map((entry) => `${frenchDay(entry.at.slice(0, 10))} ${entry.at.slice(11, 16)} (${entry.by}) ${entry.text}`),
+      ...anomalyLines(anomalies.filter((anomaly) => anomaly.orderNumber === order.number))
     };
   }
   const book = await workshop.book();
@@ -853,8 +979,25 @@ async function readWorkshopBook(args, { workshop }) {
   return {
     ok: true,
     commandes: book.map(orderLine),
-    alertes: book.flatMap((order) => order.alerts.map((alert) => `BC ${order.number} (${order.client}) : ${alert}`))
+    alertes: book.flatMap((order) => order.alerts.map((alert) => `BC ${order.number} (${order.client}) : ${alert}`)),
+    ...anomalyLines(anomalies)
   };
+}
+
+// The workshop book read is also where anomalies are found: a step blocked or
+// late becomes one, and its agent is asked for the cause when the automatic
+// analysis is on. Returns the anomalies still open.
+async function syncAnomalies({ workshop, books, onNewAnomalies }) {
+  if (!books) {
+    return [];
+  }
+  const found = await books.improvement.sync(await workshop.book());
+  onNewAnomalies?.(found);
+  return (await books.improvement.state()).anomalies.filter((anomaly) => anomaly.status !== "levee");
+}
+
+function anomalyLines(anomalies) {
+  return anomalies.length > 0 ? { anomalies_ouvertes: anomalies.map(describeAnomaly) } : {};
 }
 
 function orderLine(order) {
@@ -871,7 +1014,7 @@ function orderLine(order) {
   };
 }
 
-async function advanceOrder(args, { workshop }, by) {
+async function advanceOrder(args, { workshop, books }, by) {
   try {
     const { changed, order } = await workshop.advance(text(args.numero), text(args.etape), {
       status: text(args.statut),
@@ -881,6 +1024,9 @@ async function advanceOrder(args, { workshop }, by) {
       note: text(args.note),
       by
     });
+    if (changed) {
+      await books?.team.log({ agent: SPECIALISTS[by] ? by : "production", kind: "atelier", text: `BC ${order.number} (${order.client}) — ${order.journal.at(-1).text}`, ref: `bc:${order.number}`, by });
+    }
     return {
       ok: true,
       enregistre: changed ? order.journal.at(-1).text : "rien de nouveau : le carnet disait déjà cela",
@@ -982,16 +1128,27 @@ async function consultDocument(args, { documentService }) {
 }
 
 async function delegate(args, context) {
-  const { team, clock, outcome } = context;
   if (!SPECIALISTS[args.agent]) {
     return { ok: false, erreur: "Agent inconnu." };
   }
-  if (!team.toolRegistry || typeof team.executeTool !== "function") {
+  if (!context.team.toolRegistry || typeof context.team.executeTool !== "function") {
     return { ok: false, erreur: "L'équipe d'agents n'est pas disponible." };
   }
+  const run = await runAgent(args.agent, text(args.mission), context);
+  await markAgentStepDone(run, context);
+  return { ok: true, agent: run.label, outils_utilises: run.tools, reponse: run.answer };
+}
+
+// One agent at work on one mission, with the tools of its trade, told who it
+// answers to, what the team did lately and the rules in force. What it was
+// asked and what it answered go to the team's feed.
+async function runAgent(agentId, mission, context) {
+  const { team, clock, outcome, books } = context;
   const run = await runSpecialist({
-    agentId: args.agent,
-    mission: text(args.mission),
+    agentId,
+    mission,
+    extraTools: books ? [...(agentId === "finance" ? cashTools(context, agentId) : []), ...improvementTools(context, agentId)] : [],
+    briefing: books ? await agentBriefing(agentId, context) : [],
     callModel: (payload) => callModel(team.client, payload),
     model: team.model,
     today: formatDate(clock()),
@@ -1014,8 +1171,8 @@ async function delegate(args, context) {
     prepareMessage: (messageArgs, agentId) => recordMessage(messageArgs, agentId, outcome)
   });
   outcome.agentRuns.push(run);
-  await markAgentStepDone(run, context);
-  return { ok: true, agent: run.label, outils_utilises: run.tools, reponse: run.answer };
+  await books?.team.log({ agent: agentId, kind: "mission", text: mission, detail: run.answer, by: "director" });
+  return run;
 }
 
 function planSteps(steps) {

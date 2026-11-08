@@ -439,6 +439,11 @@ async function sendToAgent(message) {
     if (response.plan) {
       refreshPlans();
     }
+    // Finance may have recorded money, an agent analysed an anomaly or moved
+    // an order: the other views follow without a reload.
+    refreshCash();
+    refreshImprovement();
+    refreshTeam();
     if (response.directorResponse) {
       state.current = { ...response.directorResponse, receivedAt: Date.now() };
       state.history = [state.current, ...state.history].slice(0, 8);
@@ -550,11 +555,12 @@ function formatIsoDay(value) {
 }
 
 // --- The day at a glance --------------------------------------------------------
-// Four cards on the briefing, read from what the other views already load: the
-// validations waiting, the orders in the workshop, the plans under way and the
-// orders installed. Each opens its view.
+// Six cards on the briefing, read from what the other views already load: the
+// cash of the day, the validations waiting, the orders in the workshop, the
+// plans under way, the rules to decide and the orders installed. Each opens
+// its view.
 const overviewGrid = document.querySelector("#overview");
-const overview = { approvals: null, orders: null, plans: null };
+const overview = { approvals: null, orders: null, plans: null, cash: null, improvement: null };
 overviewGrid.addEventListener("click", (event) => {
   const tile = event.target.closest?.("[data-goto]");
   if (tile) {
@@ -567,14 +573,24 @@ overviewGrid.addEventListener("click", (event) => {
 
 function updateOverview(part) {
   Object.assign(overview, part);
-  const { approvals, orders, plans } = overview;
+  const { approvals, orders, plans, cash, improvement } = overview;
   const plural = (count, word) => `${count} ${word}${count > 1 ? "s" : ""}`;
+  const toDecide = improvement?.rules.filter((rule) => rule.status === "proposee").length ?? 0;
+  const toAnalyse = improvement?.anomalies.filter((anomaly) => anomaly.status === "a_analyser").length ?? 0;
+  const inForce = improvement?.rules.filter((rule) => rule.status === "active").length ?? 0;
+  const moved = cash ? cash.entries.filter((entry) => !entry.cancelled).length : 0;
   const watch = orders?.filter((order) => order.alerts.length > 0).length ?? 0;
   const installed = orders?.filter((order) => order.finished) ?? [];
   const toInvoice = installed.filter((order) => order.remaining > 0).length;
   const activePlans = plans?.filter((plan) => plan.status === "active") ?? [];
   const overdue = activePlans.reduce((sum, plan) => sum + (plan.progress?.overdue ?? 0), 0);
   const tiles = [
+    {
+      view: "cash", icon: "wallet", label: "Caisse du jour", money: true,
+      value: cash ? formatShortDh(cash.closing) : null,
+      tone: cash && cash.closing < 0 ? "danger" : "brand",
+      hint: cash === null ? "chargement…" : moved > 0 ? `+\u00a0${formatShortDh(cash.totalIn)} · −\u00a0${formatShortDh(cash.totalOut)} aujourd'hui` : "aucun mouvement aujourd'hui"
+    },
     {
       view: "approvals", icon: "shield", label: "À valider", value: approvals,
       tone: approvals > 0 ? "warn" : "good",
@@ -592,6 +608,11 @@ function updateOverview(part) {
       hint: plans === null ? "chargement…" : overdue > 0 ? `${plural(overdue, "étape")} en retard` : activePlans.length > 0 ? "dans les temps" : "donnez un objectif au Director"
     },
     {
+      view: "improvement", icon: "bulb", label: "Amélioration", value: improvement ? toDecide : null,
+      tone: toDecide > 0 ? "warn" : toAnalyse > 0 ? "info" : "good",
+      hint: improvement === null ? "chargement…" : toDecide > 0 ? `${plural(toDecide, "règle")} à valider` : toAnalyse > 0 ? `${plural(toAnalyse, "anomalie")} en analyse` : inForce > 0 ? `${plural(inForce, "règle")} en vigueur` : "aucune anomalie"
+    },
+    {
       view: "orders", filter: "done", icon: "check-circle", label: "Installées", value: orders ? installed.length : null,
       tone: toInvoice > 0 ? "warn" : "good",
       hint: orders === null ? "chargement…" : toInvoice > 0 ? `${plural(toInvoice, "commande")} reste à facturer` : installed.length > 0 ? "facturées en totalité" : "aucune pour l'instant"
@@ -601,7 +622,7 @@ function updateOverview(part) {
     <button type="button" class="overview-tile" data-tone="${tile.tone}" data-goto="${tile.view}" ${tile.filter ? `data-filter="${tile.filter}"` : ""}>
       <span class="overview-icon">${icon(tile.icon)}</span>
       <span class="overview-label">${escapeHtml(tile.label)}</span>
-      <strong class="overview-value">${tile.value ?? "–"}</strong>
+      <strong class="overview-value ${tile.money ? "is-money" : ""}">${tile.value ?? "–"}</strong>
       <small>${escapeHtml(tile.hint)}</small>
       <span class="overview-go" aria-hidden="true">${icon("arrow")}</span>
     </button>
@@ -716,6 +737,552 @@ async function sendPlanChange(url, method, body) {
     showToast(error.message, "warn");
   }
   await refreshPlans();
+}
+
+// --- Cash view ----------------------------------------------------------------
+// The cash book Finance keeps: the balance of a day, its movements, the month by
+// category, and a form for a movement typed by hand. Every figure comes from the
+// server; this view adds nothing up.
+const cashBalanceGrid = document.querySelector("#cash-balance");
+const cashEntries = document.querySelector("#cash-entries");
+const cashEntriesLabel = document.querySelector("#cash-entries-label");
+const cashMonth = document.querySelector("#cash-month");
+const cashMonthLabel = document.querySelector("#cash-month-label");
+const cashDay = document.querySelector("#cash-day");
+const cashForm = document.querySelector("#cash-form");
+const cashAmount = document.querySelector("#cash-amount");
+const cashCategory = document.querySelector("#cash-category");
+const cashLabel = document.querySelector("#cash-label");
+const cashMethod = document.querySelector("#cash-method");
+const cashDate = document.querySelector("#cash-date");
+const cashParty = document.querySelector("#cash-party");
+const cashQuote = document.querySelector("#cash-quote");
+const cashOrder = document.querySelector("#cash-order");
+const cashSubmit = document.querySelector("#cash-submit");
+const cashView = { data: null, kind: "entree" };
+
+document.querySelector("#refresh-cash").addEventListener("click", () => refreshCash());
+cashDay.addEventListener("change", () => refreshCash());
+cashForm.addEventListener("change", (event) => {
+  if (event.target?.name === "kind") {
+    cashView.kind = event.target.value;
+    fillCashChoices();
+  }
+});
+cashForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await submitCashMovement(false);
+});
+cashEntries.addEventListener("click", async (event) => {
+  const button = event.target.closest?.("[data-cash-cancel]");
+  if (!button) {
+    return;
+  }
+  const reason = globalThis.prompt?.("Pourquoi annuler ce mouvement ? Il restera au journal, barré.") ?? "";
+  if (reason.trim() === "") {
+    return;
+  }
+  try {
+    await postJson(`/api/cash/${button.dataset.cashCancel}/cancel`, { reason });
+    showToast("Mouvement annulé.");
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshCash();
+});
+
+function localIsoDay(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+async function refreshCash() {
+  try {
+    const day = cashDay.value ? `?day=${encodeURIComponent(cashDay.value)}` : "";
+    const response = await fetch(`/api/cash${day}`, { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("Impossible de charger la caisse.");
+    }
+    renderCash(await response.json());
+  } catch (error) {
+    cashBalanceGrid.innerHTML = card("Caisse indisponible", escapeHtml(error.message), "warning");
+  }
+}
+
+function renderCash(data) {
+  cashView.data = data;
+  const { day, month, today } = data;
+  if (day.day === today) {
+    updateOverview({ cash: day });
+  }
+  cashDay.value ||= day.day;
+  cashDate.value ||= today;
+  cashDate.max = today;
+  cashDay.max = today;
+  fillCashChoices();
+  const isToday = day.day === today;
+  const when = isToday ? "aujourd'hui" : `le ${formatIsoDay(day.day)}`;
+  const live = day.entries.filter((entry) => !entry.cancelled);
+  const count = (kind) => live.filter((entry) => entry.kind === kind && entry.category !== data.categories.opening).length;
+  cashBalanceGrid.innerHTML = `
+    <div class="cash-tile"><span>Solde d'ouverture</span><strong>${formatDhNbsp(day.opening)}</strong><small>au début ${isToday ? "de la journée" : `du ${escapeHtml(formatIsoDay(day.day))}`}${day.carriedIn > 0 ? ` · + ${formatDhNbsp(day.carriedIn)} de solde de départ` : ""}</small></div>
+    <div class="cash-tile" data-tone="good"><span>Entrées</span><strong>+\u00a0${formatDhNbsp(day.totalIn)}</strong><small>${count("entree")} mouvement${count("entree") > 1 ? "s" : ""} ${when}</small></div>
+    <div class="cash-tile" data-tone="danger"><span>Sorties</span><strong>−\u00a0${formatDhNbsp(day.totalOut)}</strong><small>${count("sortie")} mouvement${count("sortie") > 1 ? "s" : ""} ${when}</small></div>
+    <div class="cash-tile is-closing" data-tone="${day.closing < 0 ? "danger" : "brand"}"><span>Solde de clôture</span><strong>${formatDhNbsp(day.closing)}</strong><small>dont espèces ${formatDhNbsp(day.closingCash)} · banque ${formatDhNbsp(day.closingBank)}</small></div>
+  `;
+
+  cashEntriesLabel.textContent = isToday ? "Mouvements du jour" : `Mouvements du ${formatIsoDay(day.day)}`;
+  cashEntries.innerHTML = day.entries.length > 0
+    ? [...day.entries].reverse().map((entry) => cashEntryLine(entry)).join("")
+    : `<li class="cash-empty">Aucun mouvement ${escapeHtml(when)}. Annoncez-le au Director : « J'ai payé 1 200 DH de laque par chèque » ou « J'ai reçu l'acompte de Mme Alami, 2 700 DH en espèces ».</li>`;
+
+  cashMonthLabel.textContent = `${new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric" }).format(new Date(`${month.month}-15T12:00:00`))}`;
+  const largest = Math.max(1, ...month.byCategory.map((entry) => entry.amount));
+  cashMonth.innerHTML = `
+    <dl class="cash-month-figures">
+      <div><dt>Entrées</dt><dd class="text-good">+\u00a0${formatDhNbsp(month.totalIn)}</dd></div>
+      <div><dt>Sorties</dt><dd class="text-danger">−\u00a0${formatDhNbsp(month.totalOut)}</dd></div>
+      <div><dt>Résultat du mois</dt><dd>${formatDhNbsp(month.net)}</dd></div>
+      <div><dt>Solde en fin de période</dt><dd>${formatDhNbsp(month.closing)}</dd></div>
+    </dl>
+    ${month.byCategory.length > 0 ? `
+      <ul class="cash-bars">
+        ${month.byCategory.map((entry) => `
+          <li data-kind="${entry.kind}">
+            <span>${escapeHtml(entry.label)} <small>(${entry.count})</small></span>
+            <b>${entry.kind === "entree" ? "+" : "−"}\u00a0${formatDhNbsp(entry.amount)}</b>
+            <i style="width:${Math.max(3, Math.round((entry.amount / largest) * 100))}%"></i>
+          </li>
+        `).join("")}
+      </ul>` : '<p class="muted text-[13px]">Aucun mouvement ce mois-ci.</p>'}
+  `;
+}
+
+function cashEntryLine(entry) {
+  const meta = [
+    entry.categoryLabel,
+    entry.methodLabel,
+    entry.party,
+    entry.quoteNumber ? `devis n° ${entry.quoteNumber}` : "",
+    entry.orderNumber ? `BC n° ${entry.orderNumber}` : "",
+    entry.announcedBy && entry.announcedBy !== "cockpit" ? `annoncé par ${entry.announcedBy}` : "saisi au cockpit"
+  ].filter(Boolean);
+  return `
+    <li class="cash-entry ${entry.cancelled ? "is-cancelled" : ""}" data-kind="${entry.kind}">
+      <span class="cash-sign" aria-hidden="true">${icon(entry.kind === "entree" ? "plus" : "minus")}</span>
+      <div class="min-w-0 flex-1">
+        <strong>${escapeHtml(entry.label)}</strong>
+        <small>n° ${entry.number} · ${escapeHtml(meta.join(" · "))}</small>
+        ${entry.cancelled ? `<small class="cash-cancel-reason">Annulé : ${escapeHtml(entry.cancelled.reason)}</small>` : ""}
+      </div>
+      <b class="cash-amount">${entry.kind === "entree" ? "+" : "−"}\u00a0${formatDhNbsp(entry.amount)}</b>
+      ${entry.cancelled ? "" : `<button type="button" class="icon-button cash-cancel" data-cash-cancel="${entry.number}" title="Annuler ce mouvement">${icon("x")}<span class="visually-hidden">Annuler le mouvement n° ${entry.number}</span></button>`}
+    </li>
+  `;
+}
+
+// The categories follow the direction of the movement; the opening balance is
+// offered once, at the end of the takings.
+function fillCashChoices() {
+  const data = cashView.data;
+  if (!data) {
+    return;
+  }
+  const kind = cashView.kind;
+  const options = Object.entries(data.categories[kind] ?? {});
+  if (kind === "entree") {
+    options.push([data.categories.opening, "Solde de départ de la caisse"]);
+  }
+  const chosen = options.some(([value]) => value === cashCategory.value) ? cashCategory.value : options[0]?.[0];
+  cashCategory.innerHTML = options.map(([value, label]) => `<option value="${escapeHtml(value)}" ${value === chosen ? "selected" : ""}>${escapeHtml(label)}</option>`).join("");
+  if (!cashMethod.dataset.filled) {
+    cashMethod.innerHTML = Object.entries(data.methods).map(([value, label]) => `<option value="${escapeHtml(value)}" ${value === "especes" ? "selected" : ""}>${escapeHtml(label)}</option>`).join("");
+    cashMethod.dataset.filled = "true";
+  }
+  cashSubmit.className = `primary mt-4 w-full justify-center ${kind === "sortie" ? "is-out" : ""}`;
+}
+
+async function submitCashMovement(confirmDuplicate) {
+  const body = {
+    kind: cashView.kind,
+    amount: Number(String(cashAmount.value).replace(",", ".")),
+    category: cashCategory.value,
+    label: cashLabel.value,
+    method: cashMethod.value,
+    day: cashDate.value,
+    party: cashParty.value,
+    quoteNumber: cashQuote.value,
+    orderNumber: cashOrder.value,
+    confirmDuplicate
+  };
+  cashSubmit.disabled = true;
+  try {
+    const response = await fetch("/api/cash", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify(body)
+    });
+    const payload = await response.json();
+    if (response.status === 409 && !confirmDuplicate) {
+      cashSubmit.disabled = false;
+      if (globalThis.confirm?.(`${payload.error}\n\nEnregistrer quand même ce second mouvement ?`)) {
+        await submitCashMovement(true);
+      }
+      return;
+    }
+    if (!response.ok) {
+      throw new Error(payload.error ?? "Le mouvement n'a pas été enregistré.");
+    }
+    showToast(`${body.kind === "entree" ? "Entrée" : "Sortie"} n° ${payload.entry.number} enregistrée.`);
+    for (const field of [cashAmount, cashLabel, cashParty, cashQuote, cashOrder]) {
+      field.value = "";
+    }
+    cashDay.value = payload.entry.day;
+    renderCash({ ...cashView.data, day: payload.day });
+    await refreshCash();
+  } catch (error) {
+    showToast(error.message, "warn");
+  } finally {
+    cashSubmit.disabled = false;
+  }
+}
+
+// --- Continuous improvement view -------------------------------------------------
+// The anomalies, what caused them, and the rules that keep them from coming
+// back: proposed by the agent in charge, in force once the direction says so.
+const IMPROVEMENT_FILTERS = Object.freeze([
+  { id: "decide", label: "À valider", hint: "règles proposées par les agents" },
+  { id: "analyse", label: "À analyser", hint: "en attente de leur cause" },
+  { id: "open", label: "Anomalies ouvertes", hint: "pas encore levées" },
+  { id: "rules", label: "Règles en vigueur", hint: "données aux agents à chaque mission" }
+]);
+const improvementStats = document.querySelector("#improvement-stats");
+const improvementList = document.querySelector("#improvement-list");
+const improvementCount = document.querySelector("#improvement-count");
+const improvementView = { data: null, filter: null, busy: new Set() };
+document.querySelector("#refresh-improvement").addEventListener("click", () => refreshImprovement());
+improvementStats.addEventListener("click", (event) => {
+  const tile = event.target.closest?.("[data-filter]");
+  if (tile) {
+    improvementView.filter = improvementView.filter === tile.dataset.filter ? null : tile.dataset.filter;
+    renderImprovement(improvementView.data);
+  }
+});
+improvementList.addEventListener("click", async (event) => {
+  const target = event.target.closest?.("[data-rule-decision], [data-analyse], [data-lift]");
+  if (!target) {
+    return;
+  }
+  if (target.dataset.ruleDecision) {
+    const [number, decision] = target.dataset.ruleDecision.split(":");
+    const question = { refuser: "Refuser cette règle ? Elle ne sera pas appliquée.", retirer: "Retirer cette règle ? Les agents ne l'appliqueront plus." }[decision];
+    if (question && !globalThis.confirm?.(question)) {
+      return;
+    }
+    await sendImprovementChange(`/api/improvement/rules/${number}/decision`, { decision }, { valider: "Règle validée : elle s'applique dès la prochaine mission.", refuser: "Règle refusée.", retirer: "Règle retirée." }[decision]);
+  }
+  if (target.dataset.lift) {
+    await sendImprovementChange(`/api/improvement/anomalies/${target.dataset.lift}/lift`, {}, "Anomalie levée.");
+  }
+  if (target.dataset.analyse) {
+    const number = target.dataset.analyse;
+    improvementView.busy.add(number);
+    renderImprovement(improvementView.data);
+    try {
+      const result = await postJson(`/api/improvement/anomalies/${number}/analyse`, {});
+      showToast(`${result.agent} a analysé l'anomalie n° ${number}.`);
+    } catch (error) {
+      showToast(error.message, "warn");
+    }
+    improvementView.busy.delete(number);
+    await refreshImprovement();
+  }
+});
+
+async function refreshImprovement() {
+  try {
+    const response = await fetch("/api/improvement", { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("Impossible de charger l'amélioration continue.");
+    }
+    renderImprovement(await response.json());
+  } catch (error) {
+    improvementList.innerHTML = card("Amélioration indisponible", escapeHtml(error.message), "warning");
+  }
+}
+
+async function sendImprovementChange(url, body, success) {
+  try {
+    await postJson(url, body);
+    showToast(success);
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshImprovement();
+}
+
+function renderImprovement(data) {
+  if (!data) {
+    return;
+  }
+  improvementView.data = data;
+  updateOverview({ improvement: data });
+  const { anomalies, rules } = data;
+  const proposed = rules.filter((rule) => rule.status === "proposee");
+  const inForce = rules.filter((rule) => rule.status === "active");
+  const open = anomalies.filter((anomaly) => anomaly.status !== "levee");
+  const waiting = anomalies.filter((anomaly) => anomaly.status === "a_analyser");
+  improvementCount.textContent = String(proposed.length);
+  improvementCount.hidden = proposed.length === 0;
+  if (anomalies.length === 0 && rules.length === 0) {
+    improvementStats.innerHTML = "";
+    improvementList.innerHTML = `
+      <div class="all-clear">
+        <span class="badge">${icon("bulb")}</span>
+        <h3>Aucune anomalie pour le moment</h3>
+        <p>Dès qu'une étape d'atelier est bloquée ou dépasse sa date prévue, elle apparaît ici et son agent en cherche la cause. Vous pouvez aussi signaler un problème au Director : « le client du BC 166 s'est plaint d'une rayure à la livraison ».</p>
+      </div>
+    `;
+    return;
+  }
+  const counts = { decide: proposed.length, analyse: waiting.length, open: open.length, rules: inForce.length };
+  improvementStats.innerHTML = IMPROVEMENT_FILTERS.map((entry) => `
+    <button type="button" class="stat-tile ${entry.id === "decide" && counts.decide > 0 ? "is-alert" : ""}" data-filter="${entry.id}" aria-pressed="${improvementView.filter === entry.id}">
+      <strong>${counts[entry.id]}</strong><span>${escapeHtml(entry.label)}</span><small>${escapeHtml(entry.hint)}</small>
+    </button>
+  `).join("");
+
+  const anomalyOf = (number) => anomalies.find((anomaly) => anomaly.number === number);
+  const show = (id) => improvementView.filter === null || improvementView.filter === id;
+  const sections = [];
+  if (show("decide") && proposed.length > 0) {
+    sections.push(improvementSection("Règles à valider", "Proposées par les agents après une anomalie. Elles ne s'appliquent qu'une fois validées.", proposed.map((rule) => ruleCard(rule, anomalyOf)).join("")));
+  }
+  const listed = improvementView.filter === "analyse" ? waiting : open;
+  if ((show("open") || show("analyse")) && listed.length > 0) {
+    sections.push(improvementSection(improvementView.filter === "analyse" ? "À analyser" : "Anomalies ouvertes", "Un retard ou un blocage du carnet d'atelier, ou un problème signalé au Director.", listed.map((anomaly) => anomalyCard(anomaly, data.analysis)).join("")));
+  }
+  if (show("rules") && inForce.length > 0) {
+    sections.push(improvementSection("Règles en vigueur", "Données à leur agent, et au Director, à chaque mission.", inForce.map((rule) => ruleCard(rule, anomalyOf)).join("")));
+  }
+  const past = [...anomalies.filter((anomaly) => anomaly.status === "levee"), ...rules.filter((rule) => ["refusee", "retiree"].includes(rule.status))];
+  if (improvementView.filter === null && past.length > 0) {
+    sections.push(`
+      <details class="panel improvement-history">
+        <summary><strong>Historique</strong><small>${past.length} élément${past.length > 1 ? "s" : ""} : anomalies levées, règles refusées ou retirées</small></summary>
+        <ul>${past.map((entry) => `<li><small>${escapeHtml(formatIsoDay((entry.liftedAt ?? entry.decidedAt ?? "").slice(0, 10)))}</small> ${entry.fact ? `Anomalie n° ${entry.number} levée : ${escapeHtml(entry.fact)}` : `Règle n° ${entry.number} « ${escapeHtml(entry.title)} » ${entry.status === "refusee" ? "refusée" : "retirée"}`}</li>`).join("")}</ul>
+      </details>
+    `);
+  }
+  improvementList.innerHTML = sections.length > 0 ? sections.join("") : '<p class="empty-filter">Rien dans cette catégorie.</p>';
+}
+
+function improvementSection(title, hint, body) {
+  return `
+    <section class="improvement-section">
+      <header><h3>${escapeHtml(title)}</h3><p>${escapeHtml(hint)}</p></header>
+      <div class="flex flex-col gap-3">${body}</div>
+    </section>
+  `;
+}
+
+function ruleCard(rule, anomalyOf) {
+  const origins = (rule.anomalies ?? []).map(anomalyOf).filter(Boolean);
+  const recurrences = rule.recurrences?.length ?? 0;
+  return `
+    <article class="rule-card" data-status="${rule.status}">
+      <header>
+        ${avatar(rule.owner)}
+        <div class="min-w-0 flex-1">
+          <span class="eyebrow">Règle n° ${rule.number} · ${escapeHtml(formatAgent(rule.owner))}</span>
+          <h4>${escapeHtml(rule.title)}</h4>
+        </div>
+        <span class="tag ${rule.status === "active" ? "ok" : rule.status === "proposee" ? "warning" : ""}">${escapeHtml(improvementView.data.labels.rules[rule.status] ?? rule.status)}</span>
+      </header>
+      <dl class="rule-body">
+        ${rule.trigger ? `<div><dt>Quand</dt><dd>${escapeHtml(rule.trigger)}</dd></div>` : ""}
+        <div><dt>Action</dt><dd>${escapeHtml(rule.action)}</dd></div>
+        ${origins.map((anomaly) => `<div><dt>Né de</dt><dd>Anomalie n° ${anomaly.number} : ${escapeHtml(anomaly.fact)}${anomaly.cause ? ` — <em>cause : ${escapeHtml(anomaly.cause)}</em>` : ""}</dd></div>`).join("")}
+      </dl>
+      ${recurrences > 0 ? `<p class="rule-warning">${icon("alert")}Revenue ${recurrences} fois malgré cette règle : à renforcer.</p>` : ""}
+      ${rule.status === "proposee" ? `
+        <div class="doc-actions">
+          <button type="button" class="primary" data-rule-decision="${rule.number}:valider">${icon("check")}Valider la règle</button>
+          <button type="button" class="secondary" data-rule-decision="${rule.number}:refuser">${icon("x")}Refuser</button>
+        </div>` : ""}
+      ${rule.status === "active" ? `<div class="doc-actions"><button type="button" class="link-button" data-rule-decision="${rule.number}:retirer">Retirer la règle</button></div>` : ""}
+    </article>
+  `;
+}
+
+function anomalyCard(anomaly, canAnalyse) {
+  const busy = improvementView.busy.has(String(anomaly.number));
+  return `
+    <article class="anomaly-card" data-kind="${escapeHtml(anomaly.kind)}">
+      <span class="anomaly-icon" aria-hidden="true">${icon(anomaly.kind === "retard" ? "clock" : anomaly.kind === "blocage" ? "alert" : "bulb")}</span>
+      <div class="min-w-0 flex-1">
+        <span class="eyebrow">Anomalie n° ${anomaly.number} · ${escapeHtml(anomaly.kind)} · le ${escapeHtml(formatIsoDay(anomaly.detectedAt.slice(0, 10)))}</span>
+        <p class="anomaly-fact">${escapeHtml(anomaly.fact)}</p>
+        ${anomaly.cause
+          ? `<p class="anomaly-cause"><b>Cause</b> (${escapeHtml(formatAgent(anomaly.analysedBy))}) : ${escapeHtml(anomaly.cause)}${anomaly.rule ? ` · règle n° ${anomaly.rule}` : ""}</p>`
+          : `<p class="anomaly-cause muted">${busy ? "Analyse en cours…" : `En attente de l'analyse de ${escapeHtml(formatAgent(anomaly.owner))}.`}</p>`}
+      </div>
+      <div class="anomaly-actions">
+        ${anomaly.status === "a_analyser" && canAnalyse ? `<button type="button" class="secondary ${busy ? "is-loading" : ""}" data-analyse="${anomaly.number}" ${busy ? "disabled" : ""}>${icon("sparkles")}${busy ? "Analyse…" : "Analyser maintenant"}</button>` : ""}
+        ${anomaly.source === "signalee" ? `<button type="button" class="link-button" data-lift="${anomaly.number}">Marquer réglée</button>` : ""}
+      </div>
+    </article>
+  `;
+}
+
+// --- Team view ------------------------------------------------------------------
+// Each agent with the person it answers to, the missions it carries, the rules
+// it applies and what it did lately; beside it, the whole team's feed.
+const ACTIVITY_LABELS = Object.freeze({ mission: "Mission", caisse: "Caisse", atelier: "Atelier", document: "Document", amelioration: "Amélioration", equipe: "Équipe" });
+const teamFeed = document.querySelector("#team-feed");
+const teamView = { data: null, responded: new Set() };
+document.querySelector("#refresh-team").addEventListener("click", () => refreshTeam());
+agentRoster.addEventListener("submit", async (event) => {
+  const formNode = event.target.closest?.("[data-member-form]");
+  if (!formNode) {
+    return;
+  }
+  event.preventDefault();
+  const read = (name) => formNode.querySelector(`[name='${name}']`)?.value ?? "";
+  await saveMember(formNode.dataset.memberForm, { name: read("name"), role: read("role"), phone: read("phone") });
+});
+agentRoster.addEventListener("click", async (event) => {
+  const unlink = event.target.closest?.("[data-member-unlink]");
+  if (unlink && globalThis.confirm?.("Défaire le lien entre cet agent et cette personne ?")) {
+    await saveMember(unlink.dataset.memberUnlink, { name: "", role: "", phone: "" });
+  }
+  const send = event.target.closest?.("[data-send-missions]");
+  if (send) {
+    globalThis.open?.(send.dataset.sendMissions, "_blank", "noopener");
+  }
+});
+
+async function refreshTeam() {
+  try {
+    const response = await fetch("/api/team", { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("Impossible de charger l'équipe.");
+    }
+    teamView.data = await response.json();
+    renderTeam();
+  } catch (error) {
+    teamFeed.innerHTML = `<li class="muted">${escapeHtml(error.message)}</li>`;
+  }
+}
+
+async function saveMember(agentId, member) {
+  try {
+    const response = await fetch(`/api/team/${encodeURIComponent(agentId)}/member`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify(member)
+    });
+    if (!response.ok) {
+      throw new Error((await response.json()).error ?? "Le lien n'a pas été enregistré.");
+    }
+    showToast(member.name ? `${formatAgent(agentId)} est relié à ${member.name}.` : "Lien défait.");
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshTeam();
+}
+
+// The agents who answered the last request are marked; the cards come from the
+// server once loaded, from the roster before that.
+function renderAgentRoster(activeAgents) {
+  teamView.responded = new Set(activeAgents);
+  renderTeam();
+}
+
+function renderTeam() {
+  const agents = teamView.data?.agents ?? AGENT_ROSTER.filter((agent) => agent.id !== "director").map((agent) => ({ id: agent.id, label: formatAgent(agent.id), mission: agent.role, member: null, missions: [], rules: [], activity: [] }));
+  agentRoster.innerHTML = agents.map((agent) => teamCard(agent)).join("");
+  const feed = teamView.data?.activity ?? [];
+  teamFeed.innerHTML = feed.length > 0
+    ? feed.map((entry) => feedLine(entry)).join("")
+    : '<li class="muted text-[13px]">Rien encore. Chaque mission, mouvement de caisse ou étape d\'atelier s\'inscrira ici.</li>';
+}
+
+function teamCard(agent) {
+  const roster = AGENT_ROSTER.find((entry) => entry.id === agent.id);
+  const member = agent.member;
+  const missionsText = agent.missions.map((mission) => `• ${mission.task}${mission.dueDate ? ` (avant le ${formatIsoDay(mission.dueDate)})` : ""}`).join("\n");
+  const message = member ? `Bonjour ${member.name},\n\nVoici vos tâches H-KIDS (${agent.label}) :\n${missionsText}\n\nMerci de me dire où vous en êtes.\nL'équipe H-KIDS` : "";
+  const waLink = member?.phone && agent.missions.length > 0 ? `https://wa.me/${member.phone}?text=${encodeURIComponent(message)}` : "";
+  return `
+    <article class="team-card ${teamView.responded.has(agent.id) ? "has-responded" : ""}">
+      <header>
+        ${avatar(agent.id, "lg")}
+        <div class="min-w-0 flex-1">
+          <h3>${escapeHtml(agent.label)}</h3>
+          <p>${escapeHtml(agent.mission)}</p>
+          ${roster?.parent ? `<small class="muted">↳ sous ${escapeHtml(roster.parent)}</small>` : ""}
+        </div>
+        ${teamView.responded.has(agent.id) ? '<span class="tag ok">a répondu</span>' : ""}
+      </header>
+      <div class="team-member ${member ? "" : "is-empty"}">
+        ${icon("user-check")}
+        <div class="min-w-0 flex-1">
+          ${member
+            ? `<strong>${escapeHtml(member.name)}</strong><small>${escapeHtml([member.role, member.phone ? `+${member.phone}` : "numéro à renseigner"].filter(Boolean).join(" · "))}</small>`
+            : "<strong>Aucun responsable relié</strong><small>Dites au Director : « Youssef, le chef d'atelier, s'occupe de la production »</small>"}
+        </div>
+        <details class="team-edit">
+          <summary>${member ? "Modifier" : "Relier"}</summary>
+          <form data-member-form="${escapeHtml(agent.id)}" class="team-edit-form">
+            <label>Nom<input name="name" value="${escapeHtml(member?.name ?? "")}" required></label>
+            <label>Fonction<input name="role" value="${escapeHtml(member?.role ?? "")}" placeholder="chef d'atelier"></label>
+            <label>WhatsApp<input name="phone" value="${escapeHtml(member?.phone ? `+${member.phone}` : "")}" placeholder="06 12 34 56 78" inputmode="tel"></label>
+            <div class="flex flex-wrap gap-2">
+              <button type="submit" class="primary">${icon("check")}Enregistrer</button>
+              ${member ? `<button type="button" class="link-button" data-member-unlink="${escapeHtml(agent.id)}">Défaire le lien</button>` : ""}
+            </div>
+          </form>
+        </details>
+      </div>
+      ${agent.missions.length > 0 ? `
+        <div class="team-block">
+          <h4>Missions en cours <span class="tag info">${agent.missions.length}</span></h4>
+          <ul>${agent.missions.map((mission) => `<li><span>${escapeHtml(mission.task)}</span><small>Plan n° ${mission.plan}${mission.dueDate ? ` · avant le <span class="${mission.overdue ? "late" : ""}">${escapeHtml(formatIsoDay(mission.dueDate))}</span>` : ""}</small></li>`).join("")}</ul>
+          ${waLink ? `<button type="button" class="whatsapp-button" data-send-missions="${escapeHtml(waLink)}">${icon("send")}Envoyer ses tâches à ${escapeHtml(member.name)}</button>` : ""}
+        </div>` : ""}
+      ${agent.rules.length > 0 ? `
+        <div class="team-block">
+          <h4>Règles appliquées <span class="tag ok">${agent.rules.length}</span></h4>
+          <ul>${agent.rules.map((rule) => `<li><span>${escapeHtml(rule.title)}</span><small>${escapeHtml(rule.action)}</small></li>`).join("")}</ul>
+        </div>` : ""}
+      ${agent.activity.length > 0 ? `
+        <div class="team-block">
+          <h4>Dernière activité</h4>
+          <ul>${agent.activity.slice(0, 3).map((entry) => `<li><span>${escapeHtml(entry.text)}</span><small>${escapeHtml(formatStamp(entry.at))} · ${escapeHtml(ACTIVITY_LABELS[entry.kind] ?? entry.kind)}</small></li>`).join("")}</ul>
+        </div>` : ""}
+    </article>
+  `;
+}
+
+function feedLine(entry) {
+  return `
+    <li class="feed-line" data-kind="${escapeHtml(entry.kind)}">
+      ${avatar(entry.agent)}
+      <div class="min-w-0 flex-1">
+        <small>${escapeHtml(formatAgent(entry.agent))} · ${escapeHtml(ACTIVITY_LABELS[entry.kind] ?? entry.kind)} · ${escapeHtml(formatStamp(entry.at))}</small>
+        <p>${escapeHtml(entry.text)}</p>
+        ${entry.detail ? `<details><summary>Réponse</summary><div>${formatAgentText(entry.detail)}</div></details>` : ""}
+      </div>
+    </li>
+  `;
+}
+
+function formatStamp(iso) {
+  const date = new Date(iso);
+  const sameDay = localIsoDay(date) === localIsoDay();
+  return sameDay
+    ? `aujourd'hui ${new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(date)}`
+    : new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
 // --- Workshop book view -------------------------------------------------------
@@ -1098,6 +1665,7 @@ const MESSAGE_KIND_LABELS = Object.freeze({
   retard: "Retard",
   commande_fournisseur: "Commande fournisseur",
   sav: "SAV",
+  tache_equipe: "Tâche pour l'équipe",
   autre: "Message"
 });
 
@@ -1429,23 +1997,6 @@ function renderAgents(response) {
       </article>
     `;
   }).join("");
-}
-
-function renderAgentRoster(activeAgents) {
-  const active = new Set(["director", ...activeAgents]);
-  agentRoster.innerHTML = AGENT_ROSTER.map((agent) => `
-    <article class="agent-chip ${active.has(agent.id) ? "active" : ""}">
-      <header>
-        ${avatar(agent.id, "lg")}
-        <div>
-          <strong>${escapeHtml(formatAgent(agent.id))}</strong>
-          ${agent.parent ? `<small>↳ sous ${escapeHtml(agent.parent)}</small>` : '<small>Agent spécialisé</small>'}
-        </div>
-        ${active.has(agent.id) && agent.id !== "director" ? '<span class="tag ok">a répondu</span>' : ""}
-      </header>
-      <p>${escapeHtml(agent.role)}</p>
-    </article>
-  `).join("");
 }
 
 function renderApprovals() {
@@ -2227,13 +2778,25 @@ function formatDh(value) {
   }).format(Number(value)).replace(/\u202f/g, " ")} DH`;
 }
 
+// An amount that never breaks across two lines.
+function formatDhNbsp(value) {
+  return formatDh(value).replace(/ /g, "\u00a0");
+}
+
+// For a tile read at a glance: whole dirhams.
+function formatShortDh(value) {
+  return `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 }).format(Number(value)).replace(/[\u202f ]/g, "\u00a0")}\u00a0DH`;
+}
+
 // The cockpit is one page with several views. The view is kept in the URL hash
 // so a reload, or a link sent to a colleague, lands on the same screen.
 const COCKPIT_VIEWS = Object.freeze({
   director: "Briefing du jour",
   approvals: "Validations",
   plans: "Plans d'action",
+  cash: "Caisse",
   orders: "Carnet d'atelier",
+  improvement: "Amélioration continue",
   documents: "Documents H-KIDS",
   quotes: "Préparation de devis",
   file: "Dossier commercial",
@@ -2241,8 +2804,9 @@ const COCKPIT_VIEWS = Object.freeze({
 });
 
 // On a phone the tab bar keeps the four views of every day; the others open
-// from « Plus », which stays lit while one of them is shown.
-const SHEET_VIEWS = Object.freeze(["team", "documents", "quotes", "file"]);
+// from « Plus », which stays lit while one of them is shown. The cash of the
+// day is on the briefing's first card.
+const SHEET_VIEWS = Object.freeze(["cash", "improvement", "team", "documents", "quotes", "file"]);
 const moreButton = document.querySelector("#more-button");
 const moreSheet = document.querySelector("#more-sheet");
 
@@ -2270,6 +2834,15 @@ function showView(name) {
   }
   if (view === "orders") {
     refreshOrders();
+  }
+  if (view === "cash") {
+    refreshCash();
+  }
+  if (view === "improvement") {
+    refreshImprovement();
+  }
+  if (view === "team") {
+    refreshTeam();
   }
   document.querySelector("#director-title").textContent = COCKPIT_VIEWS[view];
   document.querySelectorAll("[data-view-panel]").forEach((panel) => {
@@ -2561,6 +3134,8 @@ async function loadPanels() {
   await checkAgentStatus();
   refreshPlans();
   refreshOrders();
+  refreshCash();
+  refreshImprovement();
   renderHistory();
   await refreshApprovals();
 }

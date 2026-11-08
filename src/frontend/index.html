@@ -48,6 +48,9 @@
         <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18.5" cy="12" r="1.2"/></symbol>
         <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
         <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"/></symbol>
+        <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2h5c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/></symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+        <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
         <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="8" ry="2.5"/><path d="M4 5.5v13c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-13M4 12c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5"/></symbol>
       </defs>
     </svg>
@@ -76,10 +79,17 @@
               <svg class="i" aria-hidden="true"><use href="#i-shield"/></svg><span class="nav-label">Validations</span>
               <span class="nav-badge" id="approval-count" hidden>0</span>
             </button>
+            <button type="button" class="nav-item max-md:hidden" data-view="cash">
+              <svg class="i" aria-hidden="true"><use href="#i-wallet"/></svg><span class="nav-label">Caisse</span>
+            </button>
             <p class="nav-caption mx-3 mt-5 mb-1.5 text-[10.5px] font-semibold tracking-[0.14em] text-sidebar-muted/80 uppercase max-md:hidden">Atelier</p>
             <button type="button" class="nav-item" data-view="orders">
               <svg class="i" aria-hidden="true"><use href="#i-wrench"/></svg><span class="nav-label">Commandes</span>
               <span class="nav-badge" id="orders-count" hidden>0</span>
+            </button>
+            <button type="button" class="nav-item max-md:hidden" data-view="improvement">
+              <svg class="i" aria-hidden="true"><use href="#i-bulb"/></svg><span class="nav-label">Amélioration</span>
+              <span class="nav-badge" id="improvement-count" hidden>0</span>
             </button>
             <button type="button" class="nav-item max-md:hidden" data-view="team">
               <svg class="i" aria-hidden="true"><use href="#i-users"/></svg><span class="nav-label">Équipe IA</span>
@@ -102,6 +112,8 @@
 
           <div id="more-sheet" class="more-sheet md:hidden" hidden>
             <p class="more-sheet-title">Plus de vues</p>
+            <button type="button" class="sheet-item" data-view="cash"><svg class="i" aria-hidden="true"><use href="#i-wallet"/></svg>Caisse</button>
+            <button type="button" class="sheet-item" data-view="improvement"><svg class="i" aria-hidden="true"><use href="#i-bulb"/></svg>Amélioration</button>
             <button type="button" class="sheet-item" data-view="team"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg>Équipe IA</button>
             <button type="button" class="sheet-item" data-view="documents"><svg class="i" aria-hidden="true"><use href="#i-file"/></svg>Documents</button>
             <button type="button" class="sheet-item" data-view="quotes"><svg class="i" aria-hidden="true"><use href="#i-receipt"/></svg>Devis</button>
@@ -269,6 +281,98 @@
           </header>
           <div id="orders-filters" class="stat-tiles" role="group" aria-label="Filtrer les commandes"></div>
           <div id="orders-list" class="plans-list"></div>
+        </section>
+
+        <!-- Caisse -->
+        <section class="view flex animate-rise flex-col gap-6" data-view-panel="cash" hidden aria-labelledby="cash-title">
+          <header class="view-head">
+            <h2 id="cash-title" class="visually-hidden">Caisse et bilan du jour</h2>
+            <p>Chaque entrée et sortie d'argent, et le bilan du jour. Annoncez-les simplement au Director (« j'ai reçu 3 000 DH d'acompte de Mme Alami en espèces ») : le Directeur financier les enregistre ici. Vous pouvez aussi les saisir vous-même.</p>
+            <div class="flex items-center gap-2">
+              <label for="cash-day" class="visually-hidden">Jour du bilan</label>
+              <input type="date" id="cash-day" class="cash-day">
+              <button type="button" class="secondary" id="refresh-cash"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg><span class="max-sm:hidden">Rafraîchir</span></button>
+            </div>
+          </header>
+          <div id="cash-balance" class="cash-balance" aria-live="polite"></div>
+          <div class="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_380px] [&>*]:min-w-0">
+            <section class="panel" aria-labelledby="cash-entries-title">
+              <div class="panel-heading">
+                <div>
+                  <h2 id="cash-entries-title"><svg class="i" aria-hidden="true"><use href="#i-receipt"/></svg><span id="cash-entries-label">Mouvements du jour</span></h2>
+                  <p>Une erreur s'annule avec sa raison : la ligne reste au journal, barrée.</p>
+                </div>
+              </div>
+              <ul id="cash-entries" class="cash-entries"></ul>
+            </section>
+            <div class="flex flex-col gap-6 [&>*]:min-w-0">
+              <form id="cash-form" class="panel cash-form" aria-labelledby="cash-form-title">
+                <div class="panel-heading mb-4!">
+                  <div>
+                    <h2 id="cash-form-title"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>Saisir un mouvement</h2>
+                  </div>
+                </div>
+                <div class="cash-kind" role="radiogroup" aria-label="Sens du mouvement">
+                  <label><input type="radio" name="kind" value="entree" checked><span><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>Entrée</span></label>
+                  <label><input type="radio" name="kind" value="sortie"><span><svg class="i" aria-hidden="true"><use href="#i-minus"/></svg>Sortie</span></label>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div class="field col-span-2">
+                    <label for="cash-amount">Montant (DH)</label>
+                    <input id="cash-amount" name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required placeholder="3000">
+                  </div>
+                  <div class="field col-span-2">
+                    <label for="cash-category">Catégorie</label>
+                    <select id="cash-category" name="category"></select>
+                  </div>
+                  <div class="field col-span-2">
+                    <label for="cash-label">Libellé</label>
+                    <input id="cash-label" name="label" placeholder="Acompte 60 % lit cabane">
+                  </div>
+                  <div class="field">
+                    <label for="cash-method">Moyen</label>
+                    <select id="cash-method" name="method"></select>
+                  </div>
+                  <div class="field">
+                    <label for="cash-date">Date</label>
+                    <input id="cash-date" name="day" type="date">
+                  </div>
+                  <div class="field col-span-2">
+                    <label for="cash-party">Client, fournisseur ou salarié</label>
+                    <input id="cash-party" name="party" placeholder="Mme Alami">
+                  </div>
+                  <div class="field">
+                    <label for="cash-quote">Devis n°</label>
+                    <input id="cash-quote" name="quoteNumber" inputmode="numeric" placeholder="170">
+                  </div>
+                  <div class="field">
+                    <label for="cash-order">BC n°</label>
+                    <input id="cash-order" name="orderNumber" inputmode="numeric" placeholder="171">
+                  </div>
+                </div>
+                <button type="submit" class="primary mt-4 w-full justify-center" id="cash-submit"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Enregistrer</button>
+              </form>
+              <section class="panel" aria-labelledby="cash-month-title">
+                <div class="panel-heading mb-4!">
+                  <div>
+                    <h2 id="cash-month-title"><svg class="i" aria-hidden="true"><use href="#i-trend"/></svg><span id="cash-month-label">Le mois</span></h2>
+                  </div>
+                </div>
+                <div id="cash-month"></div>
+              </section>
+            </div>
+          </div>
+        </section>
+
+        <!-- Amélioration continue -->
+        <section class="view flex animate-rise flex-col gap-6" data-view-panel="improvement" hidden aria-labelledby="improvement-title">
+          <header class="view-head">
+            <h2 id="improvement-title" class="visually-hidden">Amélioration continue</h2>
+            <p>Chaque retard ou blocage devient une anomalie : l'agent responsable en cherche la cause et propose une règle pour qu'elle ne se reproduise pas. Une règle ne s'applique qu'une fois que vous l'avez validée ; elle est ensuite donnée à son agent à chaque mission.</p>
+            <button type="button" class="secondary" id="refresh-improvement"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Rafraîchir</button>
+          </header>
+          <div id="improvement-stats" class="stat-tiles stat-tiles-4" role="group" aria-label="Filtrer"></div>
+          <div id="improvement-list" class="plans-list"></div>
         </section>
 
         <!-- Validations -->
@@ -514,9 +618,21 @@
         <section class="view flex animate-rise flex-col gap-6" data-view-panel="team" hidden aria-labelledby="team-title">
           <header class="view-head">
             <h2 id="team-title" class="visually-hidden">Mon équipe IA</h2>
-            <p>Le Director fixe la stratégie et répartit le travail ; chaque responsable n'accède qu'aux données de sa mission. Le Community Manager reporte au Marketing. Les agents marqués « a répondu » ont travaillé sur la dernière demande.</p>
+            <p>Chaque agent est responsable de son métier et relié à une vraie personne de l'équipe, qui reçoit ses tâches et lui rend compte. Le fil montre ce que chacun a fait : chaque agent le lit avant ses missions.</p>
+            <button type="button" class="secondary" id="refresh-team"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Rafraîchir</button>
           </header>
-          <div id="agent-roster" class="agent-roster" aria-label="Agents disponibles"></div>
+          <div class="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px] [&>*]:min-w-0">
+            <div class="@container"><div id="agent-roster" class="team-grid" aria-label="Les agents et leurs responsables"></div></div>
+            <section class="panel xl:sticky xl:top-6" aria-labelledby="team-feed-title">
+              <div class="panel-heading mb-4!">
+                <div>
+                  <h2 id="team-feed-title"><svg class="i" aria-hidden="true"><use href="#i-history"/></svg>Fil de l'équipe</h2>
+                  <p>Missions, caisse, atelier, documents, amélioration.</p>
+                </div>
+              </div>
+              <ol id="team-feed" class="team-feed"></ol>
+            </section>
+          </div>
         </section>
       </main>
     </div>

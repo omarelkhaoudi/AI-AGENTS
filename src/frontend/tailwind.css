@@ -542,7 +542,12 @@
   /* ---------- The day at a glance ---------- */
 
   .overview-grid {
-    @apply grid grid-cols-2 gap-3 lg:grid-cols-4;
+    @apply grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6;
+  }
+
+  /* An amount is longer than a count: smaller, so it fits a phone's tile. */
+  .overview-value.is-money {
+    @apply text-[24px] md:text-[29px];
   }
 
   .overview-tile {
@@ -1901,6 +1906,406 @@
 
   .objective-gauge.reached .progress span {
     @apply bg-good;
+  }
+
+  /* ---------- Cash book ---------- */
+
+  .cash-day {
+    @apply w-auto min-w-0 py-2;
+  }
+
+  .cash-balance {
+    @apply grid grid-cols-2 gap-3 lg:grid-cols-4;
+  }
+
+  .cash-tile {
+    --tone: var(--ink);
+    @apply flex min-w-0 flex-col rounded-3xl border border-line bg-surface p-4 shadow-card md:p-5;
+  }
+
+  .cash-tile[data-tone="good"] { --tone: var(--good); }
+  .cash-tile[data-tone="danger"] { --tone: var(--danger); }
+  .cash-tile[data-tone="brand"] { --tone: var(--brand); }
+
+  .cash-tile span {
+    @apply text-[11.5px] font-semibold tracking-[0.08em] text-muted uppercase;
+  }
+
+  .cash-tile strong {
+    @apply mt-1.5 font-display text-[17px] leading-tight font-semibold tracking-[-0.015em] whitespace-nowrap tabular-nums sm:text-[20px] 2xl:text-[26px];
+    color: var(--tone);
+  }
+
+  .cash-tile small {
+    @apply mt-1.5 text-[12px] leading-snug text-ink-2;
+  }
+
+  .cash-tile.is-closing {
+    @apply border-brand/25 bg-brand-soft;
+  }
+
+  .cash-entries {
+    @apply -mx-2 flex list-none flex-col p-0;
+  }
+
+  .cash-entry {
+    @apply flex items-center gap-3 rounded-2xl px-2 py-3;
+  }
+
+  .cash-entry + .cash-entry {
+    @apply border-t border-line;
+  }
+
+  .cash-sign {
+    @apply grid size-9 shrink-0 place-items-center rounded-xl bg-good-soft text-good;
+  }
+
+  .cash-entry[data-kind="sortie"] .cash-sign {
+    @apply bg-danger-soft text-danger;
+  }
+
+  .cash-sign .i {
+    stroke-width: 2.4;
+  }
+
+  .cash-entry strong {
+    @apply block truncate text-[14px] font-semibold text-ink;
+  }
+
+  .cash-entry small {
+    @apply block text-[12px] leading-snug text-muted;
+  }
+
+  .cash-amount {
+    @apply shrink-0 text-[15px] font-semibold whitespace-nowrap text-good tabular-nums;
+  }
+
+  .cash-entry[data-kind="sortie"] .cash-amount {
+    @apply text-danger;
+  }
+
+  .cash-entry.is-cancelled {
+    @apply opacity-60;
+  }
+
+  .cash-entry.is-cancelled strong,
+  .cash-entry.is-cancelled .cash-amount {
+    @apply text-muted line-through;
+  }
+
+  .cash-entry small.cash-cancel-reason {
+    @apply font-semibold text-warn;
+  }
+
+  .cash-cancel {
+    @apply size-8 min-h-8 w-8 shrink-0 rounded-lg border-transparent text-muted hover:text-danger;
+  }
+
+  .cash-empty {
+    @apply rounded-2xl border border-dashed border-line-strong px-4 py-8 text-center text-[13.5px] text-muted;
+  }
+
+  /* Entry or exit: two halves of one switch. */
+  .cash-kind {
+    @apply mb-4 grid grid-cols-2 gap-1 rounded-2xl bg-surface-3 p-1;
+  }
+
+  .cash-kind input {
+    @apply sr-only;
+  }
+
+  .cash-kind span {
+    @apply flex min-h-10 cursor-pointer items-center justify-center gap-1.5 rounded-xl text-[14px] font-semibold text-muted transition;
+  }
+
+  .cash-kind input:checked + span {
+    @apply bg-surface text-good shadow-sm;
+  }
+
+  .cash-kind label:last-child input:checked + span {
+    @apply text-danger;
+  }
+
+  .cash-kind input:focus-visible + span {
+    @apply outline-2 outline-offset-2 outline-brand-2;
+  }
+
+  .cash-form button.is-out {
+    @apply border-danger bg-danger hover:border-danger hover:bg-danger/90;
+    box-shadow: none;
+  }
+
+  .cash-month-figures {
+    @apply m-0 grid grid-cols-2 gap-x-4 gap-y-3;
+  }
+
+  .cash-month-figures dt {
+    @apply text-[11.5px] font-semibold text-muted;
+  }
+
+  .cash-month-figures dd {
+    @apply m-0 text-[16px] font-semibold text-ink tabular-nums;
+  }
+
+  .cash-bars {
+    @apply mt-5 flex list-none flex-col gap-3 border-t border-line p-0 pt-4;
+  }
+
+  .cash-bars li {
+    @apply grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 text-[13px];
+  }
+
+  .cash-bars span {
+    @apply truncate text-ink-2;
+  }
+
+  .cash-bars b {
+    @apply font-semibold whitespace-nowrap text-good tabular-nums;
+  }
+
+  .cash-bars li[data-kind="sortie"] b {
+    @apply text-danger;
+  }
+
+  .cash-bars i {
+    @apply col-span-2 block h-1.5 rounded-full bg-good/70;
+  }
+
+  .cash-bars li[data-kind="sortie"] i {
+    @apply bg-danger/70;
+  }
+
+  /* ---------- Continuous improvement ---------- */
+
+  .stat-tiles-4 {
+    @apply sm:grid-cols-2 lg:grid-cols-4;
+  }
+
+  .improvement-section > header {
+    @apply mb-3 px-1;
+  }
+
+  .improvement-section h3 {
+    @apply font-display text-[18px] font-semibold tracking-[-0.01em];
+  }
+
+  .improvement-section > header p {
+    @apply mt-0.5 text-[13px] text-muted;
+  }
+
+  .rule-card {
+    @apply rounded-3xl border border-line bg-surface p-5 shadow-card;
+  }
+
+  .rule-card[data-status="proposee"] {
+    @apply border-warn/40;
+    box-shadow: inset 4px 0 0 var(--warn), var(--shadow-card);
+  }
+
+  .rule-card[data-status="active"] {
+    box-shadow: inset 4px 0 0 var(--good), var(--shadow-card);
+  }
+
+  .rule-card > header {
+    @apply flex items-start gap-3;
+  }
+
+  .rule-card h4 {
+    @apply font-display text-[18px] leading-snug font-semibold tracking-[-0.01em] break-words;
+  }
+
+  .rule-body {
+    @apply mt-3 mb-0 flex flex-col gap-2;
+  }
+
+  .rule-body > div {
+    @apply grid gap-x-3 text-[13.5px] sm:grid-cols-[72px_minmax(0,1fr)];
+  }
+
+  .rule-body dt {
+    @apply text-[11.5px] font-semibold tracking-[0.06em] text-muted uppercase sm:pt-0.5;
+  }
+
+  .rule-body dd {
+    @apply m-0 text-ink-2 break-words;
+  }
+
+  .rule-warning {
+    @apply mt-3 flex items-center gap-2 rounded-xl bg-danger-soft px-3 py-2 text-[13px] font-semibold text-danger;
+  }
+
+  .rule-card .doc-actions {
+    @apply mt-4;
+  }
+
+  .anomaly-card {
+    @apply flex flex-wrap items-start gap-3 rounded-3xl border border-line bg-surface p-4 shadow-card md:flex-nowrap md:p-5;
+  }
+
+  .anomaly-icon {
+    @apply grid size-10 shrink-0 place-items-center rounded-2xl bg-warn-soft text-warn;
+  }
+
+  .anomaly-card[data-kind="blocage"] .anomaly-icon {
+    @apply bg-danger-soft text-danger;
+  }
+
+  .anomaly-card[data-kind="retard"] .anomaly-icon {
+    @apply bg-warn-soft text-warn;
+  }
+
+  .anomaly-fact {
+    @apply text-[14.5px] font-semibold text-ink break-words;
+  }
+
+  .anomaly-cause {
+    @apply mt-1 text-[13px] text-ink-2 break-words;
+  }
+
+  .anomaly-actions {
+    @apply flex shrink-0 flex-col items-end gap-2 max-md:w-full max-md:flex-row max-md:justify-end;
+  }
+
+  .anomaly-actions .is-loading::before {
+    content: "";
+    @apply size-3.5 rounded-full border-2 border-current border-r-transparent;
+    animation: spin 0.8s linear infinite;
+  }
+
+  .improvement-history > summary {
+    @apply flex cursor-pointer list-none flex-wrap items-baseline gap-x-3 gap-y-1;
+  }
+
+  .improvement-history > summary small {
+    @apply text-[12.5px] text-muted;
+  }
+
+  .improvement-history ul {
+    @apply mt-4 flex list-none flex-col gap-2 p-0 text-[13px] text-ink-2;
+  }
+
+  .improvement-history small {
+    @apply mr-1.5 text-muted tabular-nums;
+  }
+
+  /* ---------- Team ---------- */
+
+  /* Two columns only when the cards have room for them, whatever the screen:
+     the feed beside them takes its share on a wide one. */
+  .team-grid {
+    @apply grid gap-4 @2xl:grid-cols-2;
+  }
+
+  .team-card {
+    @apply flex min-w-0 flex-col gap-4 rounded-3xl border border-line bg-surface p-5 shadow-card;
+  }
+
+  .team-card.has-responded {
+    @apply border-good/40;
+  }
+
+  .team-card > header {
+    @apply flex items-start gap-3;
+  }
+
+  .team-card h3 {
+    @apply font-display text-[18px] leading-tight font-semibold;
+  }
+
+  .team-card > header p {
+    @apply mt-0.5 text-[13px] leading-snug text-ink-2;
+  }
+
+  .team-member {
+    @apply flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl bg-brand-soft px-3.5 py-3 text-brand;
+  }
+
+  .team-member.is-empty {
+    @apply bg-surface-3 text-muted;
+  }
+
+  .team-member strong {
+    @apply block text-[14px] font-semibold text-ink;
+  }
+
+  .team-member small {
+    @apply block text-[12px] leading-snug text-ink-2;
+  }
+
+  .team-edit > summary {
+    @apply cursor-pointer list-none rounded-lg px-2 py-1 text-[12.5px] font-semibold text-brand hover:bg-surface/70;
+  }
+
+  .team-edit > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .team-edit[open] {
+    @apply w-full;
+  }
+
+  .team-edit[open] > summary {
+    @apply hidden;
+  }
+
+  .team-edit-form {
+    @apply flex flex-col gap-2.5 pt-1;
+  }
+
+  .team-edit-form label {
+    @apply flex flex-col gap-1;
+  }
+
+  .team-edit-form input {
+    @apply bg-surface py-2;
+  }
+
+  .team-block h4 {
+    @apply mb-2 flex items-center gap-2 text-[11.5px] font-semibold tracking-[0.08em] text-muted uppercase;
+  }
+
+  .team-block ul {
+    @apply flex list-none flex-col gap-2 p-0;
+  }
+
+  .team-block li span {
+    @apply block text-[13.5px] text-ink break-words;
+  }
+
+  .team-block li small {
+    @apply block text-[12px] text-muted;
+  }
+
+  .team-block .whatsapp-button {
+    @apply mt-3 w-full;
+  }
+
+  .team-feed {
+    @apply flex max-h-[70vh] list-none flex-col gap-0 overflow-y-auto p-0 max-xl:max-h-none;
+  }
+
+  .feed-line {
+    @apply flex items-start gap-2.5 py-3;
+  }
+
+  .feed-line + .feed-line {
+    @apply border-t border-line;
+  }
+
+  .feed-line small {
+    @apply block text-[11.5px] text-muted;
+  }
+
+  .feed-line p {
+    @apply mt-0.5 text-[13px] leading-snug text-ink-2 break-words;
+  }
+
+  .feed-line details summary {
+    @apply mt-1 cursor-pointer text-[12px] font-semibold text-brand;
+  }
+
+  .feed-line details div {
+    @apply mt-1.5 rounded-xl bg-surface-2 p-2.5 text-[12.5px] leading-relaxed text-ink-2;
   }
 }
 

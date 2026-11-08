@@ -39,7 +39,9 @@ const COMMON_RULES = [
   "N'annonce jamais une action que tu ne peux pas faire toi-même (« je lance », « j'appelle », « j'envoie », « je passe commande ») : formule-la comme une recommandation pour l'équipe.",
   "Quand le Director te confie ta part d'un objectif chiffré (chiffre d'affaires, encaissements…), réponds avec TON plan d'action : 2 à 4 actions concrètes tirées de tes données, et pour chacune le résultat attendu en dirhams (hypothèse justifiée), le délai et ce dont tu as besoin des autres responsables ou de la direction. Termine par le total que ton plan peut apporter et ce qui manque pour atteindre ta part.",
   "Si une information manque pour faire ta tâche (adresse d'un client, prix, numéro de devis…), ne l'invente pas : dis exactement ce qui manque, le Director le demandera à la direction.",
-  "N'invente aucun moyen, service ou option dont tes données ne parlent pas (lien de paiement, livraison express…). Une information présente dans tes données (fournisseur, délai, montant) se cite telle quelle : elle n'est jamais « à confirmer »."
+  "N'invente aucun moyen, service ou option dont tes données ne parlent pas (lien de paiement, livraison express…). Une information présente dans tes données (fournisseur, délai, montant) se cite telle quelle : elle n'est jamais « à confirmer ».",
+  "Tu es responsable de ton métier : quand le Director te confie l'analyse d'une anomalie (retard, blocage, problème signalé), lis tes données (carnet_atelier pour l'atelier : journal, notes, dates, responsables), trouve la cause réelle et enregistre-la avec analyser_anomalie, avec la règle concrète qui l'aurait évitée (quand elle s'applique, l'action, qui la fait). Une règle déjà active qui couvre la cause se cite (regle_existante) au lieu d'en créer une autre. Ne déduis jamais une cause que tes données ne montrent pas : dis ce qu'il faudrait demander à l'équipe.",
+  "Les tâches pour l'équipe réelle de ton métier vont à ton responsable humain s'il est indiqué plus bas : prépare-lui le message WhatsApp (type tache_equipe) avec la tâche, la date et ce qu'il doit te rendre."
 ];
 
 export const SPECIALISTS = Object.freeze({
@@ -82,6 +84,8 @@ export const SPECIALISTS = Object.freeze({
       "C'est toi qui prépares les factures avec preparer_document : elle doit citer son devis ou son bon de livraison (sinon, dis que le numéro manque). Un prix est TTC (prix_ttc = true) sauf si la mission écrit explicitement « HT ».",
       INVOICE_RULE,
       "Le carnet d'atelier (carnet_atelier) dit où en est la fabrication : une commande livrée et installée rend dû le dernier versement (20 % après installation en 60/20/20).",
+      "Tu es le Directeur financier : tu tiens le journal de caisse. Chaque entrée ou sortie d'argent que la direction annonce au Director, tu l'enregistres avec enregistrer_mouvement_caisse : sens, montant en DH, catégorie, moyen (espèces, virement, chèque, carte), qui a payé ou a été payé, le numéro du devis ou du BC quand c'est pour une vente, la date seulement si ce n'est pas aujourd'hui. Un mouvement par appel. N'enregistre que ce que la mission rapporte comme fait, jamais une estimation ni un paiement attendu. Si l'outil signale un doublon, ne confirme que si la mission dit clairement qu'il s'agit d'un second paiement. Une erreur se corrige avec annuler_mouvement_caisse (avec la raison) puis un nouvel enregistrement.",
+      "Après tout enregistrement, appelle bilan_caisse et réponds : le mouvement enregistré (n°, sens, montant, libellé), puis le bilan du jour (solde d'ouverture, entrées, sorties, solde de clôture, dont espèces), et pour un encaissement client ce qui a déjà été encaissé sur cette vente et ce qu'il reste à encaisser.",
       "Pour un objectif de chiffre d'affaires, ta part est de transformer les ventes en encaissements : acomptes et soldes à encaisser dans la période, et les conditions qui protègent la trésorerie."
     ]
   }),
@@ -187,7 +191,13 @@ export async function runSpecialist({
   advanceOrder = null,
   clientLinkTool = null,
   clientLink = null,
-  prepareMessage = null
+  prepareMessage = null,
+  // Tools given by the Director for this agent's trade, each { tool, run }:
+  // the cash book for Finance, the anomalies for everyone.
+  extraTools = [],
+  // What the agent is told before it starts: the person it answers to, what
+  // the rest of the team did lately, the rules the direction validated.
+  briefing = []
 }) {
   const specialist = SPECIALISTS[agentId];
   const readTools = readToolsFor(agentId, toolRegistry);
@@ -217,6 +227,7 @@ export async function runSpecialist({
     ...(advanceTool ? [advanceTool] : []),
     ...(linkTool ? [linkTool] : []),
     ...(catalogue ? [catalogue] : []),
+    ...extraTools.map((entry) => entry.tool),
     ...(prepareMessage ? [WHATSAPP_MESSAGE_TOOL] : [])
   ];
 
@@ -226,7 +237,7 @@ export async function runSpecialist({
   for (let round = 0; round <= MAX_SPECIALIST_ROUNDS; round += 1) {
     const response = await callModel({
       model,
-      instructions: [...COMMON_RULES, ...specialist.instructions, `Nous sommes le ${today}.`].join("\n"),
+      instructions: [...COMMON_RULES, ...specialist.instructions, ...briefing.filter(Boolean), `Nous sommes le ${today}.`].join("\n"),
       input: items,
       tools
     });
@@ -262,6 +273,8 @@ export async function runSpecialist({
         result = await clientLink(parseArguments(call.arguments), agentId);
       } else if (catalogue && call.name === catalogue.name) {
         result = await lookUpCatalogue(parseArguments(call.arguments));
+      } else if (extraTools.some((entry) => entry.tool.name === call.name)) {
+        result = await extraTools.find((entry) => entry.tool.name === call.name).run(parseArguments(call.arguments), agentId);
       } else if (readTools.some((tool) => tool.id === call.name)) {
         result = await executeTool(agentId, call.name);
       } else {

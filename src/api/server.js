@@ -27,6 +27,10 @@ import { createMvpToolRegistry } from "../tools/mvp-tools.js";
 import { CONSISTENCY_DOMAINS, checkConsistency } from "../agent/consistency.js";
 import { PlanStoreError, createMemoryPlanStore } from "../agent/plan-store.js";
 import { WorkshopError, createMemoryWorkshopStore, createWorkshop } from "../agent/workshop-book.js";
+import { CASH_CATEGORIES, CASH_METHODS, CashBookError, OPENING_CATEGORY, createMemoryCashBook } from "../agent/cash-book.js";
+import { ANOMALY_STATUSES, ImprovementError, RULE_STATUSES, createMemoryImprovementBook } from "../agent/improvement-book.js";
+import { TeamBookError, createMemoryTeamBook } from "../agent/team-book.js";
+import { SPECIALISTS, SPECIALIST_IDS } from "../agent/agent-team.js";
 import { authenticatePrincipal, extractBearerToken } from "../security/authentication.js";
 import { assertCapability } from "../security/authorization.js";
 import { DEFAULT_RATE_LIMITS, createSecurityConfig } from "../security/security-config.js";
@@ -74,6 +78,14 @@ export function buildApi({
   conversationStore = undefined,
   // Where the workshop book is kept, the same way again.
   workshopStore = null,
+  // The cash book, the continuous-improvement book and the team book: files
+  // for the server process, memory for a test.
+  cashBook = null,
+  improvementBook = null,
+  teamBook = null,
+  // A new anomaly is handed to its agent for analysis at once. The server
+  // process turns it on; a test does it by hand.
+  autoAnalyseAnomalies = false,
   // The site's own address, for the links sent to clients. Left empty, a link
   // made from the cockpit takes the address the cockpit was opened at.
   publicBaseUrl = process.env.PUBLIC_BASE_URL ?? "",
@@ -164,6 +176,9 @@ export function buildApi({
   const plans = planStore ?? createMemoryPlanStore();
   const workshopBook = workshopStore ?? createMemoryWorkshopStore();
   const workshop = createWorkshop({ store: workshopBook, documentService: hkidsDocuments, clock, publicBaseUrl });
+  const cash = cashBook ?? createMemoryCashBook({ clock });
+  const improvement = improvementBook ?? createMemoryImprovementBook({ clock });
+  const teamFeed = teamBook ?? createMemoryTeamBook({ clock, agents: SPECIALIST_IDS });
   const agent = directorAgent ?? createDirectorAgentFromEnv({
     documentService: hkidsDocuments,
     runDirectorRequest,
@@ -174,9 +189,16 @@ export function buildApi({
     planStore: plans,
     conversationStore,
     workshopStore: workshopBook,
+    cashBook: cash,
+    improvementBook: improvement,
+    teamBook: teamFeed,
+    autoAnalyse: autoAnalyseAnomalies,
     publicBaseUrl,
     client: agentClient
   });
+  // The workshop book read anywhere is where anomalies are found. An agent
+  // given by a test may not know them: the book is then synced directly.
+  const syncAnomalies = async (orders) => (typeof agent.syncAnomalies === "function" ? agent.syncAnomalies(orders) : improvement.sync(orders));
   // Writes to the same directory as the document service, so both kinds of
   // produced file land where the generated documents already live.
   const commercialFiles = createCommercialFileService({ repository, outputDir: documentOutputDir });
@@ -184,6 +206,9 @@ export function buildApi({
   const app = Fastify({ logger, bodyLimit: securityConfig.bodyLimitBytes, trustProxy: securityConfig.trustProxy === true });
   let seedPromise = null;
   let demoSessionPromise = null;
+  // A step becomes late when its day passes, with nobody reading the book: the
+  // server process calls this on a timer, so the anomaly is found anyway.
+  app.decorate("sweepAnomalies", async () => syncAnomalies(await workshop.book()));
 
   // C1 - Edge. The limiter is global and runs BEFORE authentication, so an
   // anonymous flood is capped instead of reaching the credential lookup. It
@@ -540,7 +565,9 @@ export function buildApi({
 
     app.get("/api/workshop", readRouteOptions(), async (_request, reply) => {
       try {
-        return { orders: await workshop.book() };
+        const orders = await workshop.book();
+        await syncAnomalies(orders);
+        return { orders };
       } catch (error) {
         return sendDomainError(reply, "Workshop book unavailable.", error);
       }
@@ -603,6 +630,145 @@ export function buildApi({
         return removed ? reply.code(204).send() : reply.code(404).send({ error: "Photo introuvable." });
       } catch (error) {
         return sendWorkshopError(reply, error, "Photo removal failed.");
+      }
+    });
+
+    // --- Cash book: the balance of a day, the month, and the lines ---------
+    app.get("/api/cash", readRouteOptions(), async (request, reply) => {
+      try {
+        const day = await cash.day(typeof request.query?.day === "string" ? request.query.day : "");
+        return {
+          today: cash.today(),
+          day,
+          month: await cash.month(day.day.slice(0, 7)),
+          categories: { ...CASH_CATEGORIES, opening: OPENING_CATEGORY },
+          methods: CASH_METHODS
+        };
+      } catch (error) {
+        return sendBookError(reply, error, "Cash book unavailable.");
+      }
+    });
+
+    // A movement typed in the cockpit, as Hiba would tell the Director.
+    app.post("/api/cash", writeRouteOptions(), async (request, reply) => {
+      const body = request.body ?? {};
+      const field = (name) => (typeof body[name] === "string" ? body[name] : "");
+      const by = request.principal.userId ?? "direction";
+      try {
+        const entry = await cash.record({
+          kind: field("kind"),
+          amount: body.amount,
+          category: field("category"),
+          label: field("label"),
+          method: field("method"),
+          party: field("party"),
+          quoteNumber: field("quoteNumber"),
+          orderNumber: field("orderNumber"),
+          day: field("day"),
+          announcedBy: "cockpit",
+          by,
+          confirmDuplicate: body.confirmDuplicate === true
+        });
+        await teamFeed.log({ agent: "finance", kind: "caisse", text: `${entry.kind === "entree" ? "Entrée" : "Sortie"} n° ${entry.number} saisie au cockpit : ${entry.amount} DH — ${entry.label}${entry.party ? ` (${entry.party})` : ""}.`, ref: `caisse:${entry.number}`, by });
+        return reply.code(201).send({ entry, day: await cash.day(entry.day) });
+      } catch (error) {
+        return sendBookError(reply, error, "Cash movement failed.");
+      }
+    });
+
+    app.post("/api/cash/:number/cancel", writeRouteOptions(), async (request, reply) => {
+      const by = request.principal.userId ?? "direction";
+      try {
+        const entry = await cash.cancel(request.params.number, { reason: typeof request.body?.reason === "string" ? request.body.reason : "", by });
+        await teamFeed.log({ agent: "finance", kind: "caisse", text: `Mouvement n° ${entry.number} annulé au cockpit : ${entry.cancelled.reason}.`, ref: `caisse:${entry.number}`, by });
+        return reply.code(200).send({ entry, day: await cash.day(entry.day) });
+      } catch (error) {
+        return sendBookError(reply, error, "Cash cancellation failed.");
+      }
+    });
+
+    // --- Continuous improvement: anomalies, causes and rules ---------------
+    app.get("/api/improvement", readRouteOptions(), async (_request, reply) => {
+      try {
+        await syncAnomalies(await workshop.book());
+        const { anomalies, rules } = await improvement.state();
+        return {
+          anomalies: [...anomalies].reverse(),
+          rules: [...rules].reverse(),
+          labels: { anomalies: ANOMALY_STATUSES, rules: RULE_STATUSES },
+          analysis: agent.isConfigured()
+        };
+      } catch (error) {
+        return sendBookError(reply, error, "Improvement book unavailable.");
+      }
+    });
+
+    // Only the direction validates, refuses or withdraws a rule.
+    app.post("/api/improvement/rules/:number/decision", writeRouteOptions(), async (request, reply) => {
+      const by = request.principal.userId ?? "direction";
+      try {
+        const rule = await improvement.decide(request.params.number, request.body?.decision, { by, note: typeof request.body?.note === "string" ? request.body.note : "" });
+        await teamFeed.log({ agent: SPECIALISTS[rule.owner] ? rule.owner : "director", kind: "amelioration", text: `Règle n° ${rule.number} « ${rule.title} » ${{ active: "validée", refusee: "refusée", retiree: "retirée" }[rule.status]} par la direction.`, ref: `regle:${rule.number}`, by });
+        return reply.code(200).send({ rule });
+      } catch (error) {
+        return sendBookError(reply, error, "Rule decision failed.");
+      }
+    });
+
+    // The agent in charge analyses an anomaly now, rather than waiting.
+    app.post("/api/improvement/anomalies/:number/analyse", writeRouteOptions(), async (request, reply) => {
+      if (typeof agent.analyseAnomaly !== "function") {
+        return reply.code(503).send({ error: "L'analyse par les agents n'est pas disponible." });
+      }
+      try {
+        return reply.code(200).send(await agent.analyseAnomaly(request.params.number));
+      } catch (error) {
+        if (error instanceof DirectorAgentError) {
+          return reply.code(error.code === "AGENT_ANOMALY_NOT_FOUND" ? 404 : 503).send({ error: error.message, details: { code: error.code } });
+        }
+        return sendBookError(reply, error, "Anomaly analysis failed.");
+      }
+    });
+
+    app.post("/api/improvement/anomalies/:number/lift", writeRouteOptions(), async (request, reply) => {
+      try {
+        return reply.code(200).send({ anomaly: await improvement.lift(request.params.number, { by: request.principal.userId ?? "direction" }) });
+      } catch (error) {
+        return sendBookError(reply, error, "Anomaly update failed.");
+      }
+    });
+
+    // --- The team: each agent, the person behind it, its missions, its feed --
+    app.get("/api/team", readRouteOptions(), async (_request, reply) => {
+      try {
+        const [members, activity, active, rules] = await Promise.all([teamFeed.members(), teamFeed.activity({ limit: 60 }), plans.list({ status: "active" }), improvement.activeRules()]);
+        return {
+          agents: SPECIALIST_IDS.map((id) => ({
+            id,
+            label: SPECIALISTS[id].label,
+            mission: SPECIALISTS[id].mission,
+            member: members[id] ?? null,
+            // A mission is a step of a plan in progress that this agent carries.
+            missions: active.flatMap((plan) => plan.steps
+              .filter((step) => step.agent === id && step.status !== "done")
+              .map((step) => ({ plan: plan.number, objective: plan.objective, task: step.task, status: step.status, dueDate: step.dueDate, overdue: step.overdue }))),
+            rules: rules.filter((rule) => rule.owner === id).map((rule) => ({ number: rule.number, title: rule.title, action: rule.action })),
+            activity: activity.filter((entry) => entry.agent === id).slice(0, 6)
+          })),
+          activity: activity.slice(0, 40)
+        };
+      } catch (error) {
+        return sendBookError(reply, error, "Team unavailable.");
+      }
+    });
+
+    app.put("/api/team/:agent/member", writeRouteOptions(), async (request, reply) => {
+      const field = (name) => (typeof request.body?.[name] === "string" ? request.body[name] : "");
+      try {
+        const member = await teamFeed.link(request.params.agent, { name: field("name"), role: field("role"), phone: field("phone"), by: request.principal.userId ?? "direction" });
+        return reply.code(200).send({ member });
+      } catch (error) {
+        return sendBookError(reply, error, "Team update failed.");
       }
     });
 
@@ -892,6 +1058,17 @@ function clientPageHeaders(reply) {
     .header("Cache-Control", "no-store")
     .header("X-Robots-Tag", "noindex, nofollow")
     .header("Referrer-Policy", "no-referrer");
+}
+
+// The books' own errors are the person's to fix: what they typed, or a line
+// that does not exist. A line already in the book is a conflict to confirm.
+const BOOK_NOT_FOUND = new Set(["CASH_ENTRY_NOT_FOUND", "IMPROVEMENT_ANOMALY_NOT_FOUND", "IMPROVEMENT_RULE_NOT_FOUND", "TEAM_AGENT_UNKNOWN"]);
+function sendBookError(reply, error, fallback) {
+  if (error instanceof CashBookError || error instanceof ImprovementError || error instanceof TeamBookError) {
+    const statusCode = BOOK_NOT_FOUND.has(error.code) ? 404 : error.code === "CASH_DUPLICATE" ? 409 : 400;
+    return reply.code(statusCode).send({ error: error.message, details: { code: error.code } });
+  }
+  return sendDomainError(reply, fallback, error);
 }
 
 function sendWorkshopError(reply, error, fallback) {

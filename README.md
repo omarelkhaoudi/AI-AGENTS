@@ -128,6 +128,14 @@ doivent jamais y aller.
 | --- | --- | --- |
 | `data/catalogue-hkids.xlsx` | Produits et prix TTC de base : le Commercial s'en sert quand Hiba ne donne pas le prix, et pour bâtir les ventes d'un objectif. Relu à chaque demande, sans redémarrage. | [`docs/catalogue-hkids.xlsx`](docs/catalogue-hkids.xlsx) |
 | `data/plans-director.json` | Les plans d'action du Director, créés et mis à jour automatiquement. | — |
+| `data/caisse.json` | Le journal de caisse tenu par le Directeur financier : chaque entrée ou sortie annoncée au Director, d'où viennent le bilan du jour et celui du mois. Un mouvement annulé reste écrit avec son motif. | — |
+| `data/amelioration.json` | Les anomalies (étape d'atelier bloquée ou en retard, ou signalée) et les règles proposées par les agents pour qu'elles ne se répètent pas. Une règle ne s'applique qu'une fois validée. | — |
+| `data/equipe.json` | Le responsable humain relié à chaque agent et le fil d'équipe (missions, caisse, atelier, documents), que chaque agent relit avant de travailler. | — |
+
+Toutes les 30 minutes, le serveur repère les nouvelles anomalies d'atelier et
+demande à l'agent concerné d'en chercher la cause (appel à OpenAI). Pour couper
+cette analyse automatique : `HKIDS_AUTO_ANALYSIS=off` dans `.env` ; les anomalies
+restent alors listées et s'analysent à la demande depuis l'onglet Amélioration.
 
 Les dossiers réels (clients, devis, commandes, paiements, achats) se chargent dans
 la base avec le classeur [`docs/modele-donnees-hkids.xlsx`](docs/modele-donnees-hkids.xlsx) :

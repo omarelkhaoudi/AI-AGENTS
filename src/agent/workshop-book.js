@@ -1,8 +1,12 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HKIDS_DOCUMENT_TYPES } from "../documents/document-schema.js";
 import { dossierOf, latestIssued } from "../documents/document-ledger.js";
+import { validateAndPrepareDocument } from "../documents/document-validation.js";
+import { HKIDS_FIXED_IDENTITY } from "../documents/hkids-template.js";
+import { parseReferenceImage } from "../documents/purchase-order.js";
 
 // The workshop book: every purchase order validated in the cockpit follows the
 // manufacturing route of the specification (section 5), from the technical
@@ -16,7 +20,15 @@ import { dossierOf, latestIssued } from "../documents/document-ledger.js";
 //
 // The orders themselves are the purchase orders issued by the cockpit; only
 // what happened in the workshop is stored here, as one JSON file under data/
-// (ignored by git), like the Director's plans.
+// (ignored by git), like the Director's plans. The photos published for the
+// client sit beside it, one file each.
+//
+// The client follows the order through a link of its own (section 5, client
+// access): an unguessable token the direction creates and can switch off. What
+// the client sees is built by clientView and nothing else: progress, finished
+// steps, the planned delivery, the payment schedule, the published photos and
+// the documents of the sale. Never a note, a person in charge or a blocking
+// reason: those stay inside the company.
 
 const PROJECT_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 export const DEFAULT_WORKSHOP_PATH = join(PROJECT_ROOT, "data", "atelier.json");
@@ -44,18 +56,51 @@ export class WorkshopError extends Error {
 
 export function createMemoryWorkshopStore({ clock = () => new Date() } = {}) {
   let orders = {};
+  const photos = new Map();
   return createWorkshopStore({
     clock,
     load: async () => orders,
     save: async (next) => {
       orders = next;
+    },
+    photoFiles: {
+      write: async (name, bytes) => {
+        photos.set(name, bytes);
+      },
+      read: async (name) => photos.get(name) ?? null,
+      remove: async (name) => {
+        photos.delete(name);
+      }
     }
   });
 }
 
-export function createFileWorkshopStore({ path = DEFAULT_WORKSHOP_PATH, clock = () => new Date() } = {}) {
+export function createFileWorkshopStore({ path = DEFAULT_WORKSHOP_PATH, photosDir = join(dirname(path), "atelier-photos"), clock = () => new Date() } = {}) {
   return createWorkshopStore({
     clock,
+    photoFiles: {
+      write: async (name, bytes) => {
+        await mkdir(photosDir, { recursive: true });
+        await writeFile(join(photosDir, name), bytes);
+      },
+      read: async (name) => {
+        try {
+          return await readFile(join(photosDir, name));
+        } catch (error) {
+          if (error.code === "ENOENT") {
+            return null;
+          }
+          throw error;
+        }
+      },
+      remove: async (name) => {
+        await unlink(join(photosDir, name)).catch((error) => {
+          if (error.code !== "ENOENT") {
+            throw error;
+          }
+        });
+      }
+    },
     load: async () => {
       try {
         return JSON.parse(await readFile(path, "utf8"));
@@ -76,7 +121,7 @@ export function createFileWorkshopStore({ path = DEFAULT_WORKSHOP_PATH, clock = 
   });
 }
 
-function createWorkshopStore({ load, save, clock }) {
+function createWorkshopStore({ load, save, clock, photoFiles }) {
   // Changes are applied one at a time, so two requests never overwrite each other.
   let queue = Promise.resolve();
   const exclusive = (work) => {
@@ -84,10 +129,86 @@ function createWorkshopStore({ load, save, clock }) {
     queue = run.catch(() => {});
     return run;
   };
+  // One order's record, changed and saved with a journal line.
+  const mutate = (number, change) => exclusive(async () => {
+    const orders = await load();
+    const key = String(number);
+    const order = orders[key] ?? { steps: {}, journal: [] };
+    const at = clock().toISOString();
+    const outcome = await change(order, at);
+    orders[key] = order;
+    await save(orders);
+    return outcome;
+  });
 
   return Object.freeze({
     async all() {
       return load();
+    },
+
+    // The link of the order's client: the active one, or a new token. A link
+    // switched off is never switched back on: a new one is made instead.
+    async openPortal(number, { by = "direction" } = {}) {
+      return mutate(number, (order, at) => {
+        if (!order.portal?.active) {
+          order.portal = { token: randomBytes(24).toString("base64url"), active: true, createdAt: at, createdBy: by };
+          order.journal.push({ at, by, text: "Lien de suivi client créé." });
+        }
+        return order.portal.token;
+      });
+    },
+
+    async closePortal(number, { by = "direction" } = {}) {
+      return mutate(number, (order, at) => {
+        if (order.portal?.active) {
+          order.portal = { ...order.portal, active: false, closedAt: at, closedBy: by };
+          order.journal.push({ at, by, text: "Lien de suivi client désactivé." });
+        }
+      });
+    },
+
+    // The order an active link belongs to, or null. Compared in constant time.
+    async numberForToken(token) {
+      const presented = Buffer.from(String(token ?? ""));
+      for (const [number, order] of Object.entries(await load())) {
+        const known = Buffer.from(order.portal?.active ? order.portal.token : "");
+        if (known.length > 0 && known.length === presented.length && timingSafeEqual(known, presented)) {
+          return number;
+        }
+      }
+      return null;
+    },
+
+    async addPhoto(number, { bytes, format, caption = "", by = "direction" }) {
+      const id = randomUUID();
+      const file = `${String(number).replace(/[^0-9A-Za-z_-]/g, "_")}_${id}.${format === "png" ? "png" : "jpg"}`;
+      await photoFiles.write(file, bytes);
+      return mutate(number, (order, at) => {
+        order.photos = [...(order.photos ?? []), { id, file, format: format === "png" ? "png" : "jpeg", caption: text(caption), publishedAt: at, by }];
+        order.journal.push({ at, by, text: `Photo publiée pour le client${text(caption) ? ` : ${text(caption)}` : ""}.` });
+        return id;
+      });
+    },
+
+    async removePhoto(number, id, { by = "direction" } = {}) {
+      const removed = await mutate(number, (order, at) => {
+        const photo = (order.photos ?? []).find((entry) => entry.id === id);
+        if (photo) {
+          order.photos = order.photos.filter((entry) => entry !== photo);
+          order.journal.push({ at, by, text: `Photo retirée du suivi client${photo.caption ? ` : ${photo.caption}` : ""}.` });
+        }
+        return photo ?? null;
+      });
+      if (removed) {
+        await photoFiles.remove(removed.file);
+      }
+      return Boolean(removed);
+    },
+
+    async readPhoto(number, id) {
+      const photo = ((await load())[String(number)]?.photos ?? []).find((entry) => entry.id === id);
+      const bytes = photo ? await photoFiles.read(photo.file) : null;
+      return bytes ? { bytes, format: photo.format } : null;
     },
 
     // One step of one order. Only the fields given change; dates are JJ/MM/AAAA
@@ -166,20 +287,147 @@ function createWorkshopStore({ load, save, clock }) {
 // The workshop of the cockpit: the issued purchase orders, read from the
 // document service, and what happened to them, read from the store. A step is
 // only moved for an order that was actually issued.
-export function createWorkshop({ store, documentService, clock = () => new Date() }) {
+export function createWorkshop({ store, documentService, clock = () => new Date(), publicBaseUrl = "" }) {
   const book = async () => buildWorkshopBook(await documentService.listIssued(), await store.all(), clock());
   const order = async (number) => (await book()).find((entry) => entry.number === String(number).trim()) ?? null;
+  const issuedOrder = async (number) => {
+    const found = await order(number);
+    if (!found) {
+      throw new WorkshopError(`Aucun bon de commande n° ${number} n'a été généré par le cockpit.`, "WORKSHOP_ORDER_NOT_FOUND");
+    }
+    return found;
+  };
+  // A link that does not exist and a link switched off get the same answer, so
+  // nothing can be learnt by trying links.
+  const clientOrder = async (token) => {
+    const number = await store.numberForToken(token);
+    return number ? order(number) : null;
+  };
+
+  async function clientView(token) {
+    const current = await clientOrder(token);
+    if (!current) {
+      return null;
+    }
+    const issued = await documentService.listIssued();
+    const dossier = dossierOf(issued, { type: HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER, number: current.number });
+    const delivery = current.steps.at(-1);
+    const record = (await store.all())[current.number];
+    return Object.freeze({
+      company: Object.freeze({ name: HKIDS_FIXED_IDENTITY.companyName, phone: HKIDS_FIXED_IDENTITY.phone, email: HKIDS_FIXED_IDENTITY.email }),
+      order: Object.freeze({ number: current.number, date: current.date, object: current.object, client: current.client }),
+      progress: current.progress,
+      finished: current.finished,
+      // A blocked step is a step under way for the client: why it is blocked
+      // stays inside the company.
+      steps: Object.freeze(current.steps.map((step) => Object.freeze({
+        label: step.label,
+        state: step.status === "terminee" ? "terminee" : step.status === "a_faire" ? "a_venir" : "en_cours",
+        doneDate: step.status === "terminee" ? step.doneDate : null
+      }))),
+      plannedDelivery: delivery.status === "terminee" ? null : delivery.plannedDate,
+      schedule: await paymentSchedule(current.number),
+      photos: Object.freeze((record?.photos ?? []).map((photo) => Object.freeze({ id: photo.id, caption: photo.caption, publishedAt: photo.publishedAt }))),
+      documents: Object.freeze(clientDocuments(dossier, current.number))
+    });
+  }
+
+  // The instalments printed on the order, when its content was kept.
+  async function paymentSchedule(number) {
+    const issued = await documentService.readIssued(HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER, number);
+    if (issued?.source !== "content") {
+      return Object.freeze([]);
+    }
+    try {
+      const prepared = validateAndPrepareDocument(issued.input);
+      return Object.freeze((prepared.payment?.instalments ?? []).map((part) => Object.freeze({ percent: part.percent, due: part.due, amount: part.amount })));
+    } catch {
+      return Object.freeze([]);
+    }
+  }
+
   return Object.freeze({
     book,
     order,
     async advance(number, stepId, fields) {
-      if (!(await order(number))) {
-        throw new WorkshopError(`Aucun bon de commande n° ${number} n'a été généré par le cockpit.`, "WORKSHOP_ORDER_NOT_FOUND");
-      }
+      await issuedOrder(number);
       const { changed } = await store.updateStep(String(number).trim(), stepId, fields);
       return { changed, order: await order(number) };
+    },
+
+    // The address of the client's link: absolute when the site's address is
+    // known (PUBLIC_BASE_URL), a path otherwise.
+    async openPortal(number, { by = "direction" } = {}) {
+      await issuedOrder(number);
+      return portalLink(await store.openPortal(String(number).trim(), { by }), publicBaseUrl);
+    },
+
+    async closePortal(number, { by = "direction" } = {}) {
+      await issuedOrder(number);
+      await store.closePortal(String(number).trim(), { by });
+      return order(number);
+    },
+
+    async publishPhoto(number, dataUrl, { caption = "", by = "direction" } = {}) {
+      await issuedOrder(number);
+      const { image, error } = parseReferenceImage(dataUrl);
+      if (!image) {
+        throw new WorkshopError(error === "REFERENCE_IMAGE_TOO_LARGE" ? "La photo dépasse 3 Mo." : "La photo n'a pas pu être lue (JPEG ou PNG attendu).", "WORKSHOP_PHOTO_INVALID");
+      }
+      return store.addPhoto(String(number).trim(), { bytes: image.bytes, format: image.format, caption, by });
+    },
+
+    async removePhoto(number, id, { by = "direction" } = {}) {
+      await issuedOrder(number);
+      return store.removePhoto(String(number).trim(), id, { by });
+    },
+
+    clientView,
+
+    async clientPhoto(token, id) {
+      const current = await clientOrder(token);
+      return current ? store.readPhoto(current.number, id) : null;
+    },
+
+    // A document of the client's sale, and no other: what the view lists is
+    // all the link opens.
+    async clientDocument(token, type, number) {
+      const view = await clientView(token);
+      const listed = view?.documents.find((entry) => entry.type === type && entry.number === String(number));
+      return listed ? documentService.readIssuedPdf(type, listed.number) : null;
     }
   });
+}
+
+export function portalLink(token, publicBaseUrl = "") {
+  const path = `/suivi/${token}`;
+  const base = text(publicBaseUrl).replace(/\/+$/, "");
+  return Object.freeze({ path, url: base ? `${base}${path}` : null });
+}
+
+const CLIENT_DOCUMENT_LABELS = Object.freeze({
+  [HKIDS_DOCUMENT_TYPES.QUOTE]: "Devis",
+  [HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER]: "Bon de commande",
+  [HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE]: "Bon de livraison",
+  [HKIDS_DOCUMENT_TYPES.INVOICE]: "Facture"
+});
+
+// The documents of the client's own sale: its quote, this order, its delivery
+// notes and its invoices, once each.
+function clientDocuments(dossier, orderNumber) {
+  const entries = [
+    ...(dossier?.quote ? [dossier.quote] : []),
+    { type: HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER, number: orderNumber },
+    ...(dossier?.deliveryNotes ?? []),
+    ...(dossier?.invoices ?? [])
+  ];
+  const seen = new Set();
+  return entries
+    .filter((entry) => {
+      const key = `${entry.type}:${entry.number}`;
+      return seen.has(key) ? false : seen.add(key);
+    })
+    .map((entry) => Object.freeze({ type: entry.type, number: String(entry.number), label: `${CLIENT_DOCUMENT_LABELS[entry.type]} n° ${entry.number}` }));
 }
 
 // The book as the cockpit and the agents read it: one entry per purchase order
@@ -243,6 +491,8 @@ function workshopOrder(order, record = { steps: {}, journal: [] }, issued, day) 
             : "à lancer",
     finished,
     alerts: Object.freeze(alerts),
+    portal: record.portal?.active ? Object.freeze({ path: portalLink(record.portal.token).path, createdAt: record.portal.createdAt }) : null,
+    photos: Object.freeze((record.photos ?? []).map((photo) => Object.freeze({ id: photo.id, caption: photo.caption, publishedAt: photo.publishedAt }))),
     journal: Object.freeze([...(record.journal ?? [])])
   });
 }

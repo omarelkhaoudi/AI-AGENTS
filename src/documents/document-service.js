@@ -239,6 +239,13 @@ export class HkidsDocumentService {
     };
   }
 
+  // The PDF of an issued document, as the client receives it. Null when there is
+  // none under this type and number.
+  async readIssuedPdf(documentType, documentNumber) {
+    const name = (await this.#issuedFiles(documentType, documentNumber)).find((entry) => entry.endsWith(".pdf"));
+    return name ? { name, bytes: await readFile(join(this.outputDir, name)) } : null;
+  }
+
   // One line per issued document: what it is, for whom, how much, and which
   // document it names before it. Read from its kept content, or from its Word
   // file when it was issued before the content was kept.

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="referrer" content="no-referrer">
+    <title>Suivi de commande - H-KIDS</title>
+    <meta name="theme-color" content="#22564a">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap">
+    <link rel="stylesheet" href="/app/styles.css">
+  </head>
+  <!-- The client's follow-up page: what an order's link shows, read from
+       /api/public/suivi/<token> by suivi.js. Nothing here needs a sign-in. -->
+  <body class="min-h-dvh">
+    <main class="mx-auto flex w-full max-w-2xl flex-col gap-5 px-4 py-8 sm:py-12">
+      <header class="flex items-center justify-between gap-3">
+        <p class="font-display text-[22px] font-semibold tracking-[-0.01em] text-brand">H-KIDS</p>
+        <p class="eyebrow mb-0">Suivi de commande</p>
+      </header>
+
+      <section id="loading" class="rounded-2xl border border-line bg-surface p-6 shadow-card" aria-live="polite">
+        <p class="muted">Chargement du suivi…</p>
+      </section>
+
+      <section id="unavailable" class="rounded-2xl border border-line bg-surface p-6 shadow-card" hidden>
+        <h1 class="text-[24px]">Lien inactif</h1>
+        <p class="mt-2 text-ink-2">Ce lien de suivi n'existe pas ou n'est plus actif. Pour suivre votre commande, contactez H-KIDS : un nouveau lien vous sera envoyé.</p>
+      </section>
+
+      <section id="failed" class="rounded-2xl border border-line bg-surface p-6 shadow-card" hidden>
+        <h1 class="text-[24px]">Suivi indisponible</h1>
+        <p class="mt-2 text-ink-2">Le suivi n'a pas pu être chargé. Vérifiez votre connexion internet, puis rechargez la page.</p>
+      </section>
+
+      <div id="tracking" class="flex flex-col gap-5" hidden></div>
+
+      <footer id="contact" class="text-center text-[12.5px] text-muted" hidden></footer>
+    </main>
+    <script type="module" src="/app/suivi.js"></script>
+  </body>
+</html>

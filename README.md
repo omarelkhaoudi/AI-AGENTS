@@ -726,11 +726,18 @@ Ce que fait le modèle et ce qu'il ne fait pas :
 - le carnet d'atelier (`src/agent/workshop-book.js`, fichier `data/atelier.json`)
   suit chaque bon de commande validé à travers les 7 étapes de fabrication ;
   l'avancement est calculé sur les étapes terminées, jamais estimé ;
+- le client suit sa commande sur un lien à lui (`/suivi/<jeton>`, page
+  `src/frontend/suivi.html`) : avancement réel, étapes terminées, livraison
+  prévue, échéancier, photos publiées et documents de sa vente, jamais les
+  notes, les responsables ni la raison d'un blocage. Le lien se crée et se
+  coupe depuis le cockpit ou par le Director ; un lien coupé ne se rallume
+  jamais (`PUBLIC_BASE_URL` donne l'adresse complète des liens) ;
 - rien n'est envoyé, payé ni commandé par un agent : messages WhatsApp, documents
   et plans attendent la validation de la direction.
 
 Le code : `src/agent/` (Director, équipe, catalogue, WhatsApp, plans,
-cohérence, atelier) et les routes `/api/agent/*`, `/api/plans*` et `/api/workshop*`.
+cohérence, atelier) et les routes `/api/agent/*`, `/api/plans*`, `/api/workshop*`
+et, sans connexion, `/api/public/suivi/*`.
 
 L'ancien planificateur LLM (`PLANNER_PROVIDER="llm_openai"`) reste disponible
 pour l'endpoint `/api/director/requests` ; il est indépendant de l'agent

@@ -275,6 +275,38 @@ const ADVANCE_ORDER_TOOL = Object.freeze({
     }
 });
 
+// The client's follow-up link and the photos published on it.
+const CLIENT_LINK_TOOL = Object.freeze({
+    type: "function",
+    name: "lien_suivi_client",
+    description: "Crée (ou redonne) le lien de suivi sécurisé d'un bon de commande, à envoyer au client : il y voit l'avancement réel, les étapes terminées, la livraison prévue, l'échéancier, les photos publiées et ses documents, jamais les notes internes. « desactiver » coupe le lien pour de bon.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        numero: { type: "string", description: "Numéro du bon de commande." },
+        action: { type: "string", enum: ["creer", "desactiver"] }
+      },
+      required: ["numero", "action"]
+    }
+});
+
+const PUBLISH_PHOTO_TOOL = Object.freeze({
+    type: "function",
+    name: "publier_photo_suivi",
+    description: "Publie une photo jointe par la direction sur le suivi client d'un bon de commande (le client la voit sur son lien). Seulement quand la direction le demande.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        numero: { type: "string", description: "Numéro du bon de commande." },
+        photo: { type: "integer", description: "Numéro de la photo dans la conversation (« photo n° 2 » → 2)." },
+        legende: { type: "string", description: "Légende courte et neutre pour le client, par exemple « Assemblage terminé ». Chaîne vide si aucune." }
+      },
+      required: ["numero", "photo", "legende"]
+    }
+});
+
 const CATALOGUE_TOOL = Object.freeze({
     type: "function",
     name: "chercher_catalogue",
@@ -316,6 +348,8 @@ const TOOLS = Object.freeze([
   FOLLOW_DOSSIER_TOOL,
   WORKSHOP_BOOK_TOOL,
   ADVANCE_ORDER_TOOL,
+  CLIENT_LINK_TOOL,
+  PUBLISH_PHOTO_TOOL,
   {
     type: "function",
     name: "point_entreprise",
@@ -355,6 +389,7 @@ function instructions(today) {
     "Chaîne d'une vente : devis → bon de commande (le client accepte) → bon de livraison → factures (acompte, solde). Chaque document cite le devis : écris toujours son numéro dans la mission. « Le client a accepté le devis 170 », « fais le BC du devis 170 » → commercial : « bon de commande à partir du devis n° 170 », avec les conditions et l'acompte s'ils sont donnés ; il reprend le devis lui-même, rien n'est à ressaisir. « Facture l'acompte du devis 170 », « facture le solde » → finance avec le numéro du devis. « Où en est le devis 170 », « qu'est-ce qui reste à facturer » → suivre_dossier toi-même, puis réponds avec l'étape, le déjà facturé, le reste à facturer et les anomalies. Une facture refusée parce qu'elle facturerait la vente deux fois ne se contourne pas : dis-le à la direction avec les factures déjà faites.",
     "",
     `Atelier, après le bon de commande : chaque bon de commande validé suit ${WORKSHOP_STEPS.length} étapes (${WORKSHOP_STEPS.map((step) => step.label).join(", ")}). « Le BC 166 est en découpe », « l'assemblage du 166 est fini », « la peinture est bloquée, il manque la laque », « Youssef s'occupe de l'étude, prévue pour le 12/11 » → c'est un fait que la direction t'annonce : avancer_commande toi-même, un appel par étape (une étape commencée = en_cours ; les étapes d'avant qu'elle dit finies = terminee), puis confirme en une ligne avec l'avancement. « Où en est la commande de Mme X / le BC 166 », « quelles commandes sont en retard » → carnet_atelier, puis l'étape en cours, l'avancement (calculé sur les étapes terminées, jamais estimé), les dates prévues et les alertes. Planning, priorités ou charge de l'atelier → production. Suite de la chaîne, tout de suite après l'avoir enregistrée : contrôle qualité terminé → commercial : préparer le message au client pour convenir de la date de livraison et d'installation ; livraison et installation terminée → finance : facture du solde du devis (si le dossier n'est pas soldé). Pour tout point de situation ou toute question d'urgences, regarde aussi carnet_atelier et signale les commandes bloquées ou en retard.`,
+    "Suivi client : « envoie le lien de suivi au client du BC 166 » → lien_suivi_client (creer), puis commercial : message WhatsApp au client avec ce lien, recopié tel quel dans la mission. « Mets cette photo sur le suivi du BC 166 » → publier_photo_suivi avec le numéro de la photo et une légende courte et neutre ; une photo n'est publiée que si la direction le demande. « Coupe le lien du BC 166 » → lien_suivi_client (desactiver). Le client ne voit jamais les notes, les responsables ni la raison d'un blocage.",
     "",
     "Photos : la direction peut joindre des photos (numérotées « photo n° 1 », « photo n° 2 »… dans la conversation). Regarde-les et dis en une phrase ce que tu y vois d'utile (meuble, modèle, coloris, finitions, dimensions apparentes, texte lisible). Les responsables ne voient pas les photos : recopie dans la mission ce qu'elles montrent. Pour un bon de commande, écris aussi « visuel : photo n° X » dans la mission pour que la photo figure sur le document. N'invente rien que la photo ne montre pas.",
     "Documents : la direction peut joindre des documents (PDF, Word, Excel, texte), numérotés « document n° 1 »… Lis-les et sers-t'en : réponds à la question posée dessus, ou résume en quelques lignes ce qui compte pour H KIDS (client, montants, dates, quantités, conditions, échéances). Les responsables ne voient pas les documents : recopie dans leur mission les informations utiles, chiffres compris. Si un document ne contient pas l'information demandée, dis-le.",
@@ -388,12 +423,12 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
   const loadCatalogue = createCatalogueLoader(cataloguePath ? { path: cataloguePath } : {});
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, publicBaseUrl, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -410,11 +445,12 @@ export function createDirectorAgent({
   planStore = createMemoryPlanStore(),
   conversationStore = createMemoryConversationStore(),
   workshopStore = createMemoryWorkshopStore(),
+  publicBaseUrl = "",
   clock = () => new Date(),
   clientFactory = defaultClientFactory
 } = {}) {
   let resolvedClient = client;
-  const workshop = createWorkshop({ store: workshopStore, documentService, clock });
+  const workshop = createWorkshop({ store: workshopStore, documentService, clock, publicBaseUrl });
 
   return Object.freeze({
     model,
@@ -630,6 +666,12 @@ async function runTool(call, context) {
     }
     if (call.name === ADVANCE_ORDER_TOOL.name) {
       return await advanceOrder(args, context, "director");
+    }
+    if (call.name === CLIENT_LINK_TOOL.name) {
+      return await clientLink(args, context, "director");
+    }
+    if (call.name === PUBLISH_PHOTO_TOOL.name) {
+      return await publishPhoto(args, context, "director");
     }
     if (call.name === "deleguer_a_un_agent") {
       return withCoherence(await delegate(args, context), context);
@@ -852,6 +894,52 @@ async function advanceOrder(args, { workshop }, by) {
   }
 }
 
+async function clientLink(args, { workshop }, by) {
+  const number = text(args.numero);
+  try {
+    if (args.action === "desactiver") {
+      await workshop.closePortal(number, { by });
+      return { ok: true, bc: number, lien: "désactivé : l'ancien lien n'ouvre plus rien" };
+    }
+    const link = await workshop.openPortal(number, { by });
+    return {
+      ok: true,
+      bc: number,
+      lien: link.url ?? link.path,
+      ...(link.url ? {} : { attention: "L'adresse du site n'est pas configurée (PUBLIC_BASE_URL) : ce chemin doit être précédé de l'adresse du cockpit." }),
+      ce_que_voit_le_client: "l'avancement réel, les étapes terminées, la livraison prévue, l'échéancier, les photos publiées et ses documents ; jamais les notes internes"
+    };
+  } catch (error) {
+    if (error instanceof WorkshopError) {
+      return { ok: false, erreur: error.message };
+    }
+    throw error;
+  }
+}
+
+async function publishPhoto(args, { workshop, outcome }, by) {
+  const number = Number(args.photo) || 0;
+  const photo = outcome.photos?.[number - 1];
+  if (!photo) {
+    return { ok: false, erreur: `Il n'y a pas de photo n° ${number} dans la conversation.` };
+  }
+  try {
+    await workshop.publishPhoto(text(args.numero), photo, { caption: text(args.legende), by });
+    const order = await workshop.order(text(args.numero));
+    return {
+      ok: true,
+      bc: text(args.numero),
+      publiee: `photo n° ${number}`,
+      visible: order?.portal ? "sur le lien de suivi du client" : "dès que le lien de suivi du client sera créé (lien_suivi_client)"
+    };
+  } catch (error) {
+    if (error instanceof WorkshopError) {
+      return { ok: false, erreur: error.message };
+    }
+    throw error;
+  }
+}
+
 // An issued document as the agent needs it to prepare its correction: the same
 // fields preparer_document takes, prices HT so that they come back to the
 // cent. The visual itself is not sent, only whether there is one.
@@ -921,6 +1009,8 @@ async function delegate(args, context) {
     readWorkshopBook: (bookArgs) => readWorkshopBook(bookArgs, context),
     advanceOrderTool: ADVANCE_ORDER_TOOL,
     advanceOrder: (advanceArgs, agentId) => advanceOrder(advanceArgs, context, agentId),
+    clientLinkTool: CLIENT_LINK_TOOL,
+    clientLink: (linkArgs, agentId) => clientLink(linkArgs, context, agentId),
     prepareMessage: (messageArgs, agentId) => recordMessage(messageArgs, agentId, outcome)
   });
   outcome.agentRuns.push(run);

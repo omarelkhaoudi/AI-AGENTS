@@ -47,7 +47,9 @@ const FRONTEND_ASSETS = Object.freeze({
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
   "/app/": { file: "index.html", type: "text/html; charset=utf-8" },
   "/app/app.js": { file: "app.js", type: "text/javascript; charset=utf-8" },
-  "/app/styles.css": { file: "styles.css", type: "text/css; charset=utf-8" }
+  "/app/styles.css": { file: "styles.css", type: "text/css; charset=utf-8" },
+  "/suivi/": { file: "suivi.html", type: "text/html; charset=utf-8" },
+  "/app/suivi.js": { file: "suivi.js", type: "text/javascript; charset=utf-8" }
 });
 
 export function buildApi({
@@ -72,6 +74,9 @@ export function buildApi({
   conversationStore = undefined,
   // Where the workshop book is kept, the same way again.
   workshopStore = null,
+  // The site's own address, for the links sent to clients. Left empty, a link
+  // made from the cockpit takes the address the cockpit was opened at.
+  publicBaseUrl = process.env.PUBLIC_BASE_URL ?? "",
   documentOutputDir = null,
   // A seam, not a feature: the derived idempotency key names a day, and a test
   // cannot cross a day boundary by waiting for one.
@@ -158,7 +163,7 @@ export function buildApi({
   const measured = (plan) => withObjectiveMeasure(plan, { loadObjectiveRecords });
   const plans = planStore ?? createMemoryPlanStore();
   const workshopBook = workshopStore ?? createMemoryWorkshopStore();
-  const workshop = createWorkshop({ store: workshopBook, documentService: hkidsDocuments, clock });
+  const workshop = createWorkshop({ store: workshopBook, documentService: hkidsDocuments, clock, publicBaseUrl });
   const agent = directorAgent ?? createDirectorAgentFromEnv({
     documentService: hkidsDocuments,
     runDirectorRequest,
@@ -169,6 +174,7 @@ export function buildApi({
     planStore: plans,
     conversationStore,
     workshopStore: workshopBook,
+    publicBaseUrl,
     client: agentClient
   });
   // Writes to the same directory as the document service, so both kinds of
@@ -344,6 +350,10 @@ export function buildApi({
     app.get("/app/", async (_request, reply) => serveFrontendAsset(reply, "/app/"));
     app.get("/app/app.js", async (_request, reply) => serveFrontendAsset(reply, "/app/app.js"));
     app.get("/app/styles.css", async (_request, reply) => serveFrontendAsset(reply, "/app/styles.css"));
+    // The client's follow-up page. The token in the address is read by the page
+    // itself; nothing here tells whether it is valid.
+    app.get("/suivi/:token", async (_request, reply) => serveFrontendAsset(clientPageHeaders(reply), "/suivi/"));
+    app.get("/app/suivi.js", async (_request, reply) => serveFrontendAsset(reply, "/app/suivi.js"));
 
     app.get("/api/approvals", readRouteOptions(), async (request, reply) => {
       try {
@@ -556,6 +566,68 @@ export function buildApi({
         }
         return sendDomainError(reply, "Workshop update failed.", error);
       }
+    });
+
+    // The client's link, made or switched off from the cockpit.
+    app.post("/api/workshop/:number/portal", writeRouteOptions(), async (request, reply) => {
+      const by = request.principal.userId ?? "direction";
+      try {
+        if (request.body?.action === "fermer") {
+          return reply.code(200).send({ order: await workshop.closePortal(request.params.number, { by }) });
+        }
+        if (request.body?.action !== "ouvrir") {
+          return reply.code(400).send({ error: "action must be ouvrir or fermer." });
+        }
+        const link = await workshop.openPortal(request.params.number, { by });
+        return reply.code(200).send({ link: { ...link, url: link.url ?? `${request.protocol}://${request.host}${link.path}` } });
+      } catch (error) {
+        return sendWorkshopError(reply, error, "Client link update failed.");
+      }
+    });
+
+    app.post("/api/workshop/:number/photos", { ...writeRouteOptions(), bodyLimit: Math.max(securityConfig.bodyLimitBytes, DOCUMENT_BODY_LIMIT_BYTES) }, async (request, reply) => {
+      try {
+        const id = await workshop.publishPhoto(request.params.number, request.body?.photo, {
+          caption: typeof request.body?.caption === "string" ? request.body.caption : "",
+          by: request.principal.userId ?? "direction"
+        });
+        return reply.code(201).send({ id });
+      } catch (error) {
+        return sendWorkshopError(reply, error, "Photo publication failed.");
+      }
+    });
+
+    app.delete("/api/workshop/:number/photos/:id", writeRouteOptions(), async (request, reply) => {
+      try {
+        const removed = await workshop.removePhoto(request.params.number, request.params.id, { by: request.principal.userId ?? "direction" });
+        return removed ? reply.code(204).send() : reply.code(404).send({ error: "Photo introuvable." });
+      } catch (error) {
+        return sendWorkshopError(reply, error, "Photo removal failed.");
+      }
+    });
+
+    // What the client's page reads. Public: the token is the only key, and an
+    // unknown link and a link switched off answer alike.
+    app.get("/api/public/suivi/:token", async (request, reply) => {
+      const view = await workshop.clientView(request.params.token);
+      clientPageHeaders(reply);
+      return view ? reply.send(view) : reply.code(404).send({ error: "Ce lien de suivi n'existe pas ou n'est plus actif." });
+    });
+
+    app.get("/api/public/suivi/:token/photos/:id", async (request, reply) => {
+      const photo = await workshop.clientPhoto(request.params.token, request.params.id);
+      clientPageHeaders(reply);
+      return photo
+        ? reply.type(photo.format === "png" ? "image/png" : "image/jpeg").send(photo.bytes)
+        : reply.code(404).send({ error: "Photo introuvable." });
+    });
+
+    app.get("/api/public/suivi/:token/documents/:type/:number", async (request, reply) => {
+      const file = await workshop.clientDocument(request.params.token, request.params.type, request.params.number);
+      clientPageHeaders(reply);
+      return file
+        ? reply.type("application/pdf").header("Content-Disposition", `inline; filename="${basenameForHeader(file.name)}"`).send(file.bytes)
+        : reply.code(404).send({ error: "Document introuvable." });
     });
 
     // Photos and documents travel with the message: up to four of each, a
@@ -804,7 +876,30 @@ export function buildApi({
   return app;
 }
 
-const PUBLIC_API_ROUTES = Object.freeze(["/api/auth/demo-session", "/api/auth/login"]);
+const PUBLIC_API_ROUTES = Object.freeze([
+  "/api/auth/demo-session",
+  "/api/auth/login",
+  // The client's follow-up: reached by an unguessable link, read-only.
+  "/api/public/suivi/:token",
+  "/api/public/suivi/:token/photos/:id",
+  "/api/public/suivi/:token/documents/:type/:number"
+]);
+
+// A client page and what it loads: never cached, never indexed, and its address
+// (which carries the token) never sent on to another site.
+function clientPageHeaders(reply) {
+  return reply
+    .header("Cache-Control", "no-store")
+    .header("X-Robots-Tag", "noindex, nofollow")
+    .header("Referrer-Policy", "no-referrer");
+}
+
+function sendWorkshopError(reply, error, fallback) {
+  if (error instanceof WorkshopError) {
+    return reply.code(error.code === "WORKSHOP_ORDER_NOT_FOUND" ? 404 : 400).send({ error: error.message, details: { code: error.code } });
+  }
+  return sendDomainError(reply, fallback, error);
+}
 export const DEMO_USER_ID = "demo-leader";
 
 // Rate limiting runs before authentication, so it keys on the credential that

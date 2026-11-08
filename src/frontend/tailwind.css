@@ -16,6 +16,8 @@
 
 @source "./index.html";
 @source "./app.js";
+@source "./suivi.html";
+@source "./suivi.js";
 
 @custom-variant dark {
   &:where([data-theme="dark"], [data-theme="dark"] *) {
@@ -1474,6 +1476,68 @@
 
   .journal small {
     @apply text-muted;
+  }
+
+  /* What the client sees of an order: the link and the published photos. */
+  .client-access {
+    @apply mt-3.5 rounded-xl border border-dashed border-line-strong bg-surface-2 p-3.5;
+  }
+
+  .client-access header {
+    @apply flex flex-wrap items-start justify-between gap-3;
+  }
+
+  .client-access header > div:first-child {
+    @apply min-w-0 flex-1 basis-64;
+  }
+
+  .client-access strong {
+    @apply flex items-center gap-1.5 text-[13.5px] font-semibold;
+  }
+
+  .client-access header small {
+    @apply mt-0.5 block text-[12.5px] text-muted;
+  }
+
+  .client-access-actions {
+    @apply flex flex-wrap items-center gap-3;
+  }
+
+  .client-photos {
+    @apply mt-3 grid list-none grid-cols-1 gap-2 p-0 sm:grid-cols-2;
+  }
+
+  .client-photos li {
+    @apply flex items-center gap-2.5 rounded-lg border border-line bg-surface p-2 text-[12.5px];
+  }
+
+  .client-photos img,
+  .client-photo-placeholder {
+    @apply grid size-11 shrink-0 place-items-center rounded-md bg-surface-3 object-cover text-muted;
+  }
+
+  .client-photos li > span:not(.client-photo-placeholder) {
+    @apply min-w-0 flex-1 break-words;
+  }
+
+  .client-photos li small {
+    @apply block text-muted;
+  }
+
+  .client-photos .icon-button {
+    @apply min-h-8 w-8;
+  }
+
+  .client-photos li.client-photo-add {
+    @apply border-dashed p-0;
+  }
+
+  .client-photo-add label {
+    @apply flex min-h-[60px] w-full cursor-pointer items-center justify-center gap-2 rounded-lg px-3 text-[12.5px] font-semibold text-brand hover:bg-brand-soft;
+  }
+
+  .client-photo-add label:focus-within {
+    @apply outline-2 outline-offset-2 outline-brand-2;
   }
 
   /* Where a figure stands against its target: four figures and a bar. */

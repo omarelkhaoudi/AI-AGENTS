@@ -28,7 +28,8 @@ nano .env
 
 Dans `deploy/.env`, renseignez :
 
-- `DOMAIN` : le domaine, par exemple `cockpit.hkids.ma` ;
+- `DOMAIN` : le domaine, par exemple `cockpit.hkids.ma` (les liens de suivi
+  envoyés aux clients commencent par `https://<DOMAIN>/suivi/`) ;
 - `POSTGRES_PASSWORD` : un mot de passe long, généré par `openssl rand -base64 32` ;
 - `OPENAI_API_KEY` : la clé OpenAI.
 

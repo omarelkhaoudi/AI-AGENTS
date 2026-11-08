@@ -724,6 +724,7 @@ function renderOrders(orders) {
           </li>
         `).join("")}
       </ul>
+      ${clientAccess(order)}
       ${order.journal.length > 0 ? `
         <details class="journal">
           <summary>Journal de la commande</summary>
@@ -744,7 +745,142 @@ function renderOrders(orders) {
         await sendOrderChange(article.dataset.order, select.dataset.step, { status: select.value, note });
       });
     });
+    const number = article.dataset.order;
+    article.querySelector("[data-portal-open]")?.addEventListener("click", async () => {
+      const link = await sendPortalChange(number, "ouvrir");
+      if (link) {
+        await copyLink(link.url);
+      }
+    });
+    article.querySelector("[data-portal-copy]")?.addEventListener("click", (event) => copyLink(new URL(event.currentTarget.dataset.portalCopy, location.origin).href));
+    article.querySelector("[data-portal-close]")?.addEventListener("click", async () => {
+      if (globalThis.confirm?.("Couper ce lien ? Le client ne pourra plus l'ouvrir ; un nouveau lien pourra être créé.")) {
+        await sendPortalChange(number, "fermer");
+      }
+    });
+    const photoInput = article.querySelector("[data-photo-input]");
+    photoInput?.addEventListener("change", async () => {
+      const file = photoInput.files?.[0];
+      if (file) {
+        await publishOrderPhoto(number, file);
+      }
+    });
+    article.querySelectorAll("[data-photo-remove]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        if (globalThis.confirm?.("Retirer cette photo du suivi client ?")) {
+          await removeOrderPhoto(number, button.dataset.photoRemove);
+        }
+      });
+    });
   });
+}
+
+// What the client sees of the order, and the controls of the link: made,
+// copied, switched off; photos published and removed. Thumbnails come through
+// the client's own link, so they only show while it is active.
+function clientAccess(order) {
+  const thumbnail = (photo) => order.portal
+    ? `<img src="/api/public${escapeHtml(order.portal.path)}/photos/${encodeURIComponent(photo.id)}" alt="${escapeHtml(photo.caption || "Photo publiée")}" loading="lazy">`
+    : `<span class="client-photo-placeholder">${icon("image")}</span>`;
+  return `
+    <section class="client-access" aria-label="Suivi client du BC n° ${escapeHtml(order.number)}">
+      <header>
+        <div>
+          <strong>${icon("link")} Suivi client</strong>
+          <small>${order.portal
+            ? `Lien actif depuis le ${escapeHtml(formatIsoDay(order.portal.createdAt.slice(0, 10)))} : le client voit l'avancement, les photos et ses documents, jamais les notes.`
+            : "Aucun lien actif. Le client verra l'avancement, la livraison prévue, l'échéancier, les photos et ses documents, jamais les notes."}</small>
+        </div>
+        <div class="client-access-actions">
+          ${order.portal
+            ? `<button type="button" class="secondary" data-portal-copy="${escapeHtml(order.portal.path)}">Copier le lien</button>
+               <button type="button" class="link-button" data-portal-close>Couper le lien</button>`
+            : `<button type="button" class="secondary" data-portal-open>Créer le lien</button>`}
+        </div>
+      </header>
+      <ul class="client-photos">
+        ${order.photos.map((photo) => `
+          <li>
+            ${thumbnail(photo)}
+            <span>${escapeHtml(photo.caption || "Sans légende")}<small>${escapeHtml(formatIsoDay(photo.publishedAt.slice(0, 10)))}</small></span>
+            <button type="button" class="icon-button" data-photo-remove="${escapeHtml(photo.id)}" aria-label="Retirer la photo ${escapeHtml(photo.caption)}" title="Retirer">${icon("x")}</button>
+          </li>`).join("")}
+        <li class="client-photo-add">
+          <label>${icon("image")} Publier une photo<input type="file" accept="image/jpeg,image/png" data-photo-input class="visually-hidden"></label>
+        </li>
+      </ul>
+    </section>
+  `;
+}
+
+async function sendPortalChange(number, action) {
+  try {
+    const response = await fetch(`/api/workshop/${encodeURIComponent(number)}/portal`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({ action })
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body.error ?? "La mise à jour du lien a échoué.");
+    }
+    if (action === "fermer") {
+      showToast(`Lien du BC n° ${number} coupé.`);
+    }
+    return body.link ?? null;
+  } catch (error) {
+    showToast(error.message, "warn");
+    return null;
+  } finally {
+    await refreshOrders();
+  }
+}
+
+async function copyLink(url) {
+  try {
+    await navigator.clipboard.writeText(url);
+    showToast("Lien de suivi copié : collez-le dans le message au client.");
+  } catch {
+    globalThis.prompt?.("Lien de suivi du client :", url);
+  }
+}
+
+async function publishOrderPhoto(number, file) {
+  const caption = globalThis.prompt?.("Légende pour le client (facultative), par exemple « Assemblage terminé » :", "");
+  if (caption === null) {
+    return;
+  }
+  try {
+    const photo = await downscaleImage(file, 1600, 0.85);
+    const response = await fetch(`/api/workshop/${encodeURIComponent(number)}/photos`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({ photo, caption: caption ?? "" })
+    });
+    if (!response.ok) {
+      throw new Error((await response.json()).error ?? "La photo n'a pas pu être publiée.");
+    }
+    showToast("Photo publiée sur le suivi client.");
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshOrders();
+}
+
+async function removeOrderPhoto(number, id) {
+  try {
+    const response = await fetch(`/api/workshop/${encodeURIComponent(number)}/photos/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: await authHeaders()
+    });
+    if (!response.ok && response.status !== 404) {
+      throw new Error((await response.json()).error ?? "La photo n'a pas pu être retirée.");
+    }
+    showToast("Photo retirée du suivi client.");
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshOrders();
 }
 
 function orderDocuments(order) {

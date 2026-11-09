@@ -806,7 +806,10 @@ Ce que fait le modèle et ce qu'il ne fait pas :
   l'avancement est calculé sur les étapes terminées, jamais estimé ;
 - le bureau d'études de chaque commande (panneau « Bureau d'études » de la vue
   Atelier, outil `equipe_commande` du Director et de la Production) : le chef
-  de charge qui en répond, l'architecte du client et la personne de l'équipe
+  de charge qui en répond et son numéro WhatsApp (il y reçoit, une fois par
+  anomalie, chaque étape de sa commande qui se bloque ou prend du retard, et
+  sa réponse arrive à la Production comme compte rendu ; un message refusé
+  par Meta est noté au fil d'équipe), l'architecte du client et la personne de l'équipe
   en lien avec lui, le dessinateur et son numéro WhatsApp. Après la fiche
   technique (étude technique terminée), le dessinateur dépose le G-code ou le
   DXF (`data/atelier-cnc/`, 8 Mo au plus, contenu vérifié) depuis le cockpit,

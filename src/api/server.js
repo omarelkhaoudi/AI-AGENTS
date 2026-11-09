@@ -189,7 +189,17 @@ export function buildApi({
   const workshopBook = workshopStore ?? createMemoryWorkshopStore();
   const workshop = createWorkshop({ store: workshopBook, documentService: hkidsDocuments, clock, publicBaseUrl });
   const cash = cashBook ?? createMemoryCashBook({ clock });
-  const improvement = improvementBook ?? createMemoryImprovementBook({ clock });
+  const improvementRecords = improvementBook ?? createMemoryImprovementBook({ clock });
+  // Wherever the workshop book is read (the Director, the cockpit, the timer),
+  // a step newly blocked or late is told to its order's chef de charge.
+  const improvement = Object.freeze({
+    ...improvementRecords,
+    async sync(orders) {
+      const found = await improvementRecords.sync(orders);
+      await whatsApp.alertLeads(found, orders);
+      return found;
+    }
+  });
   const teamFeed = teamBook ?? createMemoryTeamBook({ clock, agents: SPECIALIST_IDS });
   const agent = directorAgent ?? createDirectorAgentFromEnv({
     documentService: hkidsDocuments,

@@ -59,7 +59,7 @@ test("an order names its chef de charge, the client's architect, who deals with 
 
   const { changed, order: named } = await workshop.setTeam("171", { lead: "Samir", architect: "Cabinet Exemple", architectPhone: "06 12 34 56 78", liaison: "Hiba", drafter: "Karim" }, { by: "hiba" });
   assert.equal(changed, true);
-  assert.deepEqual({ ...named.team }, { lead: "Samir", architect: "Cabinet Exemple", architectPhone: "212612345678", liaison: "Hiba", drafter: "Karim", drafterPhone: "" });
+  assert.deepEqual({ ...named.team }, { lead: "Samir", leadPhone: "", architect: "Cabinet Exemple", architectPhone: "212612345678", liaison: "Hiba", drafter: "Karim", drafterPhone: "" });
   assert.equal(named.journal.at(-1).text, "Équipe de la commande : chef de charge : Samir ; architecte : Cabinet Exemple ; téléphone de l'architecte : 212612345678 ; lien avec l'architecte : Hiba ; dessinateur : Karim.");
 
   const { order: changedLead } = await workshop.setTeam("171", { lead: "Youssef", architect: "" });
@@ -188,7 +188,7 @@ function agentWith(documents, workshopStore, scripts, books = {}) {
 }
 const call = (name, args, id) => ({ output: [{ type: "function_call", name, call_id: id, arguments: JSON.stringify(args) }] });
 const say = (text) => ({ output_text: text, output: [] });
-const roles = (extra) => ({ numero: "171", chef_de_charge: "", architecte: "", telephone_architecte: "", lien_architecte: "", dessinateur: "", telephone_dessinateur: "", ...extra });
+const roles = (extra) => ({ numero: "171", chef_de_charge: "", telephone_chef_de_charge: "", architecte: "", telephone_architecte: "", lien_architecte: "", dessinateur: "", telephone_dessinateur: "", ...extra });
 
 test("told who answers for an order, the Director records it; Production can too; neither can validate a CNC file", async (t) => {
   const documents = await documentsWith(t);
@@ -212,12 +212,12 @@ test("told who answers for an order, the Director records it; Production can too
   assert.ok(directorTools.includes("equipe_commande"));
   assert.ok(director[0].instructions.includes("Bureau d'études"));
   assert.ok(!directorTools.some((name) => /valid/i.test(name)), "no agent validates a machine file");
-  assert.equal(JSON.parse(director[1].input.at(-1).output).equipe.chef_de_charge, "Samir");
+  assert.equal(JSON.parse(director[1].input.at(-1).output).equipe.chef_de_charge, "Samir — sans numéro : ne reçoit pas les alertes");
 
   const production = calls.filter((payload) => payload.instructions.includes("Tu es l'agent Production"));
   assert.ok(production[0].tools.some((tool) => tool.name === "equipe_commande"));
   const book = await createWorkshop({ store: workshopStore, documentService: documents, clock }).order("171");
-  assert.deepEqual({ ...book.team }, { lead: "Youssef", architect: "", architectPhone: "", liaison: "Hiba", drafter: "Karim", drafterPhone: "212670000003" });
+  assert.deepEqual({ ...book.team }, { lead: "Youssef", leadPhone: "", architect: "", architectPhone: "", liaison: "Hiba", drafter: "Karim", drafterPhone: "212670000003" });
   assert.equal(book.journal.at(-1).by, "production");
 });
 

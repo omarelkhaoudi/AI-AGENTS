@@ -1536,6 +1536,7 @@ const ORDER_STATUS_TONES = Object.freeze({ "livrée et installée": "ok", "bloqu
 // Who answers for an order, as the design office panel asks for them.
 const ORDER_ROLE_FIELDS = Object.freeze([
   ["lead", "Chef de charge", "contrôle la commande de bout en bout"],
+  ["leadPhone", "WhatsApp du chef de charge", "il y reçoit les alertes"],
   ["architect", "Architecte du client", "nom, cabinet"],
   ["architectPhone", "Téléphone de l'architecte", "06 12 34 56 78"],
   ["liaison", "En lien avec l'architecte", "qui, dans l'équipe"],

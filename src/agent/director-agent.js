@@ -314,20 +314,21 @@ const CLIENT_LINK_TOOL = Object.freeze({
 const ORDER_TEAM_TOOL = Object.freeze({
     type: "function",
     name: "equipe_commande",
-    description: "Enregistre qui répond d'un bon de commande : le chef de charge qui contrôle la commande de bout en bout, l'architecte du client (et son numéro), la personne de l'équipe en lien avec l'architecte, le dessinateur qui fait le G-code de la machine CNC après la fiche technique (et son numéro WhatsApp : il pourra y envoyer ses fichiers). Seulement pour ce que la direction ou l'atelier a dit. Chaîne vide pour ne pas changer un rôle, « - » pour le retirer.",
+    description: "Enregistre qui répond d'un bon de commande : le chef de charge qui contrôle la commande de bout en bout (et son numéro WhatsApp : il y reçoit les alertes de retard et de blocage de la commande), l'architecte du client (et son numéro), la personne de l'équipe en lien avec l'architecte, le dessinateur qui fait le G-code de la machine CNC après la fiche technique (et son numéro WhatsApp : il pourra y envoyer ses fichiers). Seulement pour ce que la direction ou l'atelier a dit. Chaîne vide pour ne pas changer un rôle, « - » pour le retirer.",
     parameters: {
       type: "object",
       additionalProperties: false,
       properties: {
         numero: { type: "string", description: "Numéro du bon de commande." },
         chef_de_charge: { type: "string", description: "Prénom ou nom du chef de charge." },
+        telephone_chef_de_charge: { type: "string", description: "Numéro WhatsApp du chef de charge, tel que donné." },
         architecte: { type: "string", description: "Nom de l'architecte du client (cabinet compris s'il est dit)." },
         telephone_architecte: { type: "string", description: "Numéro de l'architecte, tel que donné." },
         lien_architecte: { type: "string", description: "La personne de l'équipe qui échange avec l'architecte." },
         dessinateur: { type: "string", description: "Le dessinateur qui fait le G-code." },
         telephone_dessinateur: { type: "string", description: "Numéro WhatsApp du dessinateur, tel que donné." }
       },
-      required: ["numero", "chef_de_charge", "architecte", "telephone_architecte", "lien_architecte", "dessinateur", "telephone_dessinateur"]
+      required: ["numero", "chef_de_charge", "telephone_chef_de_charge", "architecte", "telephone_architecte", "lien_architecte", "dessinateur", "telephone_dessinateur"]
     }
 });
 
@@ -435,7 +436,7 @@ function instructions(today, briefing = []) {
     "",
     `Atelier, après le bon de commande : chaque bon de commande validé suit ${WORKSHOP_STEPS.length} étapes (${WORKSHOP_STEPS.map((step) => step.label).join(", ")}). « Le BC 166 est en découpe », « l'assemblage du 166 est fini », « la peinture est bloquée, il manque la laque », « Youssef s'occupe de l'étude, prévue pour le 12/11 » → c'est un fait que la direction t'annonce : avancer_commande toi-même, un appel par étape (une étape commencée = en_cours ; les étapes d'avant qu'elle dit finies = terminee), puis confirme en une ligne avec l'avancement. « Où en est la commande de Mme X / le BC 166 », « quelles commandes sont en retard » → carnet_atelier, puis l'étape en cours, l'avancement (calculé sur les étapes terminées, jamais estimé), les dates prévues et les alertes. Planning, priorités ou charge de l'atelier → production. Suite de la chaîne, tout de suite après l'avoir enregistrée : contrôle qualité terminé → commercial : préparer le message au client pour convenir de la date de livraison et d'installation ; livraison et installation terminée → finance : facture du solde du devis (si le dossier n'est pas soldé). Pour tout point de situation ou toute question d'urgences, regarde aussi carnet_atelier et signale les commandes bloquées ou en retard.`,
     "",
-    "Bureau d'études, avant la découpe : chaque bon de commande a un chef de charge qui le contrôle de bout en bout ; quand le client a un architecte, une personne de l'équipe est en lien avec lui ; après la fiche technique (étude technique terminée), le dessinateur fait le fichier de la machine CNC (G-code ou DXF) et le dépose dans le cockpit, ou l'envoie au numéro WhatsApp de l'entreprise avec « BC n° » en légende (son numéro doit être enregistré sur la commande). « Samir est chef de charge du BC 166 », « l'architecte de Mme Alami est M. Bennani, c'est Hiba qui le suit », « Karim fait le G-code » → equipe_commande. Le fichier n'atteint la machine qu'une fois validé par la direction dans le cockpit (vue Atelier) : tu ne le valides jamais, et la découpe CNC ne peut pas commencer avant. Une commande lancée sans chef de charge, un fichier CNC qui attend sa validation : signale-le dans tout point de situation.",
+    "Bureau d'études, avant la découpe : chaque bon de commande a un chef de charge qui le contrôle de bout en bout ; avec son numéro, il reçoit sur WhatsApp chaque étape de sa commande qui se bloque ou prend du retard, et sa réponse arrive à la Production comme compte rendu ; quand le client a un architecte, une personne de l'équipe est en lien avec lui ; après la fiche technique (étude technique terminée), le dessinateur fait le fichier de la machine CNC (G-code ou DXF) et le dépose dans le cockpit, ou l'envoie au numéro WhatsApp de l'entreprise avec « BC n° » en légende (son numéro doit être enregistré sur la commande). « Samir est chef de charge du BC 166 », « l'architecte de Mme Alami est M. Bennani, c'est Hiba qui le suit », « Karim fait le G-code » → equipe_commande. Le fichier n'atteint la machine qu'une fois validé par la direction dans le cockpit (vue Atelier) : tu ne le valides jamais, et la découpe CNC ne peut pas commencer avant. Une commande lancée sans chef de charge, un fichier CNC qui attend sa validation : signale-le dans tout point de situation.",
     "",
     "Caisse et bilan du jour : chaque entrée ou sortie d'argent que la direction t'annonce (« j'ai reçu 3 000 DH d'acompte de Mme Alami en espèces pour le devis 170 », « j'ai payé 1 200 DH de laque à Sodipeint par chèque », « j'ai versé les salaires, 18 000 DH par virement », « il y a 5 000 DH en caisse au départ ») → confie-la tout de suite au Directeur financier (finance) avec deleguer_a_un_agent, en recopiant tout : entrée ou sortie, montant, ce que c'est, moyen de paiement, qui a payé ou a été payé, numéro du devis ou du BC, la date si ce n'est pas aujourd'hui, et qui l'annonce. Plusieurs mouvements annoncés ensemble → une seule mission qui les liste tous. Finance l'enregistre au journal de caisse et te rend le bilan du jour : réponds en deux ou trois lignes (mouvement n°, montant, solde du jour, et pour un client ce qui reste à encaisser sur sa vente). « Où en est la caisse », « bilan du jour », « combien j'ai en caisse » → bilan_caisse toi-même. Pour tout point de situation, donne aussi le bilan de caisse du jour. Une erreur de saisie (« ce n'était pas 3 000 mais 2 000 ») → finance : annuler le mouvement et enregistrer le bon. Justificatifs : une dépense annoncée avec la photo d'un reçu, d'un ticket ou d'une facture → écris « justificatif : photo n° X » dans la mission ; une photo envoyée plus tard pour une dépense déjà enregistrée (« voici le reçu du MDF ») → mission à finance : joindre la photo n° X au mouvement n° N. Sans photo, rappelle à la direction d'envoyer le justificatif. Une dépense au-dessus du seuil d'alerte s'approuve dans la vue Caisse du cockpit, par une personne : tu ne l'approuves jamais.",
     "",
@@ -1053,9 +1054,9 @@ function orderLine(order) {
 }
 
 function orderTeam(order) {
-  const { lead, architect, architectPhone, liaison, drafter, drafterPhone } = order.team;
+  const { lead, leadPhone, architect, architectPhone, liaison, drafter, drafterPhone } = order.team;
   return {
-    chef_de_charge: lead || "à désigner",
+    chef_de_charge: lead ? `${lead}${leadPhone ? ` (${leadPhone})` : " — sans numéro : ne reçoit pas les alertes"}` : "à désigner",
     architecte: architect ? `${architect}${architectPhone ? ` (${architectPhone})` : ""}` : "aucun",
     lien_avec_l_architecte: liaison || (architect ? "à désigner" : null),
     dessinateur: drafter ? `${drafter}${drafterPhone ? ` (${drafterPhone})` : ""}` : "à désigner"
@@ -1067,6 +1068,7 @@ async function setOrderTeam(args, { workshop, books }, by) {
   try {
     const { changed, order } = await workshop.setTeam(text(args.numero), {
       lead: role(args.chef_de_charge),
+      leadPhone: role(args.telephone_chef_de_charge),
       architect: role(args.architecte),
       architectPhone: role(args.telephone_architecte),
       liaison: role(args.lien_architecte),

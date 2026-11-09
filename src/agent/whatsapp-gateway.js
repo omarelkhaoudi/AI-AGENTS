@@ -14,8 +14,10 @@ import { MAX_TEXT_LENGTH, WhatsAppCloudError, parseWebhookMessages } from "../in
 // - anyone else (a client, a supplier): it is kept for the cockpit and nobody
 //   answers automatically. A person decides.
 //
-// The draughtsman of an order (their number is on the order, in the design
-// office) reports like a member of the Production team. A G-code or DXF file
+// The chef de charge and the draughtsman of an order (their numbers are on the
+// order, in the design office) report like members of the Production team.
+// The chef de charge is told on WhatsApp of each step of their order that
+// gets blocked or late, once per anomaly. A G-code or DXF file
 // sent by them, by the team or by the direction goes on the order named in its
 // caption (« BC 171 »), or on their only order in progress, and waits there for
 // the direction's validation, which is told at once.
@@ -58,13 +60,19 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
     return found ? { agent: found[0], member: found[1] } : null;
   }
 
-  // The orders in progress this number draws for, with its name.
-  async function drafterOf(number) {
+  // Who this number is on the orders in progress: their chef de charge, their
+  // draughtsman. orders: those they draw for.
+  async function orderPersonOf(number) {
     if (!workshop) {
       return null;
     }
-    const orders = (await workshop.book()).filter((order) => !order.finished && order.team?.drafterPhone === number);
-    return orders.length > 0 ? { name: orders[0].team.drafter || "Dessinateur", orders } : null;
+    const open = (await workshop.book()).filter((order) => !order.finished);
+    const orders = open.filter((order) => order.team?.drafterPhone === number);
+    const leads = open.filter((order) => order.team?.leadPhone === number);
+    if (orders.length === 0 && leads.length === 0) {
+      return null;
+    }
+    return { name: orders[0]?.team.drafter || leads[0]?.team.lead || "Équipe atelier", orders };
   }
 
   async function send({ to, text, name = "", by, kind = "autre" }) {
@@ -224,7 +232,7 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
   async function handle(message) {
     const owner = config.ownerNumbers.includes(message.from);
     const team = owner ? null : await teamMemberOf(message.from);
-    const drafter = owner || team ? null : await drafterOf(message.from);
+    const drafter = owner || team ? null : await orderPersonOf(message.from);
     const sender = owner ? "direction" : team || drafter ? "equipe" : "contact";
     const recorded = await inbox.receive({
       metaId: message.id,
@@ -239,7 +247,7 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
     if (!recorded) {
       return;
     }
-    if (workshop && message.type === "document" && isCncFileName(message.media?.filename) && (owner || team || drafter)) {
+    if (workshop && message.type === "document" && isCncFileName(message.media?.filename) && (owner || team || drafter?.orders.length > 0)) {
       await fromDrafting(message, { name: owner ? "La direction" : team?.member.name ?? drafter.name, orders: drafter?.orders ?? null });
     } else if (owner) {
       await fromDirection(message, recorded);
@@ -261,6 +269,31 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
     },
 
     send,
+
+    // The anomalies just found in the workshop book, told to the chef de
+    // charge of their order. One without a number is seen in the cockpit
+    // only; a message Meta refuses is written to the team feed.
+    async alertLeads(anomalies, orders) {
+      if (!client) {
+        return;
+      }
+      for (const anomaly of anomalies.filter((entry) => entry.source === "atelier")) {
+        const order = orders.find((candidate) => String(candidate.number) === anomaly.orderNumber);
+        const { lead = "", leadPhone = "" } = order?.team ?? {};
+        if (!leadPhone) {
+          continue;
+        }
+        const what = anomaly.fact.replace(/^BC \S+ \([^)]*\) : /, "");
+        const text = `Bonjour${lead ? ` ${lead}` : ""}, alerte sur le BC n° ${order.number} (${order.client}) dont vous êtes chef de charge : ${what}. Répondez ici avec la cause et la nouvelle date : la direction et l'agent Production seront informés.`;
+        try {
+          await send({ to: leadPhone, text, name: lead, by: "director", kind: "alerte" });
+          await teamBook.log({ agent: anomaly.owner, kind: "atelier", text: `Alerte envoyée par WhatsApp à ${lead || leadPhone} (chef de charge) : ${anomaly.fact}`, ref: `bc:${order.number}`, by: "director" });
+        } catch (error) {
+          log(error);
+          await teamBook.log({ agent: anomaly.owner, kind: "atelier", text: `Alerte non envoyée à ${lead || leadPhone} (chef de charge) : ${error.message}`, ref: `bc:${order.number}`, by: "director" });
+        }
+      }
+    },
 
     // For tests: resolves once every number's messages were handled.
     async idle() {

@@ -59,13 +59,14 @@ export const WORKSHOP_STATUS_LABELS = Object.freeze({ a_faire: "à faire", en_co
 // Who answers for an order, beside the person in charge of each step.
 export const ORDER_ROLES = Object.freeze([
   Object.freeze({ id: "lead", label: "Chef de charge" }),
+  Object.freeze({ id: "leadPhone", label: "Téléphone du chef de charge" }),
   Object.freeze({ id: "architect", label: "Architecte" }),
   Object.freeze({ id: "architectPhone", label: "Téléphone de l'architecte" }),
   Object.freeze({ id: "liaison", label: "Lien avec l'architecte" }),
   Object.freeze({ id: "drafter", label: "Dessinateur" }),
   Object.freeze({ id: "drafterPhone", label: "Téléphone du dessinateur" })
 ]);
-const PHONE_ROLES = Object.freeze(["architectPhone", "drafterPhone"]);
+const PHONE_ROLES = Object.freeze(["leadPhone", "architectPhone", "drafterPhone"]);
 export const ORDER_ROLE_IDS = Object.freeze(ORDER_ROLES.map((role) => role.id));
 
 // The machine files of an order, by extension.

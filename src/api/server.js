@@ -218,6 +218,7 @@ export function buildApi({
     inbox: whatsAppInbox,
     teamBook: teamFeed,
     agent,
+    workshop,
     transcriber: whatsAppTranscriber === undefined ? createOpenAiTranscriberFromEnv() : whatsAppTranscriber,
     log: (error) => app.log.error(error)
   });

@@ -807,9 +807,13 @@ Ce que fait le modèle et ce qu'il ne fait pas :
 - le bureau d'études de chaque commande (panneau « Bureau d'études » de la vue
   Atelier, outil `equipe_commande` du Director et de la Production) : le chef
   de charge qui en répond, l'architecte du client et la personne de l'équipe
-  en lien avec lui, le dessinateur. Après la fiche technique (étude technique
-  terminée), le dessinateur dépose le G-code ou le DXF
-  (`data/atelier-cnc/`, 8 Mo au plus, contenu vérifié) ; la direction le
+  en lien avec lui, le dessinateur et son numéro WhatsApp. Après la fiche
+  technique (étude technique terminée), le dessinateur dépose le G-code ou le
+  DXF (`data/atelier-cnc/`, 8 Mo au plus, contenu vérifié) depuis le cockpit,
+  ou l'envoie au numéro WhatsApp de l'entreprise avec « BC 171 » en légende
+  (sans légende : sa seule commande en cours). Il n'atteint que les commandes
+  dont il est le dessinateur ; la direction est prévenue sur WhatsApp. La
+  direction le
   valide ou le refuse avec un motif (droit de décider, jamais un agent), et la
   découpe CNC ne peut pas commencer avant. Rien de tout cela n'est montré au
   client ;

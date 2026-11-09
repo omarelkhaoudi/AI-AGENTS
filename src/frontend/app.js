@@ -1539,7 +1539,8 @@ const ORDER_ROLE_FIELDS = Object.freeze([
   ["architect", "Architecte du client", "nom, cabinet"],
   ["architectPhone", "Téléphone de l'architecte", "06 12 34 56 78"],
   ["liaison", "En lien avec l'architecte", "qui, dans l'équipe"],
-  ["drafter", "Dessinateur", "fait le G-code"]
+  ["drafter", "Dessinateur", "fait le G-code"],
+  ["drafterPhone", "WhatsApp du dessinateur", "il y envoie ses fichiers"]
 ]);
 const CNC_STATUS_TAGS = Object.freeze({ a_valider: ["warning", "à valider"], valide: ["ok", "validé"], refuse: ["danger", "refusé"] });
 const CNC_ACCEPT = ".nc,.gcode,.ngc,.tap,.cnc,.gc,.iso,.dxf";
@@ -1790,7 +1791,7 @@ function designOffice(order) {
       </form>
       <div class="cnc-files">
         <p>${studyDone
-          ? "Le dessinateur dépose ici le G-code (ou le DXF) fait d'après la fiche technique. La découpe CNC ne commence qu'une fois le fichier validé par la direction."
+          ? "Le dessinateur dépose ici le G-code (ou le DXF) fait d'après la fiche technique, ou l'envoie au numéro WhatsApp de l'entreprise avec « BC ${escapeHtml(order.number)} » en légende. La découpe CNC ne commence qu'une fois le fichier validé par la direction."
           : "Après la fiche technique (étude technique terminée), le dessinateur dépose ici le G-code ou le DXF. La découpe CNC attend sa validation."}</p>
         <ul>
           ${order.cnc.map((file) => {

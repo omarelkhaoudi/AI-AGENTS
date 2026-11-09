@@ -1,5 +1,6 @@
 import { SPECIALISTS } from "./agent-team.js";
 import { TranscriptionError } from "./transcriber.js";
+import { MAX_CNC_FILE_BYTES, WorkshopError, isCncFileName } from "./workshop-book.js";
 import { MAX_TEXT_LENGTH, WhatsAppCloudError, parseWebhookMessages } from "../integrations/whatsapp-cloud.js";
 
 // What happens to a message written to the company's WhatsApp number, by who
@@ -12,6 +13,12 @@ import { MAX_TEXT_LENGTH, WhatsAppCloudError, parseWebhookMessages } from "../in
 //   feed, where the Director and that agent read it, and is acknowledged;
 // - anyone else (a client, a supplier): it is kept for the cockpit and nobody
 //   answers automatically. A person decides.
+//
+// The draughtsman of an order (their number is on the order, in the design
+// office) reports like a member of the Production team. A G-code or DXF file
+// sent by them, by the team or by the direction goes on the order named in its
+// caption (« BC 171 »), or on their only order in progress, and waits there for
+// the direction's validation, which is told at once.
 //
 // A voice note from the direction or the team is transcribed first, and its
 // words are read like typed ones; a photo or a document from the direction
@@ -30,7 +37,7 @@ const DOCUMENT_EXTENSIONS = Object.freeze({
 // The Director's errors the sender can act on, told word for word.
 const TOLD_AS_IS = Object.freeze(["AGENT_NOT_CONFIGURED", "AGENT_MODEL_UNAVAILABLE", "AGENT_PHOTO_INVALID", "AGENT_FILE_INVALID"]);
 
-export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, transcriber = null, log = () => {} }) {
+export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, workshop = null, transcriber = null, log = () => {} }) {
   // One number's messages are handled in the order they came.
   const lanes = new Map();
   const inLane = (number, task) => {
@@ -49,6 +56,15 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
     const members = await teamBook.members();
     const found = Object.entries(members).find(([, member]) => member.phone === number);
     return found ? { agent: found[0], member: found[1] } : null;
+  }
+
+  // The orders in progress this number draws for, with its name.
+  async function drafterOf(number) {
+    if (!workshop) {
+      return null;
+    }
+    const orders = (await workshop.book()).filter((order) => !order.finished && order.team?.drafterPhone === number);
+    return orders.length > 0 ? { name: orders[0].team.drafter || "Dessinateur", orders } : null;
   }
 
   async function send({ to, text, name = "", by, kind = "autre" }) {
@@ -162,6 +178,41 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
     ].filter(Boolean).join("\n\n"));
   }
 
+  // A machine file: on its order, waiting for the direction. A draughtsman
+  // only reaches the orders they draw for.
+  async function fromDrafting(message, { name, orders = null }) {
+    const named = orderNumberIn(message.text) ?? orderNumberIn(message.media.filename);
+    const mine = orders?.map((order) => order.number) ?? null;
+    const number = named ?? (mine?.length === 1 ? mine[0] : null);
+    if (!number) {
+      return reply(message, mine?.length > 1
+        ? `Pour quel bon de commande ? Vous dessinez les BC n° ${mine.join(", ")}. Renvoyez le fichier avec « BC ${mine[0]} » en légende.`
+        : "Pour quel bon de commande ? Renvoyez le fichier avec « BC 171 » (son numéro) en légende.");
+    }
+    if (mine && !mine.includes(number)) {
+      return reply(message, `Vous n'êtes pas enregistré comme dessinateur du BC n° ${number}. Vos commandes en cours : BC n° ${mine.join(", ")}.`);
+    }
+    let order;
+    try {
+      const file = await client.downloadMedia(message.media.id, { maxBytes: MAX_CNC_FILE_BYTES });
+      await workshop.depositCncFile(number, { content: file.bytes, name: message.media.filename, note: message.text, by: name });
+      order = await workshop.order(number);
+    } catch (error) {
+      if (error instanceof WorkshopError || error instanceof WhatsAppCloudError) {
+        return reply(message, `Fichier non enregistré : ${error.message}`);
+      }
+      throw error;
+    }
+    const fileName = order.cnc.at(-1).name;
+    await teamBook.log({ agent: "production", kind: "atelier", text: `BC ${number} (${order.client}) — fichier CNC « ${fileName} » reçu de ${name} par WhatsApp, à valider par la direction.`, ref: `bc:${number}`, by: name });
+    await reply(message, `Bien reçu, ${name}. « ${fileName} » est enregistré sur le BC n° ${number} (${order.client}). Il attend la validation de la direction ; la découpe commencera après.`);
+    // The direction is told at once; a number outside its 24-hour window
+    // sees it in the cockpit instead.
+    for (const owner of config.ownerNumbers.filter((candidate) => candidate !== message.from)) {
+      await send({ to: owner, text: `${name} a envoyé le fichier CNC « ${fileName} » pour le BC n° ${number} (${order.client}) : à valider dans le cockpit, vue Atelier, avant la découpe.`, by: "director", kind: "alerte" }).catch(log);
+    }
+  }
+
   async function reply(message, text) {
     try {
       await send({ to: message.from, text, name: message.name, by: "director", kind: "reponse" });
@@ -173,13 +224,14 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
   async function handle(message) {
     const owner = config.ownerNumbers.includes(message.from);
     const team = owner ? null : await teamMemberOf(message.from);
-    const sender = owner ? "direction" : team ? "equipe" : "contact";
+    const drafter = owner || team ? null : await drafterOf(message.from);
+    const sender = owner ? "direction" : team || drafter ? "equipe" : "contact";
     const recorded = await inbox.receive({
       metaId: message.id,
       number: message.from,
-      name: team?.member.name ?? message.name,
+      name: team?.member.name ?? drafter?.name ?? message.name,
       sender,
-      agent: team?.agent ?? null,
+      agent: team?.agent ?? (drafter ? "production" : null),
       type: message.type,
       text: message.text,
       at: message.at
@@ -187,10 +239,14 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
     if (!recorded) {
       return;
     }
-    if (owner) {
+    if (workshop && message.type === "document" && isCncFileName(message.media?.filename) && (owner || team || drafter)) {
+      await fromDrafting(message, { name: owner ? "La direction" : team?.member.name ?? drafter.name, orders: drafter?.orders ?? null });
+    } else if (owner) {
       await fromDirection(message, recorded);
     } else if (team) {
       await fromTeam(message, team, recorded);
+    } else if (drafter) {
+      await fromTeam(message, { agent: "production", member: { name: drafter.name } }, recorded);
     }
   }
 
@@ -225,6 +281,11 @@ function waiting(outcome) {
     lines.push(`${outcome.documents.length} document(s) préparé(s) : à retrouver dans le cockpit.`);
   }
   return lines;
+}
+
+// « BC 171 », « bon de commande n° 171 », « BC171_panneaux.nc ».
+function orderNumberIn(text) {
+  return /(?<![a-z])(?:bc|bon de commande|commande)[\s_-]*(?:n\s*[°o.]?\s*)?(\d{2,6})(?!\d)/i.exec(String(text ?? ""))?.[1] ?? null;
 }
 
 function clip(text, length) {

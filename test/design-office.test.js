@@ -59,7 +59,7 @@ test("an order names its chef de charge, the client's architect, who deals with 
 
   const { changed, order: named } = await workshop.setTeam("171", { lead: "Samir", architect: "Cabinet Exemple", architectPhone: "06 12 34 56 78", liaison: "Hiba", drafter: "Karim" }, { by: "hiba" });
   assert.equal(changed, true);
-  assert.deepEqual({ ...named.team }, { lead: "Samir", architect: "Cabinet Exemple", architectPhone: "212612345678", liaison: "Hiba", drafter: "Karim" });
+  assert.deepEqual({ ...named.team }, { lead: "Samir", architect: "Cabinet Exemple", architectPhone: "212612345678", liaison: "Hiba", drafter: "Karim", drafterPhone: "" });
   assert.equal(named.journal.at(-1).text, "Équipe de la commande : chef de charge : Samir ; architecte : Cabinet Exemple ; téléphone de l'architecte : 212612345678 ; lien avec l'architecte : Hiba ; dessinateur : Karim.");
 
   const { order: changedLead } = await workshop.setTeam("171", { lead: "Youssef", architect: "" });
@@ -188,7 +188,7 @@ function agentWith(documents, workshopStore, scripts, books = {}) {
 }
 const call = (name, args, id) => ({ output: [{ type: "function_call", name, call_id: id, arguments: JSON.stringify(args) }] });
 const say = (text) => ({ output_text: text, output: [] });
-const roles = (extra) => ({ numero: "171", chef_de_charge: "", architecte: "", telephone_architecte: "", lien_architecte: "", dessinateur: "", ...extra });
+const roles = (extra) => ({ numero: "171", chef_de_charge: "", architecte: "", telephone_architecte: "", lien_architecte: "", dessinateur: "", telephone_dessinateur: "", ...extra });
 
 test("told who answers for an order, the Director records it; Production can too; neither can validate a CNC file", async (t) => {
   const documents = await documentsWith(t);
@@ -200,7 +200,7 @@ test("told who answers for an order, the Director records it; Production can too
       say("Équipe du BC 171 enregistrée.")
     ],
     "Tu es l'agent Production": [
-      call("equipe_commande", roles({ chef_de_charge: "Youssef", dessinateur: "Karim", architecte: "-" }), "p1"),
+      call("equipe_commande", roles({ chef_de_charge: "Youssef", dessinateur: "Karim", telephone_dessinateur: "06 70 00 00 03", architecte: "-" }), "p1"),
       say("Youssef chef de charge, Karim au dessin.")
     ]
   });
@@ -217,7 +217,7 @@ test("told who answers for an order, the Director records it; Production can too
   const production = calls.filter((payload) => payload.instructions.includes("Tu es l'agent Production"));
   assert.ok(production[0].tools.some((tool) => tool.name === "equipe_commande"));
   const book = await createWorkshop({ store: workshopStore, documentService: documents, clock }).order("171");
-  assert.deepEqual({ ...book.team }, { lead: "Youssef", architect: "", architectPhone: "", liaison: "Hiba", drafter: "Karim" });
+  assert.deepEqual({ ...book.team }, { lead: "Youssef", architect: "", architectPhone: "", liaison: "Hiba", drafter: "Karim", drafterPhone: "212670000003" });
   assert.equal(book.journal.at(-1).by, "production");
 });
 

@@ -62,8 +62,10 @@ export const ORDER_ROLES = Object.freeze([
   Object.freeze({ id: "architect", label: "Architecte" }),
   Object.freeze({ id: "architectPhone", label: "Téléphone de l'architecte" }),
   Object.freeze({ id: "liaison", label: "Lien avec l'architecte" }),
-  Object.freeze({ id: "drafter", label: "Dessinateur" })
+  Object.freeze({ id: "drafter", label: "Dessinateur" }),
+  Object.freeze({ id: "drafterPhone", label: "Téléphone du dessinateur" })
 ]);
+const PHONE_ROLES = Object.freeze(["architectPhone", "drafterPhone"]);
 export const ORDER_ROLE_IDS = Object.freeze(ORDER_ROLES.map((role) => role.id));
 
 // The machine files of an order, by extension.
@@ -260,10 +262,10 @@ function createWorkshopStore({ load, save, clock, photoFiles, cncFiles }) {
           continue;
         }
         let value = text(roles[role.id]);
-        if (role.id === "architectPhone" && value) {
+        if (PHONE_ROLES.includes(role.id) && value) {
           value = normalizeWhatsAppNumber(value);
           if (value === null) {
-            throw new WorkshopError("Numéro de l'architecte illisible : écrire par exemple 06 12 34 56 78 ou +212 6 12 34 56 78.", "WORKSHOP_PHONE_INVALID");
+            throw new WorkshopError(`Numéro illisible (${role.label.toLowerCase()}) : écrire par exemple 06 12 34 56 78 ou +212 6 12 34 56 78.`, "WORKSHOP_PHONE_INVALID");
           }
         }
         next[role.id] = value;
@@ -718,6 +720,11 @@ export function readCncUpload(content, name) {
     throw new WorkshopError(`« ${fileName} » ne ressemble pas à un fichier ${format === "gcode" ? "G-code" : "DXF"} : vérifiez le fichier du dessinateur.`, "WORKSHOP_CNC_CONTENT");
   }
   return { bytes, name: fileName, format };
+}
+
+// Whether a file's name says it is for the CNC machine.
+export function isCncFileName(name) {
+  return Object.values(CNC_FORMATS).some((extensions) => extensions.includes(extensionOf(name)));
 }
 
 function extensionOf(name) {

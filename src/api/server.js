@@ -33,6 +33,7 @@ import { TeamBookError, createMemoryTeamBook } from "../agent/team-book.js";
 import { SPECIALISTS, SPECIALIST_IDS } from "../agent/agent-team.js";
 import { createMemoryWhatsAppInbox } from "../agent/whatsapp-inbox.js";
 import { createWhatsAppGateway } from "../agent/whatsapp-gateway.js";
+import { createOpenAiTranscriberFromEnv } from "../agent/transcriber.js";
 import { WhatsAppCloudError, createWhatsAppCloudClient, loadWhatsAppCloudConfig, verifyWebhookSignature } from "../integrations/whatsapp-cloud.js";
 import { timingSafeEqual } from "node:crypto";
 import { authenticatePrincipal, extractBearerToken } from "../security/authentication.js";
@@ -95,6 +96,8 @@ export function buildApi({
   whatsAppConfig = null,
   whatsAppStore = null,
   whatsAppFetch = null,
+  // Turns voice notes into text; from OPENAI_API_KEY when not given, null for none.
+  whatsAppTranscriber = undefined,
   // The site's own address, for the links sent to clients. Left empty, a link
   // made from the cockpit takes the address the cockpit was opened at.
   publicBaseUrl = process.env.PUBLIC_BASE_URL ?? "",
@@ -215,6 +218,7 @@ export function buildApi({
     inbox: whatsAppInbox,
     teamBook: teamFeed,
     agent,
+    transcriber: whatsAppTranscriber === undefined ? createOpenAiTranscriberFromEnv() : whatsAppTranscriber,
     log: (error) => app.log.error(error)
   });
   const syncAnomalies = async (orders) => (typeof agent.syncAnomalies === "function" ? agent.syncAnomalies(orders) : improvement.sync(orders));

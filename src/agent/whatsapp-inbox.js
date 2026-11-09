@@ -45,6 +45,16 @@ function createInbox({ book, clock }) {
       return book.change((state) => push(state, { direction: "out", metaId, number, name, text, by, kind, status, error, at: clock().toISOString() }));
     },
 
+    // What a voice note said, once transcribed, kept on the received message.
+    async transcribed(id, text) {
+      return book.change((state) => {
+        const index = state.messages.findIndex((message) => message.id === id);
+        if (index >= 0) {
+          state.messages[index] = { ...state.messages[index], text, transcribed: true };
+        }
+      });
+    },
+
     async messages({ limit = 200 } = {}) {
       return (await book.load()).messages.slice(-limit).reverse();
     },

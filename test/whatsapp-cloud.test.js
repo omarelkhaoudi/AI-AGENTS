@@ -34,9 +34,23 @@ function signed(body, secret = ENV.WHATSAPP_APP_SECRET) {
 
 // Meta's Graph API, as far as these tests need it: it records what was sent,
 // and refuses a number when told to.
-function fakeMeta({ refuse = null } = {}) {
+function fakeMeta({ refuse = null, media = {} } = {}) {
   const sent = [];
-  const fetchImpl = async (url, init) => {
+  const downloads = [];
+  const fetchImpl = async (url, init = {}) => {
+    if (!init.body) {
+      // A file received: first its description, then the file itself.
+      downloads.push({ url, authorization: init.headers?.authorization });
+      const file = /^https:\/\/lookaside\.example\/(.+)$/.exec(url)?.[1];
+      const id = file ? null : /\/(media-[\w-]+)$/.exec(url)?.[1];
+      if (file && media[file]) {
+        return { ok: true, status: 200, arrayBuffer: async () => media[file].bytes };
+      }
+      if (id && media[id]) {
+        return { ok: true, status: 200, json: async () => ({ url: `https://lookaside.example/${id}`, mime_type: media[id].mimeType, file_size: media[id].bytes.length }) };
+      }
+      return { ok: false, status: 404, json: async () => ({ error: { code: 100 } }) };
+    }
     const body = JSON.parse(init.body);
     sent.push({ url, authorization: init.headers.authorization, to: body.to, text: body.text.body });
     if (refuse && body.to === refuse.to) {
@@ -44,7 +58,7 @@ function fakeMeta({ refuse = null } = {}) {
     }
     return { ok: true, status: 200, json: async () => ({ messages: [{ id: `wamid.out.${sent.length}` }] }) };
   };
-  return { sent, fetchImpl };
+  return { sent, downloads, fetchImpl };
 }
 
 function fakeDirector() {
@@ -52,14 +66,14 @@ function fakeDirector() {
   return {
     chats,
     isConfigured: () => true,
-    async chat({ message, conversationId, userId }) {
-      chats.push({ message, conversationId, userId });
+    async chat({ message, photos = [], files = [], conversationId, userId }) {
+      chats.push({ message, conversationId, userId, ...(photos.length > 0 ? { photos } : {}), ...(files.length > 0 ? { files } : {}) });
       return { conversationId: "conversation-1", reply: `Bien noté : ${message}`, messages: [{ recipient: "Mme Alami" }], documents: [], agentRuns: [] };
     }
   };
 }
 
-async function whatsAppApi(t, { config = loadWhatsAppCloudConfig(ENV), meta = fakeMeta(), director = fakeDirector() } = {}) {
+async function whatsAppApi(t, { config = loadWhatsAppCloudConfig(ENV), meta = fakeMeta(), director = fakeDirector(), transcriber = null } = {}) {
   const teamBook = createMemoryTeamBook({ clock, agents: SPECIALIST_IDS });
   const inbox = createMemoryWhatsAppInbox({ clock });
   const { app, inject } = await buildAuthenticatedApi({
@@ -69,6 +83,7 @@ async function whatsAppApi(t, { config = loadWhatsAppCloudConfig(ENV), meta = fa
     whatsAppConfig: config,
     whatsAppStore: inbox,
     whatsAppFetch: meta.fetchImpl,
+    whatsAppTranscriber: transcriber,
     clock
   });
   t.after(() => app.close());
@@ -176,4 +191,97 @@ test("without the WHATSAPP_* keys the webhook stays closed and nothing is sent",
   assert.equal(status.configured, false);
   assert.equal(status.missing.length, 4);
   assert.equal(meta.sent.length, 0);
+});
+
+function mediaWebhook(from, type, mediaId, extra = {}, id = `wamid.${mediaId}`) {
+  return {
+    entry: [{ changes: [{ value: {
+      contacts: [{ wa_id: from, profile: { name: "" } }],
+      messages: [{ from, id, timestamp: "1762682400", type, [type]: { id: mediaId, ...extra } }]
+    } }] }]
+  };
+}
+
+function fakeTranscriber(words) {
+  const heard = [];
+  return {
+    heard,
+    async transcribe(input) {
+      heard.push(input);
+      return words;
+    }
+  };
+}
+
+test("a voice note from the direction is transcribed, read by the Director, and what was heard is said back", async (t) => {
+  const meta = fakeMeta({ media: { "media-voice": { mimeType: "audio/ogg", bytes: Buffer.from("OggS-voice") } } });
+  const transcriber = fakeTranscriber("J'ai payé 500 DH de transport pour la livraison de Guéliz");
+  const { app, inject, director } = await whatsAppApi(t, { meta, transcriber });
+
+  await app.inject({ method: "POST", url: "/webhooks/whatsapp", ...signed(mediaWebhook("212661000001", "audio", "media-voice", { mime_type: "audio/ogg; codecs=opus", voice: true })) });
+  await app.whatsApp.idle();
+
+  assert.deepEqual(meta.downloads.map((download) => download.authorization), ["Bearer test-access", "Bearer test-access"], "the file is fetched with the access token");
+  assert.equal(transcriber.heard[0].mimeType, "audio/ogg");
+  assert.equal(transcriber.heard[0].bytes.toString(), "OggS-voice");
+  assert.deepEqual(director.chats.map((chat) => chat.message), ["(Message vocal) J'ai payé 500 DH de transport pour la livraison de Guéliz"]);
+  assert.match(meta.sent[0].text, /^J'ai entendu : « J'ai payé 500 DH de transport pour la livraison de Guéliz »\n\nBien noté/);
+  const listed = JSON.parse((await inject({ method: "GET", url: "/api/whatsapp" })).body);
+  const received = listed.messages.find((message) => message.direction === "in");
+  assert.deepEqual([received.type, received.transcribed, received.text], ["audio", true, "J'ai payé 500 DH de transport pour la livraison de Guéliz"]);
+});
+
+test("a photo or a document from the direction reaches the Director as if joined in the cockpit", async (t) => {
+  const meta = fakeMeta({ media: {
+    "media-photo": { mimeType: "image/jpeg", bytes: Buffer.from([0xff, 0xd8, 0xff, 0xe0]) },
+    "media-plan": { mimeType: "application/pdf", bytes: Buffer.from("%PDF-1.4") },
+    "media-video": { mimeType: "video/mp4", bytes: Buffer.from("video") }
+  } });
+  const { app, director } = await whatsAppApi(t, { meta });
+
+  await app.inject({ method: "POST", url: "/webhooks/whatsapp", ...signed(mediaWebhook("212661000001", "image", "media-photo", { mime_type: "image/jpeg", caption: "Le lit du BC 171" })) });
+  await app.inject({ method: "POST", url: "/webhooks/whatsapp", ...signed(mediaWebhook("212661000001", "document", "media-plan", { mime_type: "application/pdf", filename: "plan-chambre.pdf" })) });
+  await app.inject({ method: "POST", url: "/webhooks/whatsapp", ...signed(mediaWebhook("212661000001", "video", "media-video", { mime_type: "video/mp4" })) });
+  await app.whatsApp.idle();
+
+  assert.equal(director.chats.length, 2, "a video is not handed to the Director");
+  assert.equal(director.chats[0].message, "Le lit du BC 171");
+  assert.equal(director.chats[0].photos[0], `data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff, 0xe0]).toString("base64")}`);
+  assert.deepEqual(director.chats[1].files, [{ name: "plan-chambre.pdf", data: `data:application/pdf;base64,${Buffer.from("%PDF-1.4").toString("base64")}` }]);
+  assert.match(meta.sent.at(-1).text, /Je ne lis pas les vidéos/);
+});
+
+test("without the OpenAI key a voice note is not guessed at, and the team's voice reports are transcribed", async (t) => {
+  const voice = { "media-v1": { mimeType: "audio/ogg", bytes: Buffer.from("v1") } };
+  const deaf = await whatsAppApi(t, { meta: fakeMeta({ media: voice }) });
+  await deaf.app.inject({ method: "POST", url: "/webhooks/whatsapp", ...signed(mediaWebhook("212661000001", "audio", "media-v1")) });
+  await deaf.app.whatsApp.idle();
+  assert.equal(deaf.director.chats.length, 0);
+  assert.match(deaf.meta.sent[0].text, /la clé OpenAI n'est pas configurée/);
+
+  const transcriber = fakeTranscriber("La découpe est finie, je commence le ponçage");
+  const { app, teamBook, meta } = await whatsAppApi(t, { meta: fakeMeta({ media: voice }), transcriber });
+  await teamBook.link("production", { name: "Youssef", phone: "0612345678" });
+  await app.inject({ method: "POST", url: "/webhooks/whatsapp", ...signed(mediaWebhook("212612345678", "audio", "media-v1")) });
+  await app.whatsApp.idle();
+  const report = (await teamBook.activity({ agent: "production" })).find((entry) => entry.kind === "compte_rendu");
+  assert.match(report.text, /Youssef.*\(vocal\) La découpe est finie/);
+  assert.match(meta.sent[0].text, /^Bien reçu, Youssef/);
+});
+
+test("the transcriber sends the note to OpenAI with the workshop's vocabulary and gives back its words", async () => {
+  const { createOpenAiTranscriber, createOpenAiTranscriberFromEnv } = await import("../src/agent/transcriber.js");
+  let request = null;
+  const transcriber = createOpenAiTranscriber({
+    apiKey: "test-key",
+    clientFactory: async () => ({ audio: { transcriptions: { create: async (payload) => {
+      request = payload;
+      return { text: "  Bonjour, le devis 164 est validé. " };
+    } } } })
+  });
+  assert.equal(await transcriber.transcribe({ bytes: Buffer.from("OggS"), mimeType: "audio/ogg" }), "Bonjour, le devis 164 est validé.");
+  assert.equal(request.model, "gpt-4o-transcribe");
+  assert.equal(request.file.name, "vocal.ogg");
+  assert.match(request.prompt, /H-KIDS/);
+  assert.equal(createOpenAiTranscriberFromEnv({ env: {} }), null, "no key, no transcriber");
 });

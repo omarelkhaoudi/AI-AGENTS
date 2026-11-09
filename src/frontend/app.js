@@ -1401,7 +1401,7 @@ function whatsAppThread(number, messages) {
         ${messages.slice(0, 8).reverse().map((message) => `
           <li class="wa-msg ${message.direction === "in" ? "is-in" : "is-out"} ${message.status === "failed" ? "is-failed" : ""}">
             <p>${message.text ? escapeHtml(message.text) : `<em>(${escapeHtml(WHATSAPP_TYPES[message.type] ?? "message")} sans texte)</em>`}</p>
-            <small>${escapeHtml(formatStamp(message.at))}${message.direction === "out" ? ` · ${escapeHtml(message.by === "director" ? "Director" : message.by ?? "")}` : ""}${message.status === "failed" ? ` · non parti : ${escapeHtml(message.error ?? "")}` : ""}</small>
+            <small>${escapeHtml(formatStamp(message.at))}${message.transcribed ? " · vocal transcrit" : ""}${message.direction === "out" ? ` · ${escapeHtml(message.by === "director" ? "Director" : message.by ?? "")}` : ""}${message.status === "failed" ? ` · non parti : ${escapeHtml(message.error ?? "")}` : ""}</small>
           </li>`).join("")}
       </ol>
       ${whatsAppView.configured ? `

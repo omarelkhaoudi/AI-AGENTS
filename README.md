@@ -174,8 +174,19 @@ Mise en route, une fois :
    **messages**.
 
 Chaque appel de Meta est vérifié avec la signature faite à partir de
-`WHATSAPP_APP_SECRET` ; un appel non signé est refusé. Les photos et les vocaux
-reçus sont notés, mais pas encore lus par le Director.
+`WHATSAPP_APP_SECRET` ; un appel non signé est refusé.
+
+Ce que le Director lit en plus du texte, quand c'est la direction qui écrit :
+
+- les **messages vocaux**, transcrits par OpenAI (même clé `OPENAI_API_KEY`,
+  modèle `OPENAI_TRANSCRIBE_MODEL`, `gpt-4o-transcribe` par défaut). Sa réponse
+  commence par « J'ai entendu : « … » », pour qu'un mot mal compris se voie tout
+  de suite. Les vocaux de l'équipe sont transcrits dans leur compte rendu ;
+- les **photos** JPEG ou PNG (3 Mo au plus) et les **documents** PDF, Word, Excel,
+  texte ou CSV (5 Mo au plus), comme s'ils étaient joints dans le cockpit.
+
+Les vidéos et autocollants ne sont pas lus. Les vocaux d'un client ne sont pas
+transcrits : ils attendent dans la vue WhatsApp, comme ses autres messages.
 
 Les dossiers réels (clients, devis, commandes, paiements, achats) se chargent dans
 la base avec le classeur [`docs/modele-donnees-hkids.xlsx`](docs/modele-donnees-hkids.xlsx) :

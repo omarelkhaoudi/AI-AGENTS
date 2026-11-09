@@ -130,12 +130,52 @@ doivent jamais y aller.
 | `data/plans-director.json` | Les plans d'action du Director, créés et mis à jour automatiquement. | — |
 | `data/caisse.json` | Le journal de caisse tenu par le Directeur financier : chaque entrée ou sortie annoncée au Director, d'où viennent le bilan du jour et celui du mois. Un mouvement annulé reste écrit avec son motif. | — |
 | `data/amelioration.json` | Les anomalies (étape d'atelier bloquée ou en retard, ou signalée) et les règles proposées par les agents pour qu'elles ne se répètent pas. Une règle ne s'applique qu'une fois validée. | — |
-| `data/equipe.json` | Le responsable humain relié à chaque agent et le fil d'équipe (missions, caisse, atelier, documents), que chaque agent relit avant de travailler. | — |
+| `data/equipe.json` | Le responsable humain relié à chaque agent et le fil d'équipe (missions, caisse, atelier, documents, comptes rendus reçus par WhatsApp), que chaque agent relit avant de travailler. | — |
+| `data/whatsapp.json` | Les messages reçus et envoyés par le numéro WhatsApp Business de H-KIDS, et la conversation du Director de chaque numéro de la direction. | — |
 
 Toutes les 30 minutes, le serveur repère les nouvelles anomalies d'atelier et
 demande à l'agent concerné d'en chercher la cause (appel à OpenAI). Pour couper
 cette analyse automatique : `HKIDS_AUTO_ANALYSIS=off` dans `.env` ; les anomalies
 restent alors listées et s'analysent à la demande depuis l'onglet Amélioration.
+
+### WhatsApp Business
+
+Le cockpit se branche sur l'**API officielle WhatsApp Business** (Cloud API de
+Meta), comme le demande la phase 1 du cahier des charges. Ce que fait chaque
+message écrit au numéro de H-KIDS dépend de qui l'écrit :
+
+| Qui écrit | Ce qui se passe |
+| --- | --- |
+| La direction (`WHATSAPP_OWNER_NUMBERS`) | Le message va au **Director**, comme s'il était tapé dans le cockpit, et sa réponse part sur WhatsApp. Ce qui demande une validation (messages à envoyer, documents) attend dans le cockpit. |
+| Un responsable relié à un agent (vue Équipe) | C'est un **compte rendu** : il entre dans le fil d'équipe, que lisent le Director et l'agent concerné, et un accusé de réception part. Ce n'est jamais un ordre. |
+| Toute autre personne (client, fournisseur) | Le message attend dans la vue **WhatsApp** du cockpit. Personne ne répond automatiquement : une personne répond depuis le cockpit. |
+
+Les messages préparés par les agents gardent leur validation humaine : le bouton
+« Envoyer depuis le numéro H-KIDS » les envoie tels que relus. WhatsApp n'autorise
+un message libre que dans les **24 heures** qui suivent le dernier message de la
+personne ; au-delà, Meta exige un modèle approuvé. Le cockpit le dit, et le
+bouton « Ouvrir dans WhatsApp » reste disponible pour ce cas.
+
+Mise en route, une fois :
+
+1. Sur [developers.facebook.com](https://developers.facebook.com), créer une
+   application de type *Business* et y ajouter le produit **WhatsApp**. Relier le
+   numéro dédié à H-KIDS (un numéro qui n'est pas déjà utilisé dans l'application
+   WhatsApp).
+2. Dans `.env`, remplir `WHATSAPP_PHONE_NUMBER_ID` (identifiant du numéro),
+   `WHATSAPP_ACCESS_TOKEN` (jeton permanent d'un utilisateur système),
+   `WHATSAPP_APP_SECRET` (Paramètres de l'application → Général),
+   `WHATSAPP_VERIFY_TOKEN` (une longue chaîne au choix) et
+   `WHATSAPP_OWNER_NUMBERS`.
+3. Le serveur doit être joignable en **HTTPS** depuis internet (voir `deploy/`).
+   Dans Meta → WhatsApp → Configuration, donner comme URL de rappel (*Callback
+   URL*) `https://<votre-domaine>/webhooks/whatsapp` (la vue WhatsApp du cockpit
+   l'affiche), le même `WHATSAPP_VERIFY_TOKEN`, puis s'abonner au champ
+   **messages**.
+
+Chaque appel de Meta est vérifié avec la signature faite à partir de
+`WHATSAPP_APP_SECRET` ; un appel non signé est refusé. Les photos et les vocaux
+reçus sont notés, mais pas encore lus par le Director.
 
 Les dossiers réels (clients, devis, commandes, paiements, achats) se chargent dans
 la base avec le classeur [`docs/modele-donnees-hkids.xlsx`](docs/modele-donnees-hkids.xlsx) :

@@ -11,6 +11,7 @@ import { createFileCashBook } from "./agent/cash-book.js";
 import { createFileImprovementBook } from "./agent/improvement-book.js";
 import { createFileTeamBook } from "./agent/team-book.js";
 import { SPECIALIST_IDS } from "./agent/agent-team.js";
+import { createFileWhatsAppInbox } from "./agent/whatsapp-inbox.js";
 
 // The first statement, because everything below reads process.env: the port, the
 // configuration, the repository factory and the workflow client. Without this the
@@ -56,7 +57,11 @@ const teamBook = createFileTeamBook({ agents: SPECIALIST_IDS });
 // HKIDS_AUTO_ANALYSIS=off leaves it for the direction to ask.
 const autoAnalyseAnomalies = process.env.HKIDS_AUTO_ANALYSIS !== "off";
 
-const app = buildApi({ repository, config, toolRegistry, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, autoAnalyseAnomalies });
+// What went through the company's WhatsApp Business number (data/whatsapp.json).
+// The number itself is configured by the WHATSAPP_* keys of .env.
+const whatsAppStore = createFileWhatsAppInbox();
+
+const app = buildApi({ repository, config, toolRegistry, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, autoAnalyseAnomalies, whatsAppStore });
 
 // Every half hour, the workshop book is read for steps that became late.
 const sweep = setInterval(() => {

@@ -1,17 +1,14 @@
-// WhatsApp messages the agents draft. Nothing is sent from the server: the
-// cockpit opens WhatsApp (wa.me) on Hiba's device with the conversation and the
-// text already filled in, and pressing Send there is her validation.
-//
-// Sending without opening WhatsApp would need the WhatsApp Business Platform
-// (Meta), a dedicated number and message templates approved by Meta for every
-// message the company starts; that is a separate decision, not this module.
+// WhatsApp messages the agents draft. An agent never sends one itself: the
+// message waits in the cockpit, and a person sends it, either from the
+// company's WhatsApp Business number (src/integrations/whatsapp-cloud.js, when
+// configured) or by opening WhatsApp (wa.me) with the text already filled in.
 
 export const MESSAGE_KINDS = Object.freeze(["relance_devis", "relance_paiement", "retard", "commande_fournisseur", "sav", "tache_equipe", "autre"]);
 
 export const WHATSAPP_MESSAGE_TOOL = Object.freeze({
   type: "function",
   name: "preparer_message_whatsapp",
-  description: "Prépare un message WhatsApp prêt à envoyer (relance de devis, relance de paiement, prévenir d'un retard, commande fournisseur, SAV…). Il apparaîtra dans le cockpit avec un bouton « Envoyer via WhatsApp » ; c'est Hiba qui l'envoie. Un appel par destinataire.",
+  description: "Prépare un message WhatsApp prêt à envoyer (relance de devis, relance de paiement, prévenir d'un retard, commande fournisseur, SAV…). Il apparaîtra dans le cockpit, où c'est la direction qui le relit et l'envoie. Un appel par destinataire.",
   parameters: {
     type: "object",
     additionalProperties: false,

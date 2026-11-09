@@ -2307,6 +2307,99 @@
   .feed-line details div {
     @apply mt-1.5 rounded-xl bg-surface-2 p-2.5 text-[12.5px] leading-relaxed text-ink-2;
   }
+
+  /* --- WhatsApp Business ------------------------------------------------ */
+  .wa-banner {
+    @apply flex items-start gap-3 rounded-3xl border border-warn/30 bg-warn-soft px-5 py-4 text-warn;
+  }
+
+  .wa-banner.is-on {
+    @apply border-good/30 bg-good-soft text-good;
+  }
+
+  .wa-banner .i {
+    @apply mt-0.5 shrink-0;
+  }
+
+  .wa-banner strong {
+    @apply block text-[14.5px] font-semibold text-ink;
+  }
+
+  .wa-banner small {
+    @apply mt-1 block text-[13px] leading-relaxed text-ink-2 [overflow-wrap:anywhere];
+  }
+
+  .wa-banner code {
+    @apply rounded-md bg-surface/70 px-1.5 py-0.5 text-[12px] text-ink;
+  }
+
+  .wa-threads {
+    @apply grid items-start gap-4 lg:grid-cols-2 [&>*]:min-w-0;
+  }
+
+  .wa-thread {
+    @apply flex flex-col gap-3 rounded-3xl border border-line bg-surface p-5 shadow-card;
+  }
+
+  .wa-thread > header {
+    @apply flex items-center gap-3;
+  }
+
+  .wa-thread > header strong {
+    @apply block truncate text-[15px] font-semibold;
+  }
+
+  .wa-thread > header small {
+    @apply block text-[12px] text-muted;
+  }
+
+  .wa-initial {
+    @apply grid size-10 shrink-0 place-items-center rounded-full bg-whatsapp/15 font-semibold text-[#128c4a];
+  }
+
+  .wa-thread[data-sender="direction"] .wa-initial {
+    @apply bg-brand-soft text-brand;
+  }
+
+  .wa-thread[data-sender="equipe"] .wa-initial {
+    @apply bg-surface-3 text-ink-2;
+  }
+
+  .wa-messages {
+    @apply flex flex-col gap-2 rounded-2xl bg-surface-2 p-3;
+  }
+
+  .wa-msg {
+    @apply max-w-[85%] rounded-2xl px-3 py-2;
+  }
+
+  .wa-msg.is-in {
+    @apply self-start rounded-tl-md bg-surface;
+  }
+
+  .wa-msg.is-out {
+    @apply self-end rounded-tr-md bg-whatsapp/15;
+  }
+
+  .wa-msg.is-failed {
+    @apply bg-warn-soft;
+  }
+
+  .wa-msg p {
+    @apply text-[13.5px] leading-snug whitespace-pre-line text-ink break-words;
+  }
+
+  .wa-msg small {
+    @apply mt-1 block text-[11px] text-muted;
+  }
+
+  .wa-reply {
+    @apply flex items-end gap-2;
+  }
+
+  .wa-reply textarea {
+    @apply min-h-[44px] flex-1 resize-y;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

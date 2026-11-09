@@ -89,10 +89,11 @@ function createTeamBook({ book, clock, agents }) {
     },
 
     // What the rest of the team did lately, as an agent reads it before a
-    // mission: the last entries of the other agents over the past week.
+    // mission: the last entries of the other agents over the past week, and
+    // the reports its own human sent (kind compte_rendu).
     async newsFor(agent, { limit = 12 } = {}) {
       const since = new Date(clock().getTime() - 7 * 24 * 3600 * 1000).toISOString();
-      const entries = (await book.load()).activity.filter((entry) => entry.agent !== agent && entry.at >= since).slice(-limit);
+      const entries = (await book.load()).activity.filter((entry) => (entry.agent !== agent || entry.kind === "compte_rendu") && entry.at >= since).slice(-limit);
       return entries;
     }
   });

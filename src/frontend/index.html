@@ -51,7 +51,8 @@
         <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.4 1.1 2.2h5c0-.8.4-1.6 1.1-2.2A6 6 0 0 0 12 3z"/></symbol>
         <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
         <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
-        <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="8" ry="2.5"/><path d="M4 5.5v13c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-13M4 12c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5"/></symbol>
+        <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 20l1.4-4.2A8 8 0 1 1 8.6 19z"/><path d="M8.5 10.5h7M8.5 13.5h4.5"/></symbol>
+        <symbol id="i-database"viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="8" ry="2.5"/><path d="M4 5.5v13c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-13M4 12c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5"/></symbol>
       </defs>
     </svg>
 
@@ -81,6 +82,10 @@
             </button>
             <button type="button" class="nav-item max-md:hidden" data-view="cash">
               <svg class="i" aria-hidden="true"><use href="#i-wallet"/></svg><span class="nav-label">Caisse</span>
+            </button>
+            <button type="button" class="nav-item max-md:hidden" data-view="whatsapp">
+              <svg class="i" aria-hidden="true"><use href="#i-chat"/></svg><span class="nav-label">WhatsApp</span>
+              <span class="nav-badge" id="whatsapp-count" hidden>0</span>
             </button>
             <p class="nav-caption mx-3 mt-5 mb-1.5 text-[10.5px] font-semibold tracking-[0.14em] text-sidebar-muted/80 uppercase max-md:hidden">Atelier</p>
             <button type="button" class="nav-item" data-view="orders">
@@ -113,6 +118,7 @@
           <div id="more-sheet" class="more-sheet md:hidden" hidden>
             <p class="more-sheet-title">Plus de vues</p>
             <button type="button" class="sheet-item" data-view="cash"><svg class="i" aria-hidden="true"><use href="#i-wallet"/></svg>Caisse</button>
+            <button type="button" class="sheet-item" data-view="whatsapp"><svg class="i" aria-hidden="true"><use href="#i-chat"/></svg>WhatsApp</button>
             <button type="button" class="sheet-item" data-view="improvement"><svg class="i" aria-hidden="true"><use href="#i-bulb"/></svg>Amélioration</button>
             <button type="button" class="sheet-item" data-view="team"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg>Équipe IA</button>
             <button type="button" class="sheet-item" data-view="documents"><svg class="i" aria-hidden="true"><use href="#i-file"/></svg>Documents</button>
@@ -612,6 +618,17 @@
             <div id="file-missing"></div>
             <div id="file-files"></div>
           </section>
+        </section>
+
+        <!-- WhatsApp Business -->
+        <section class="view flex animate-rise flex-col gap-6" data-view-panel="whatsapp" hidden aria-labelledby="whatsapp-title">
+          <header class="view-head">
+            <h2 id="whatsapp-title" class="visually-hidden">WhatsApp Business</h2>
+            <p>Le numéro WhatsApp de H-KIDS. Vos messages vont au Director, qui répond sur WhatsApp ; ceux de l'équipe deviennent des comptes rendus ; ceux des clients attendent ici qu'une personne réponde.</p>
+            <button type="button" class="secondary" id="refresh-whatsapp"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Rafraîchir</button>
+          </header>
+          <div id="whatsapp-status" class="wa-status"></div>
+          <div id="whatsapp-threads" class="wa-threads" aria-label="Conversations WhatsApp"></div>
         </section>
 
         <!-- Équipe IA -->

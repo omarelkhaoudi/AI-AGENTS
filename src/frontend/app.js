@@ -487,6 +487,9 @@ function appendBubble(kind, html, documents = [], runs = [], messages = [], { pl
   bubble.querySelectorAll("[data-whatsapp]").forEach((button) => {
     button.addEventListener("click", () => openWhatsApp(button));
   });
+  bubble.querySelectorAll("[data-whatsapp-api]").forEach((button) => {
+    button.addEventListener("click", () => sendDraftFromNumber(button));
+  });
   bubble.querySelectorAll("[data-validate]").forEach((button) => {
     const entry = documents[Number(button.dataset.validate)];
     button.addEventListener("click", () => validateAgentDocument(entry, button));
@@ -1137,7 +1140,7 @@ function anomalyCard(anomaly, canAnalyse) {
 // --- Team view ------------------------------------------------------------------
 // Each agent with the person it answers to, the missions it carries, the rules
 // it applies and what it did lately; beside it, the whole team's feed.
-const ACTIVITY_LABELS = Object.freeze({ mission: "Mission", caisse: "Caisse", atelier: "Atelier", document: "Document", amelioration: "Amélioration", equipe: "Équipe" });
+const ACTIVITY_LABELS = Object.freeze({ mission: "Mission", caisse: "Caisse", atelier: "Atelier", document: "Document", amelioration: "Amélioration", equipe: "Équipe", compte_rendu: "Compte rendu" });
 const teamFeed = document.querySelector("#team-feed");
 const teamView = { data: null, responded: new Set() };
 document.querySelector("#refresh-team").addEventListener("click", () => refreshTeam());
@@ -1156,10 +1159,23 @@ agentRoster.addEventListener("click", async (event) => {
     await saveMember(unlink.dataset.memberUnlink, { name: "", role: "", phone: "" });
   }
   const send = event.target.closest?.("[data-send-missions]");
-  if (send) {
-    globalThis.open?.(send.dataset.sendMissions, "_blank", "noopener");
+  const agent = send ? teamView.data?.agents?.find((entry) => entry.id === send.dataset.sendMissions) : null;
+  if (agent?.member?.phone) {
+    const message = missionMessage(agent);
+    if (whatsAppView.configured) {
+      send.disabled = true;
+      await sendWhatsApp({ to: agent.member.phone, message, recipient: agent.member.name, kind: "tache_equipe" });
+      send.disabled = false;
+    } else {
+      globalThis.open?.(`https://wa.me/${agent.member.phone}?text=${encodeURIComponent(message)}`, "_blank", "noopener");
+    }
   }
 });
+
+function missionMessage(agent) {
+  const missionsText = agent.missions.map((mission) => `• ${mission.task}${mission.dueDate ? ` (avant le ${formatIsoDay(mission.dueDate)})` : ""}`).join("\n");
+  return `Bonjour ${agent.member.name},\n\nVoici vos tâches H-KIDS (${agent.label}) :\n${missionsText}\n\nMerci de me dire où vous en êtes.\nL'équipe H-KIDS`;
+}
 
 async function refreshTeam() {
   try {
@@ -1210,9 +1226,7 @@ function renderTeam() {
 function teamCard(agent) {
   const roster = AGENT_ROSTER.find((entry) => entry.id === agent.id);
   const member = agent.member;
-  const missionsText = agent.missions.map((mission) => `• ${mission.task}${mission.dueDate ? ` (avant le ${formatIsoDay(mission.dueDate)})` : ""}`).join("\n");
-  const message = member ? `Bonjour ${member.name},\n\nVoici vos tâches H-KIDS (${agent.label}) :\n${missionsText}\n\nMerci de me dire où vous en êtes.\nL'équipe H-KIDS` : "";
-  const waLink = member?.phone && agent.missions.length > 0 ? `https://wa.me/${member.phone}?text=${encodeURIComponent(message)}` : "";
+  const canSend = Boolean(member?.phone) && agent.missions.length > 0;
   return `
     <article class="team-card ${teamView.responded.has(agent.id) ? "has-responded" : ""}">
       <header>
@@ -1248,7 +1262,7 @@ function teamCard(agent) {
         <div class="team-block">
           <h4>Missions en cours <span class="tag info">${agent.missions.length}</span></h4>
           <ul>${agent.missions.map((mission) => `<li><span>${escapeHtml(mission.task)}</span><small>Plan n° ${mission.plan}${mission.dueDate ? ` · avant le <span class="${mission.overdue ? "late" : ""}">${escapeHtml(formatIsoDay(mission.dueDate))}</span>` : ""}</small></li>`).join("")}</ul>
-          ${waLink ? `<button type="button" class="whatsapp-button" data-send-missions="${escapeHtml(waLink)}">${icon("send")}Envoyer ses tâches à ${escapeHtml(member.name)}</button>` : ""}
+          ${canSend ? `<button type="button" class="whatsapp-button" data-send-missions="${escapeHtml(agent.id)}">${icon("send")}Envoyer ses tâches à ${escapeHtml(member.name)}</button>` : ""}
         </div>` : ""}
       ${agent.rules.length > 0 ? `
         <div class="team-block">
@@ -1283,6 +1297,120 @@ function formatStamp(iso) {
   return sameDay
     ? `aujourd'hui ${new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(date)}`
     : new Intl.DateTimeFormat("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(date);
+}
+
+// --- WhatsApp Business view ---------------------------------------------------
+// The company's number: what came in, what left, and a reply box per person.
+// Without the WHATSAPP_* keys the view says what is missing, and messages keep
+// leaving by opening WhatsApp on the phone.
+const WHATSAPP_SENDERS = Object.freeze({ direction: "Direction", equipe: "Équipe", contact: "Client ou contact" });
+const WHATSAPP_TYPES = Object.freeze({ image: "photo", audio: "message vocal", video: "vidéo", document: "document", sticker: "autocollant", location: "position" });
+const whatsAppStatus = document.querySelector("#whatsapp-status");
+const whatsAppThreads = document.querySelector("#whatsapp-threads");
+const whatsAppCount = document.querySelector("#whatsapp-count");
+const whatsAppView = { configured: false, data: null };
+document.querySelector("#refresh-whatsapp").addEventListener("click", () => refreshWhatsApp());
+whatsAppThreads.addEventListener("submit", async (event) => {
+  const formNode = event.target.closest?.("[data-wa-reply]");
+  if (!formNode) {
+    return;
+  }
+  event.preventDefault();
+  const field = formNode.querySelector("textarea");
+  const button = formNode.querySelector("button");
+  button.disabled = true;
+  const sent = await sendWhatsApp({ to: formNode.dataset.waReply, message: field.value, recipient: formNode.dataset.waName ?? "", kind: "reponse" });
+  button.disabled = false;
+  if (sent.ok) {
+    field.value = "";
+    await refreshWhatsApp();
+  }
+});
+
+async function refreshWhatsApp() {
+  try {
+    const response = await fetch("/api/whatsapp", { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("Impossible de charger les messages WhatsApp.");
+    }
+    whatsAppView.data = await response.json();
+    whatsAppView.configured = whatsAppView.data.configured === true;
+    renderWhatsApp();
+  } catch (error) {
+    whatsAppThreads.innerHTML = `<p class="muted">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+// Sends from the company's number; the toast says what happened.
+async function sendWhatsApp({ to, message, recipient = "", kind = "autre" }) {
+  try {
+    const response = await fetch("/api/whatsapp/send", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({ to, message, recipient, kind })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      showToast(body.error ?? "Le message n'est pas parti.", "warn");
+      return { ok: false, code: body.details?.code ?? null };
+    }
+    showToast(`Message envoyé${recipient ? ` à ${recipient}` : ""} depuis le numéro H-KIDS.`);
+    return { ok: true };
+  } catch (error) {
+    showToast(error.message, "warn");
+    return { ok: false, code: null };
+  }
+}
+
+function renderWhatsApp() {
+  const data = whatsAppView.data;
+  const callbackUrl = `${globalThis.location?.origin ?? ""}${data.callbackPath}`;
+  whatsAppStatus.innerHTML = data.configured
+    ? `<div class="wa-banner is-on">${icon("check-circle")}<div><strong>Numéro H-KIDS connecté</strong><small>${data.owners > 0 ? `${data.owners} numéro(s) de la direction parlent au Director par WhatsApp.` : "Aucun numéro de la direction : ajoutez WHATSAPP_OWNER_NUMBERS dans .env pour parler au Director par WhatsApp."} URL de rappel à donner à Meta : <code>${escapeHtml(callbackUrl)}</code></small></div></div>`
+    : `<div class="wa-banner">${icon("alert")}<div><strong>WhatsApp Business n'est pas encore branché</strong><small>Les messages partent pour l'instant en ouvrant WhatsApp sur votre téléphone. Pour envoyer et recevoir depuis le numéro H-KIDS, complétez .env : ${data.missing.map((name) => `<code>${escapeHtml(name)}</code>`).join(", ")}. La marche à suivre est dans le README.</small></div></div>`;
+
+  // Newest first from the server: the first message of each number is its latest.
+  const threads = new Map();
+  for (const message of data.messages) {
+    threads.set(message.number, [...(threads.get(message.number) ?? []), message]);
+  }
+  const awaiting = [...threads.values()].filter((messages) => messages[0].direction === "in" && messages[0].sender === "contact").length;
+  whatsAppCount.textContent = String(awaiting);
+  whatsAppCount.hidden = awaiting === 0;
+  whatsAppThreads.innerHTML = threads.size > 0
+    ? [...threads.entries()].map(([number, messages]) => whatsAppThread(number, messages)).join("")
+    : `<p class="empty-state">Aucun message pour l'instant.${data.configured ? " Les messages écrits au numéro H-KIDS apparaîtront ici." : ""}</p>`;
+}
+
+function whatsAppThread(number, messages) {
+  const received = messages.find((message) => message.direction === "in");
+  const sender = received?.sender ?? "contact";
+  const name = messages.find((message) => message.name)?.name ?? "";
+  const awaiting = messages[0].direction === "in" && sender === "contact";
+  return `
+    <article class="wa-thread" data-sender="${escapeHtml(sender)}">
+      <header>
+        <span class="wa-initial" aria-hidden="true">${escapeHtml((name || "+").slice(0, 1).toUpperCase())}</span>
+        <div class="min-w-0 flex-1">
+          <strong>${escapeHtml(name || `+${number}`)}</strong>
+          <small>+${escapeHtml(number)} · ${escapeHtml(WHATSAPP_SENDERS[sender] ?? sender)}${received?.agent ? ` · ${escapeHtml(formatAgent(received.agent))}` : ""}</small>
+        </div>
+        ${awaiting ? '<span class="tag warning">à répondre</span>' : ""}
+      </header>
+      <ol class="wa-messages">
+        ${messages.slice(0, 8).reverse().map((message) => `
+          <li class="wa-msg ${message.direction === "in" ? "is-in" : "is-out"} ${message.status === "failed" ? "is-failed" : ""}">
+            <p>${message.text ? escapeHtml(message.text) : `<em>(${escapeHtml(WHATSAPP_TYPES[message.type] ?? "message")} sans texte)</em>`}</p>
+            <small>${escapeHtml(formatStamp(message.at))}${message.direction === "out" ? ` · ${escapeHtml(message.by === "director" ? "Director" : message.by ?? "")}` : ""}${message.status === "failed" ? ` · non parti : ${escapeHtml(message.error ?? "")}` : ""}</small>
+          </li>`).join("")}
+      </ol>
+      ${whatsAppView.configured ? `
+        <form class="wa-reply" data-wa-reply="${escapeHtml(number)}" data-wa-name="${escapeHtml(name)}">
+          <textarea rows="2" placeholder="Votre réponse…" required aria-label="Réponse à ${escapeHtml(name || `+${number}`)}"></textarea>
+          <button type="submit" class="primary">${icon("send")}Répondre</button>
+        </form>` : ""}
+    </article>
+  `;
 }
 
 // --- Workshop book view -------------------------------------------------------
@@ -1669,12 +1797,14 @@ const MESSAGE_KIND_LABELS = Object.freeze({
   autre: "Message"
 });
 
-// A message an agent drafted. Nothing is sent from here: the button opens
-// WhatsApp with the number and the text filled in, and Hiba presses Send there.
-// Both stay editable until then.
+// A message an agent drafted. Nothing leaves without a click: with the
+// company's WhatsApp Business number connected, the message goes from it as
+// written in the card; otherwise the button opens WhatsApp with the number and
+// the text filled in, and Hiba presses Send there. Both stay editable.
 function messageCard(draft) {
+  const viaApi = whatsAppView.configured;
   return `
-    <article class="msg-card">
+    <article class="msg-card" data-recipient="${escapeHtml(draft.recipient)}" data-kind="${escapeHtml(draft.kind)}">
       <header>
         ${avatar(draft.agent)}
         <div>
@@ -1688,8 +1818,12 @@ function messageCard(draft) {
       </label>
       <textarea class="msg-text" rows="${Math.min(10, Math.max(3, draft.message.split("\n").length + 1))}">${escapeHtml(draft.message)}</textarea>
       <div class="doc-actions">
-        <button type="button" class="whatsapp-button" data-whatsapp>${icon("send")}Envoyer via WhatsApp</button>
-        <span class="muted">S'ouvre dans WhatsApp : vous relisez, puis vous appuyez sur Envoyer.</span>
+        ${viaApi
+          ? `<button type="button" class="whatsapp-button" data-whatsapp-api>${icon("send")}Envoyer depuis le numéro H-KIDS</button>
+             <button type="button" class="link-button" data-whatsapp>Ouvrir dans WhatsApp</button>
+             <span class="muted">Part tout de suite, tel que vous l'avez relu.</span>`
+          : `<button type="button" class="whatsapp-button" data-whatsapp>${icon("send")}Envoyer via WhatsApp</button>
+             <span class="muted">S'ouvre dans WhatsApp : vous relisez, puis vous appuyez sur Envoyer.</span>`}
       </div>
     </article>
   `;
@@ -1718,6 +1852,28 @@ function openWhatsApp(button) {
   globalThis.open?.(`https://wa.me/${number}?text=${encodeURIComponent(text)}`, "_blank", "noopener");
   status.className = "tag ok msg-status";
   status.textContent = "Ouvert dans WhatsApp";
+}
+
+async function sendDraftFromNumber(button) {
+  const card = button.closest(".msg-card");
+  const number = whatsAppNumber(card.querySelector(".msg-phone").value);
+  const status = card.querySelector(".msg-status");
+  if (!number) {
+    status.className = "tag warning msg-status";
+    status.textContent = "Numéro à compléter";
+    card.querySelector(".msg-phone").focus();
+    return;
+  }
+  button.disabled = true;
+  const sent = await sendWhatsApp({ to: number, message: card.querySelector(".msg-text").value, recipient: card.dataset.recipient ?? "", kind: card.dataset.kind ?? "autre" });
+  if (sent.ok) {
+    status.className = "tag ok msg-status";
+    status.textContent = "Envoyé";
+    return;
+  }
+  button.disabled = false;
+  status.className = "tag warning msg-status";
+  status.textContent = sent.code === "WHATSAPP_WINDOW_CLOSED" ? "Hors délai de 24 h : ouvrez WhatsApp" : "Non envoyé";
 }
 
 // Which agents worked on the answer, what they read, and what each one said.
@@ -2795,6 +2951,7 @@ const COCKPIT_VIEWS = Object.freeze({
   approvals: "Validations",
   plans: "Plans d'action",
   cash: "Caisse",
+  whatsapp: "WhatsApp Business",
   orders: "Carnet d'atelier",
   improvement: "Amélioration continue",
   documents: "Documents H-KIDS",
@@ -2806,7 +2963,7 @@ const COCKPIT_VIEWS = Object.freeze({
 // On a phone the tab bar keeps the four views of every day; the others open
 // from « Plus », which stays lit while one of them is shown. The cash of the
 // day is on the briefing's first card.
-const SHEET_VIEWS = Object.freeze(["cash", "improvement", "team", "documents", "quotes", "file"]);
+const SHEET_VIEWS = Object.freeze(["cash", "whatsapp", "improvement", "team", "documents", "quotes", "file"]);
 const moreButton = document.querySelector("#more-button");
 const moreSheet = document.querySelector("#more-sheet");
 
@@ -2840,6 +2997,9 @@ function showView(name) {
   }
   if (view === "improvement") {
     refreshImprovement();
+  }
+  if (view === "whatsapp") {
+    refreshWhatsApp();
   }
   if (view === "team") {
     refreshTeam();
@@ -3136,6 +3296,7 @@ async function loadPanels() {
   refreshOrders();
   refreshCash();
   refreshImprovement();
+  refreshWhatsApp();
   renderHistory();
   await refreshApprovals();
 }

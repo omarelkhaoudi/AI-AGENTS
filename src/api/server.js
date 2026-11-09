@@ -31,6 +31,10 @@ import { CASH_CATEGORIES, CASH_METHODS, CashBookError, OPENING_CATEGORY, createM
 import { ANOMALY_STATUSES, ImprovementError, RULE_STATUSES, createMemoryImprovementBook } from "../agent/improvement-book.js";
 import { TeamBookError, createMemoryTeamBook } from "../agent/team-book.js";
 import { SPECIALISTS, SPECIALIST_IDS } from "../agent/agent-team.js";
+import { createMemoryWhatsAppInbox } from "../agent/whatsapp-inbox.js";
+import { createWhatsAppGateway } from "../agent/whatsapp-gateway.js";
+import { WhatsAppCloudError, createWhatsAppCloudClient, loadWhatsAppCloudConfig, verifyWebhookSignature } from "../integrations/whatsapp-cloud.js";
+import { timingSafeEqual } from "node:crypto";
 import { authenticatePrincipal, extractBearerToken } from "../security/authentication.js";
 import { assertCapability } from "../security/authorization.js";
 import { DEFAULT_RATE_LIMITS, createSecurityConfig } from "../security/security-config.js";
@@ -86,6 +90,11 @@ export function buildApi({
   // A new anomaly is handed to its agent for analysis at once. The server
   // process turns it on; a test does it by hand.
   autoAnalyseAnomalies = false,
+  // The company's WhatsApp Business number: its settings (read from .env when
+  // not given), where its messages are kept, and the fetch it calls Meta with.
+  whatsAppConfig = null,
+  whatsAppStore = null,
+  whatsAppFetch = null,
   // The site's own address, for the links sent to clients. Left empty, a link
   // made from the cockpit takes the address the cockpit was opened at.
   publicBaseUrl = process.env.PUBLIC_BASE_URL ?? "",
@@ -198,6 +207,16 @@ export function buildApi({
   });
   // The workshop book read anywhere is where anomalies are found. An agent
   // given by a test may not know them: the book is then synced directly.
+  const whatsAppSettings = whatsAppConfig ?? loadWhatsAppCloudConfig();
+  const whatsAppInbox = whatsAppStore ?? createMemoryWhatsAppInbox({ clock });
+  const whatsApp = createWhatsAppGateway({
+    config: whatsAppSettings,
+    client: createWhatsAppCloudClient({ config: whatsAppSettings, ...(whatsAppFetch ? { fetchImpl: whatsAppFetch } : {}) }),
+    inbox: whatsAppInbox,
+    teamBook: teamFeed,
+    agent,
+    log: (error) => app.log.error(error)
+  });
   const syncAnomalies = async (orders) => (typeof agent.syncAnomalies === "function" ? agent.syncAnomalies(orders) : improvement.sync(orders));
   // Writes to the same directory as the document service, so both kinds of
   // produced file land where the generated documents already live.
@@ -209,6 +228,7 @@ export function buildApi({
   // A step becomes late when its day passes, with nobody reading the book: the
   // server process calls this on a timer, so the anomaly is found anyway.
   app.decorate("sweepAnomalies", async () => syncAnomalies(await workshop.book()));
+  app.decorate("whatsApp", whatsApp);
 
   // C1 - Edge. The limiter is global and runs BEFORE authentication, so an
   // anonymous flood is capped instead of reaching the credential lookup. It
@@ -772,6 +792,64 @@ export function buildApi({
       }
     });
 
+    // --- WhatsApp Business: the company's number, in and out ---------------
+    app.get("/api/whatsapp", readRouteOptions(), async () => ({
+      configured: whatsApp.configured,
+      missing: whatsAppSettings.missing,
+      owners: whatsAppSettings.ownerNumbers.length,
+      // Where Meta calls us ("Callback URL" in Meta's settings).
+      callbackPath: "/webhooks/whatsapp",
+      messages: await whatsAppInbox.messages({ limit: 200 })
+    }));
+
+    // A message validated in the cockpit leaves from the company's number.
+    app.post("/api/whatsapp/send", writeRouteOptions(), async (request, reply) => {
+      const field = (name) => (typeof request.body?.[name] === "string" ? request.body[name] : "");
+      try {
+        const sent = await whatsApp.send({ to: field("to"), text: field("message"), name: field("recipient"), kind: field("kind") || "autre", by: request.principal.name ?? request.principal.userId ?? "direction" });
+        return reply.code(201).send({ message: sent });
+      } catch (error) {
+        if (error instanceof WhatsAppCloudError) {
+          return reply.code(WHATSAPP_STATUS[error.code] ?? 502).send({ error: error.message, details: { code: error.code } });
+        }
+        return sendDomainError(reply, "WhatsApp send failed.", error);
+      }
+    });
+
+    // Meta's webhook. Outside /api: Meta presents no bearer token. The
+    // subscription is checked with the verify token, each call with the
+    // signature made from the app secret over the raw body.
+    app.get("/webhooks/whatsapp", async (request, reply) => {
+      const query = request.query ?? {};
+      if (!whatsApp.configured || query["hub.mode"] !== "subscribe" || !sameSecret(query["hub.verify_token"], whatsAppSettings.verifyToken)) {
+        return reply.code(403).send({ error: "Forbidden." });
+      }
+      return reply.code(200).type("text/plain").send(String(query["hub.challenge"] ?? ""));
+    });
+
+    app.register(async (scope) => {
+      scope.addContentTypeParser("application/json", { parseAs: "buffer" }, (_request, body, done) => done(null, body));
+      scope.post("/webhooks/whatsapp", async (request, reply) => {
+        if (!whatsApp.configured) {
+          return reply.code(404).send({ error: "Not found." });
+        }
+        const raw = Buffer.isBuffer(request.body) ? request.body : Buffer.from("");
+        if (!verifyWebhookSignature(raw, request.headers["x-hub-signature-256"], whatsAppSettings.appSecret)) {
+          await auditSecurityEvent(repository, { type: "authentication_failed", resourceType: "endpoint", resourceId: "/webhooks/whatsapp", metadata: { method: "POST", code: "WHATSAPP_SIGNATURE_INVALID" } });
+          return reply.code(401).send({ error: "Invalid signature." });
+        }
+        let body;
+        try {
+          body = JSON.parse(raw.toString("utf8"));
+        } catch {
+          return reply.code(400).send({ error: "Invalid JSON." });
+        }
+        // Meta is answered at once; the Director may take a while to reply.
+        whatsApp.receive(body).catch((error) => app.log.error(error));
+        return reply.code(200).send({ ok: true });
+      });
+    });
+
     // What the client's page reads. Public: the token is the only key, and an
     // unknown link and a link switched off answer alike.
     app.get("/api/public/suivi/:token", async (request, reply) => {
@@ -1063,6 +1141,21 @@ function clientPageHeaders(reply) {
 // The books' own errors are the person's to fix: what they typed, or a line
 // that does not exist. A line already in the book is a conflict to confirm.
 const BOOK_NOT_FOUND = new Set(["CASH_ENTRY_NOT_FOUND", "IMPROVEMENT_ANOMALY_NOT_FOUND", "IMPROVEMENT_RULE_NOT_FOUND", "TEAM_AGENT_UNKNOWN"]);
+const WHATSAPP_STATUS = Object.freeze({
+  WHATSAPP_NOT_CONFIGURED: 503,
+  WHATSAPP_UNREACHABLE: 503,
+  WHATSAPP_NUMBER_INVALID: 400,
+  WHATSAPP_MESSAGE_EMPTY: 400,
+  WHATSAPP_WINDOW_CLOSED: 409,
+  WHATSAPP_RECIPIENT_REFUSED: 409
+});
+
+function sameSecret(given, expected) {
+  const a = Buffer.from(String(given ?? ""), "utf8");
+  const b = Buffer.from(String(expected ?? ""), "utf8");
+  return a.length > 0 && a.length === b.length && timingSafeEqual(a, b);
+}
+
 function sendBookError(reply, error, fallback) {
   if (error instanceof CashBookError || error instanceof ImprovementError || error instanceof TeamBookError) {
     const statusCode = BOOK_NOT_FOUND.has(error.code) ? 404 : error.code === "CASH_DUPLICATE" ? 409 : 400;

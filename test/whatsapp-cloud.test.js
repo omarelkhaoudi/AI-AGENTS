@@ -285,3 +285,20 @@ test("the transcriber sends the note to OpenAI with the workshop's vocabulary an
   assert.match(request.prompt, /H-KIDS/);
   assert.equal(createOpenAiTranscriberFromEnv({ env: {} }), null, "no key, no transcriber");
 });
+
+test("when the model gives back the vocabulary instead of the words, the note is heard again without it", async () => {
+  const { createOpenAiTranscriber, echoesVocabulary } = await import("../src/agent/transcriber.js");
+  const prompts = [];
+  const answers = ["H-KIDS, mobilier pour enfants, Marrakech. Devis, bon de commande (BC), facture, acompte, DH, dirhams, lit cabane, CNC, laque, MDF.", "Les agents sont responsables, ils gèrent la commande et le tunnel."];
+  const transcriber = createOpenAiTranscriber({
+    apiKey: "test-key",
+    clientFactory: async () => ({ audio: { transcriptions: { create: async (payload) => {
+      prompts.push(payload.prompt ?? null);
+      return { text: answers.shift() };
+    } } } })
+  });
+  assert.equal(await transcriber.transcribe({ bytes: Buffer.from("OggS"), mimeType: "audio/ogg" }), "Les agents sont responsables, ils gèrent la commande et le tunnel.");
+  assert.equal(prompts.length, 2);
+  assert.equal(prompts[1], null, "asked again without the vocabulary");
+  assert.equal(echoesVocabulary("J'ai payé 2 500 DH de MDF pour le lit cabane du devis 164"), false, "a real note using the same words is kept");
+});

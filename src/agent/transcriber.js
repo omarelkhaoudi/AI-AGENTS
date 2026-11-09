@@ -29,23 +29,42 @@ export function createOpenAiTranscriber({ apiKey, model = DEFAULT_TRANSCRIBE_MOD
     async transcribe({ bytes, mimeType = "audio/ogg", filename = "" }) {
       client ??= await clientFactory({ apiKey });
       const { toFile } = await import("openai");
-      let result;
-      try {
-        result = await client.audio.transcriptions.create({
-          file: await toFile(bytes, filename || `vocal.${extensionOf(mimeType)}`, { type: mimeType }),
-          model,
-          prompt: VOCABULARY
-        });
-      } catch (cause) {
-        throw new TranscriptionError(
-          cause?.status === 401 ? "La clé OpenAI est refusée : vérifiez OPENAI_API_KEY dans .env." : "Le message vocal n'a pas pu être transcrit.",
-          "TRANSCRIPTION_FAILED"
-        );
+      const run = async (prompt) => {
+        try {
+          const result = await client.audio.transcriptions.create({
+            file: await toFile(bytes, filename || `vocal.${extensionOf(mimeType)}`, { type: mimeType }),
+            model,
+            ...(prompt ? { prompt } : {})
+          });
+          return (typeof result === "string" ? result : String(result?.text ?? "")).trim();
+        } catch (cause) {
+          throw new TranscriptionError(
+            cause?.status === 401 ? "La clé OpenAI est refusée : vérifiez OPENAI_API_KEY dans .env." : "Le message vocal n'a pas pu être transcrit.",
+            "TRANSCRIPTION_FAILED"
+          );
+        }
+      };
+      const text = await run(VOCABULARY);
+      // On a note it hears badly (one of Hiba's, in November 2026) the model
+      // gave back the vocabulary itself as what was said. Then it is asked
+      // again without it, and the vocabulary is never passed on as words.
+      if (!echoesVocabulary(text)) {
+        return text;
       }
-      const text = typeof result === "string" ? result : String(result?.text ?? "");
-      return text.trim();
+      const again = await run("");
+      return echoesVocabulary(again) ? "" : again;
     }
   });
+}
+
+export function echoesVocabulary(text) {
+  const words = (value) => value.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").match(/[a-z0-9]+/g) ?? [];
+  const heard = words(text);
+  if (heard.length === 0) {
+    return false;
+  }
+  const vocabulary = new Set(words(VOCABULARY));
+  return heard.filter((word) => vocabulary.has(word)).length / heard.length >= 0.8;
 }
 
 function extensionOf(mimeType) {

@@ -14,6 +14,13 @@ import { MAX_TEXT_LENGTH, WhatsAppCloudError, parseWebhookMessages } from "../in
 // - anyone else (a client, a supplier): it is kept for the cockpit and nobody
 //   answers automatically. A person decides.
 //
+// Tasks (CDC recette scenario 5): the person a task is given to is told, and
+// answers « tâche 4 prise en charge », then « tâche 4 résolue : … »; the
+// direction is told it is resolved and answers « clôture tâche 4 » (or
+// « rouvrir tâche 4 : … »). A grave anomaly is told to the direction at once,
+// the others in a summary each morning, and a task past its deadline is
+// reminded to its person each day until it is resolved.
+//
 // The chef de charge and the draughtsman of an order (their numbers are on the
 // order, in the design office) report like members of the Production team.
 // The chef de charge is told on WhatsApp of each step of their order that
@@ -39,7 +46,7 @@ const DOCUMENT_EXTENSIONS = Object.freeze({
 // The Director's errors the sender can act on, told word for word.
 const TOLD_AS_IS = Object.freeze(["AGENT_NOT_CONFIGURED", "AGENT_MODEL_UNAVAILABLE", "AGENT_PHOTO_INVALID", "AGENT_FILE_INVALID"]);
 
-export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, workshop = null, recordFollowUp = null, transcriber = null, log = () => {} }) {
+export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, workshop = null, recordFollowUp = null, tasks = null, transcriber = null, log = () => {} }) {
   // One number's messages are handled in the order they came.
   const lanes = new Map();
   const inLane = (number, task) => {
@@ -180,12 +187,14 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
       text: `Compte rendu de ${member.name} par WhatsApp : ${said || `(${message.type} sans texte)`}`,
       by: member.name
     });
+    const task = await fromTaskWords(said, member.name);
     // « Relance du devis 170 faite, elle réfléchit » is a follow-up made.
     const quote = /relanc/i.test(said) ? /devis\s*(?:n\s*[°o.]?\s*)?(\d{2,6})(?!\d)/i.exec(said)?.[1] : null;
     const followUp = quote && recordFollowUp ? await recordFollowUp(quote, { note: said, by: member.name }) : null;
     return reply(message, [
       `Bien reçu, ${member.name}. Votre compte rendu est transmis à la direction et à l'agent ${label}.`,
       followUp ? (followUp.ok ? `Relance du devis n° ${quote} enregistrée.` : followUp.erreur) : "",
+      task ?? "",
       read.problem && !said ? read.problem : ""
     ].filter(Boolean).join("\n\n"));
   }
@@ -225,6 +234,51 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
     }
   }
 
+  // « tâche 4 prise en charge », « je m'en occupe, tâche 4 », « tâche 4
+  // résolue : … » from the person it was given to. Returns what to answer.
+  async function fromTaskWords(said, by) {
+    const number = tasks ? /t[âa]che\s*(?:n\s*[°o.]?\s*)?(\d+)/i.exec(said)?.[1] : null;
+    if (!number) {
+      return null;
+    }
+    const action = /r[ée]solu|r[ée]gl[ée]|termin[ée]|\bfini/i.test(said) ? "resolue" : /prise? en charge|m'en occupe|en cours/i.test(said) ? "prise_en_charge" : null;
+    if (!action) {
+      return null;
+    }
+    const note = action === "resolue" ? (said.split(/\s*:\s*/).slice(1).join(" : ").trim() || said) : "";
+    const result = await tasks.update(number, action, { note, by });
+    return result.ok
+      ? (action === "resolue" ? `Tâche n° ${number} notée résolue : la direction va confirmer sa clôture.` : `Tâche n° ${number} notée prise en charge.`)
+      : result.erreur;
+  }
+
+  // The direction's own word on a task: « clôture tâche 4 », « rouvrir tâche
+  // 4 : le client rappelle ». Null when the message is not that.
+  async function directionTaskWord(message) {
+    if (!tasks || message.type !== "text") {
+      return null;
+    }
+    const close = /^\s*(?:je\s+confirme\s+(?:la\s+)?)?cl[ôo]tur\w*\s+(?:de\s+)?(?:la\s+)?t[âa]che\s*(?:n\s*[°o.]?\s*)?(\d+)\s*[.!]?\s*$/i.exec(message.text);
+    const reopen = /^\s*rouvr\w*\s+(?:la\s+)?t[âa]che\s*(?:n\s*[°o.]?\s*)?(\d+)\s*[:,-]?\s*(.*)$/i.exec(message.text);
+    if (!close && !reopen) {
+      return null;
+    }
+    const number = (close ?? reopen)[1];
+    const result = await tasks.update(number, close ? "cloturer" : "rouvrir", { note: reopen ? reopen[2].trim() : "", by: "direction (WhatsApp)" });
+    return result.ok
+      ? (close ? `Clôture de la tâche n° ${number} confirmée.` : `Tâche n° ${number} rouverte : la personne en charge est prévenue.`)
+      : result.erreur;
+  }
+
+  async function toDirection(text) {
+    if (!client) {
+      return;
+    }
+    for (const owner of config.ownerNumbers) {
+      await send({ to: owner, text, by: "director", kind: "alerte" }).catch(log);
+    }
+  }
+
   async function reply(message, text) {
     try {
       await send({ to: message.from, text, name: message.name, by: "director", kind: "reponse" });
@@ -237,13 +291,14 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
     const owner = config.ownerNumbers.includes(message.from);
     const team = owner ? null : await teamMemberOf(message.from);
     const drafter = owner || team ? null : await orderPersonOf(message.from);
-    const sender = owner ? "direction" : team || drafter ? "equipe" : "contact";
+    const taskPerson = owner || team || drafter || !tasks ? null : await tasks.personOf(message.from);
+    const sender = owner ? "direction" : team || drafter || taskPerson ? "equipe" : "contact";
     const recorded = await inbox.receive({
       metaId: message.id,
       number: message.from,
-      name: team?.member.name ?? drafter?.name ?? message.name,
+      name: team?.member.name ?? drafter?.name ?? taskPerson?.name ?? message.name,
       sender,
-      agent: team?.agent ?? (drafter ? "production" : null),
+      agent: team?.agent ?? (drafter ? "production" : taskPerson?.agent ?? null),
       type: message.type,
       text: message.text,
       at: message.at
@@ -254,11 +309,14 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
     if (workshop && message.type === "document" && isCncFileName(message.media?.filename) && (owner || team || drafter?.orders.length > 0)) {
       await fromDrafting(message, { name: owner ? "La direction" : team?.member.name ?? drafter.name, orders: drafter?.orders ?? null });
     } else if (owner) {
-      await fromDirection(message, recorded);
+      const word = await directionTaskWord(message);
+      await (word ? reply(message, word) : fromDirection(message, recorded));
     } else if (team) {
       await fromTeam(message, team, recorded);
     } else if (drafter) {
       await fromTeam(message, { agent: "production", member: { name: drafter.name } }, recorded);
+    } else if (taskPerson) {
+      await fromTeam(message, { agent: taskPerson.agent, member: { name: taskPerson.name } }, recorded);
     }
   }
 
@@ -340,6 +398,60 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
       await teamBook.log({ agent: "commercial", kind: "relance", text: `Rappel de relance envoyé par WhatsApp : devis n° ${quotes.map((quote) => quote.number).join(", ")}.`, by: "director" });
     },
 
+    // A grave anomaly, told to the direction as soon as it is found.
+    async alertSevere(anomalies) {
+      for (const anomaly of anomalies.filter((entry) => entry.severity === "haute")) {
+        await toDirection(`Anomalie grave n° ${anomaly.number} : ${anomaly.fact}. Confiez-la en répondant par exemple « assigne l'anomalie ${anomaly.number} à ${SPECIALISTS[anomaly.owner]?.label ?? "la production"} pour le ${frenchDate(inDays(2))} ».`);
+      }
+    },
+
+    async taskAssigned(anomaly) {
+      const { task } = anomaly;
+      if (!client || !task.phone) {
+        return;
+      }
+      await send({
+        to: task.phone,
+        text: `Bonjour${task.person ? ` ${task.person}` : ""}, la direction vous confie la tâche n° ${anomaly.number} (gravité ${anomaly.severity ?? "moyenne"}) : ${anomaly.fact}${task.instruction ? ` — ${task.instruction}` : ""}. À régler avant le ${frenchDate(task.dueDate)}. Répondez « tâche ${anomaly.number} prise en charge », puis « tâche ${anomaly.number} résolue : ce qui a été fait ».`,
+        name: task.person, by: "director", kind: "tache"
+      }).catch(log);
+    },
+
+    async taskResolved(anomaly) {
+      await toDirection(`Tâche n° ${anomaly.number} résolue par ${anomaly.task.resolvedBy} : ${anomaly.task.resolution} (${anomaly.fact}). Pour confirmer la clôture, répondez « clôture tâche ${anomaly.number} », ou « rouvrir tâche ${anomaly.number} : pourquoi ».`);
+    },
+
+    async taskReopened(anomaly) {
+      const { task } = anomaly;
+      if (client && task.phone) {
+        await send({ to: task.phone, text: `La direction rouvre la tâche n° ${anomaly.number} (${anomaly.fact}) : ${task.reopenReason}. Répondez « tâche ${anomaly.number} résolue : … » une fois réglée.`, name: task.person, by: "director", kind: "tache" }).catch(log);
+      }
+    },
+
+    // The morning summary for the direction.
+    async anomalySummary(board, today) {
+      const list = (entries, describe) => entries.slice(0, 6).map((anomaly) => `  · n° ${anomaly.number} ${describe(anomaly)}`);
+      const short = (anomaly) => clip(anomaly.fact.replace(/^BC \S+ \([^)]*\) : /, `BC ${anomaly.orderNumber} : `), 90);
+      await toDirection([
+        `Résumé des anomalies du ${frenchDate(isoDate(today))} : ${board.open.length} ouverte(s)${board.severe.length > 0 ? `, dont ${board.severe.length} grave(s)` : ""}.`,
+        ...(board.unassigned.length > 0 ? [`- Sans responsable (${board.unassigned.length}) :`, ...list(board.unassigned, short)] : []),
+        ...(board.late.length > 0 ? [`- En retard sur l'échéance (${board.late.length}) :`, ...list(board.late, (anomaly) => `${anomaly.task.person || anomaly.task.agent}, prévue le ${frenchDate(anomaly.task.dueDate)}`)] : []),
+        ...(board.toConfirm.length > 0 ? [`- Résolues, à clôturer (${board.toConfirm.length}) :`, ...list(board.toConfirm, (anomaly) => `${clip(anomaly.task.resolution ?? "", 80)} → « clôture tâche ${anomaly.number} »`)] : []),
+        board.unassigned.length > 0 ? `Pour confier une tâche : « assigne l'anomalie ${board.unassigned[0].number} à la production pour le ${frenchDate(inDays(2, today))} ».` : ""
+      ].filter(Boolean).join("\n"));
+    },
+
+    // Each day, to the person whose task is past its deadline.
+    async taskReminders(anomalies) {
+      for (const anomaly of anomalies) {
+        const { task } = anomaly;
+        if (client && task.phone) {
+          await send({ to: task.phone, text: `Rappel : la tâche n° ${anomaly.number} (${anomaly.fact}) devait être réglée le ${frenchDate(task.dueDate)}. Où en êtes-vous ? Répondez « tâche ${anomaly.number} résolue : … » une fois réglée.`, name: task.person, by: "director", kind: "tache" }).catch(log);
+        }
+        await teamBook.log({ agent: SPECIALISTS[task.agent] ? task.agent : anomaly.owner, kind: "amelioration", text: `Tâche n° ${anomaly.number} en retard (échéance ${frenchDate(task.dueDate)}) : rappel ${task.phone ? `envoyé à ${task.person || task.phone}` : "impossible, aucun numéro"}.`, by: "director" });
+      }
+    },
+
     // For tests: resolves once every number's messages were handled.
     async idle() {
       while (lanes.size > 0) {
@@ -364,6 +476,14 @@ function waiting(outcome) {
 // « BC 171 », « bon de commande n° 171 », « BC171_panneaux.nc ».
 function orderNumberIn(text) {
   return /(?<![a-z])(?:bc|bon de commande|commande)[\s_-]*(?:n\s*[°o.]?\s*)?(\d{2,6})(?!\d)/i.exec(String(text ?? ""))?.[1] ?? null;
+}
+
+function isoDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function inDays(days, from = new Date()) {
+  return isoDate(new Date(from.getTime() + days * 86400000));
 }
 
 function formatDh(amount) {

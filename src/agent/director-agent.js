@@ -30,9 +30,13 @@ import {
   linkMember,
   listAnomalies,
   reportAnomaly,
+  ASSIGN_TASK_TOOL,
   FOLLOW_UP_TOOL,
   SALES_REPORT_TOOL,
+  TASK_TOOL,
+  assignTask,
   recordFollowUp,
+  updateTask,
   salesReportFor,
   salesTools
 } from "./company-tools.js";
@@ -400,6 +404,8 @@ const TOOLS = Object.freeze([
   PUBLISH_PHOTO_TOOL,
   SALES_REPORT_TOOL,
   FOLLOW_UP_TOOL,
+  ASSIGN_TASK_TOOL,
+  TASK_TOOL,
   CASH_BALANCE_TOOL,
   ANOMALIES_TOOL,
   REPORT_ANOMALY_TOOL,
@@ -443,6 +449,8 @@ function instructions(today, briefing = []) {
     "Chaîne d'une vente : devis → bon de commande (le client accepte) → bon de livraison → factures (acompte, solde). Chaque document cite le devis : écris toujours son numéro dans la mission. « Le client a accepté le devis 170 », « fais le BC du devis 170 » → commercial : « bon de commande à partir du devis n° 170 », avec les conditions et l'acompte s'ils sont donnés ; il reprend le devis lui-même, rien n'est à ressaisir. « Facture l'acompte du devis 170 », « facture le solde » → finance avec le numéro du devis. « Où en est le devis 170 », « qu'est-ce qui reste à facturer » → suivre_dossier toi-même, puis réponds avec l'étape, le déjà facturé, le reste à facturer et les anomalies. Une facture refusée parce qu'elle facturerait la vente deux fois ne se contourne pas : dis-le à la direction avec les factures déjà faites.",
     "",
     `Atelier, après le bon de commande : chaque bon de commande validé suit ${WORKSHOP_STEPS.length} étapes (${WORKSHOP_STEPS.map((step) => step.label).join(", ")}). « Le BC 166 est en découpe », « l'assemblage du 166 est fini », « la peinture est bloquée, il manque la laque », « Youssef s'occupe de l'étude, prévue pour le 12/11 » → c'est un fait que la direction t'annonce : avancer_commande toi-même, un appel par étape (une étape commencée = en_cours ; les étapes d'avant qu'elle dit finies = terminee), puis confirme en une ligne avec l'avancement. « Où en est la commande de Mme X / le BC 166 », « quelles commandes sont en retard » → carnet_atelier, puis l'étape en cours, l'avancement (calculé sur les étapes terminées, jamais estimé), les dates prévues et les alertes. Planning, priorités ou charge de l'atelier → production. Suite de la chaîne, tout de suite après l'avoir enregistrée : contrôle qualité terminé → commercial : préparer le message au client pour convenir de la date de livraison et d'installation ; livraison et installation terminée → finance : facture du solde du devis (si le dossier n'est pas soldé). Pour tout point de situation ou toute question d'urgences, regarde aussi carnet_atelier et signale les commandes bloquées ou en retard.`,
+    "",
+    "Tâches et clôture (chaque anomalie est une tâche, même numéro) : le résumé des anomalies t'est donné à chaque message ; dans tout point de situation, dis ce qui est ouvert, grave, sans responsable, en retard, et résolu à confirmer. « Assigne l'anomalie 4 à la production, Samir, pour le 25/11 » → assigner_tache (la personne est prévenue sur WhatsApp). N'assigne jamais de toi-même : propose (à qui, pour quand) et laisse la direction décider. Un fait annoncé (« Samir s'en occupe », « c'est réglé, le chevet est remplacé ») → suivre_tache. Une tâche résolue n'est clôturée que par la direction : dans le cockpit (vue Amélioration) ou en répondant « clôture tâche N » sur WhatsApp ; ne dis jamais qu'elle est close avant.",
     "",
     "Bilan commercial et relances : « fais le bilan commercial du mois », « quels devis relancer ? », « où en sont les ventes » → bilan_commercial (chiffres calculés sur les documents du cockpit : cite les numéros, ne recalcule rien, ne complète jamais avec un chiffre supposé). « J'ai relancé Mme Alami pour le devis 170, elle réfléchit », « le client du devis 172 a refusé, trop cher » → enregistrer_relance toi-même (perdu avec son motif pour un refus). Un devis ouvert sans nouvelles depuis 5 jours est à relancer : le responsable commercial est prévenu sur WhatsApp, et la direction au bout de 10 jours ; pour rédiger les messages de relance, confie-les au commercial.",
     "",
@@ -811,6 +819,12 @@ async function runTool(call, context) {
     }
     if (call.name === CLIENT_LINK_TOOL.name) {
       return await clientLink(args, context, "director");
+    }
+    if (call.name === ASSIGN_TASK_TOOL.name) {
+      return await assignTask(args, context, context.userId ?? "direction");
+    }
+    if (call.name === TASK_TOOL.name) {
+      return await updateTask(args, context, "director");
     }
     if (call.name === SALES_REPORT_TOOL.name) {
       return await salesReportFor(args, context);

@@ -2271,6 +2271,43 @@
     @apply mt-1 text-[13px] text-ink-2 break-words;
   }
 
+  .anomaly-task {
+    @apply mt-2 rounded-2xl bg-surface-2 px-3 py-2 text-[13px] text-ink-2 break-words;
+  }
+
+  .anomaly-task.is-late {
+    @apply bg-warn-soft text-warn;
+  }
+
+  .task-assign {
+    @apply mt-2;
+  }
+
+  .task-assign > summary {
+    @apply cursor-pointer text-[13px] font-semibold text-accent;
+  }
+
+  .task-assign form {
+    @apply mt-2 grid gap-2 sm:grid-cols-2;
+  }
+
+  .task-assign label {
+    @apply flex flex-col gap-1 text-[12px] text-muted;
+  }
+
+  .task-assign label.wide {
+    @apply sm:col-span-2;
+  }
+
+  .task-assign input,
+  .task-assign select {
+    @apply rounded-xl border border-line bg-surface px-3 py-2 text-[13.5px] text-ink;
+  }
+
+  .task-assign button {
+    @apply justify-self-start;
+  }
+
   .anomaly-actions {
     @apply flex shrink-0 flex-col items-end gap-2 max-md:w-full max-md:flex-row max-md:justify-end;
   }

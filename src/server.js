@@ -75,6 +75,7 @@ const app = buildApi({ repository, config, toolRegistry, planStore, conversation
 const sweep = setInterval(() => {
   app.sweepAnomalies().catch((error) => app.log.error(error));
   app.sweepFollowUps().catch((error) => app.log.error(error));
+  app.sweepTasks().catch((error) => app.log.error(error));
 }, 30 * 60 * 1000);
 sweep.unref();
 

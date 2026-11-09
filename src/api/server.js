@@ -28,13 +28,13 @@ import { CONSISTENCY_DOMAINS, checkConsistency } from "../agent/consistency.js";
 import { PlanStoreError, createMemoryPlanStore } from "../agent/plan-store.js";
 import { ORDER_ROLE_IDS, WorkshopError, createMemoryWorkshopStore, createWorkshop } from "../agent/workshop-book.js";
 import { CASH_CATEGORIES, CASH_METHODS, CashBookError, EXPENSE_STATUSES, OPENING_CATEGORY, createMemoryCashBook } from "../agent/cash-book.js";
-import { ANOMALY_STATUSES, ImprovementError, RULE_STATUSES, createMemoryImprovementBook } from "../agent/improvement-book.js";
+import { ANOMALY_STATUSES, ImprovementError, RULE_STATUSES, SEVERITIES, TASK_STATUSES, createMemoryImprovementBook, taskBoard } from "../agent/improvement-book.js";
 import { TeamBookError, createMemoryTeamBook } from "../agent/team-book.js";
 import { SPECIALISTS, SPECIALIST_IDS } from "../agent/agent-team.js";
 import { createMemoryWhatsAppInbox } from "../agent/whatsapp-inbox.js";
 import { createWhatsAppGateway } from "../agent/whatsapp-gateway.js";
 import { createMemoryFollowUpBook, dueReminders, isoDay, quotePipeline, salesReport } from "../agent/sales-book.js";
-import { recordFollowUp } from "../agent/company-tools.js";
+import { assignTask, recordFollowUp, updateTask } from "../agent/company-tools.js";
 import { createOpenAiTranscriberFromEnv } from "../agent/transcriber.js";
 import { WhatsAppCloudError, createWhatsAppCloudClient, loadWhatsAppCloudConfig, verifyWebhookSignature } from "../integrations/whatsapp-cloud.js";
 import { timingSafeEqual } from "node:crypto";
@@ -197,14 +197,37 @@ export function buildApi({
   const improvementRecords = improvementBook ?? createMemoryImprovementBook({ clock });
   // Wherever the workshop book is read (the Director, the cockpit, the timer),
   // a step newly blocked or late is told to its order's chef de charge.
+  // A grave anomaly is told to the direction, a task to its person, a task
+  // resolved or reopened to whom it concerns, from wherever it happens.
   const improvement = Object.freeze({
     ...improvementRecords,
     async sync(orders) {
       const found = await improvementRecords.sync(orders);
       await whatsApp.alertLeads(found, orders);
+      await whatsApp.alertSevere(found);
       return found;
+    },
+    async report(input) {
+      const anomaly = await improvementRecords.report(input);
+      await whatsApp.alertSevere([anomaly]);
+      return anomaly;
+    },
+    async assign(reference, input) {
+      const anomaly = await improvementRecords.assign(reference, input);
+      await whatsApp.taskAssigned(anomaly);
+      return anomaly;
+    },
+    async updateTask(reference, action, input) {
+      const anomaly = await improvementRecords.updateTask(reference, action, input);
+      if (action === "resolue") {
+        await whatsApp.taskResolved(anomaly);
+      } else if (action === "rouvrir") {
+        await whatsApp.taskReopened(anomaly);
+      }
+      return anomaly;
     }
   });
+  const taskContext = () => ({ books: { improvement, team: teamFeed } });
   const teamFeed = teamBook ?? createMemoryTeamBook({ clock, agents: SPECIALIST_IDS });
   const agent = directorAgent ?? createDirectorAgentFromEnv({
     documentService: hkidsDocuments,
@@ -236,6 +259,14 @@ export function buildApi({
     agent,
     workshop,
     // A follow-up a team member reports (« relance du devis 170 faite »).
+    // A task's person and the direction move tasks from WhatsApp.
+    tasks: {
+      update: (number, action, { note, by }) => updateTask({ anomalie: number, action, note }, taskContext(), by),
+      async personOf(number) {
+        const found = (await improvementRecords.state()).anomalies.find((anomaly) => anomaly.task?.phone === number && anomaly.task.status !== "cloturee");
+        return found ? { name: found.task.person || "Équipe", agent: SPECIALIST_IDS.includes(found.task.agent) ? found.task.agent : found.owner } : null;
+      }
+    },
     recordFollowUp: (number, { note, by }) => recordFollowUp({ devis: number, canal: "autre", date: "", note, perdu: false, motif: "" }, { books: { followUps, team: teamFeed }, documentService: hkidsDocuments, clock }, by),
     transcriber: whatsAppTranscriber === undefined ? createOpenAiTranscriberFromEnv() : whatsAppTranscriber,
     log: (error) => app.log.error(error)
@@ -254,6 +285,25 @@ export function buildApi({
   app.decorate("whatsApp", whatsApp);
   // The quotes with no news for too long, told on WhatsApp during working
   // hours (Casablanca), each once; the server process calls it on a timer.
+  // Each working day: the summary of the anomalies to the direction, and a
+  // reminder to each person whose task is past its deadline, once a day.
+  app.decorate("sweepTasks", async () => {
+    if (!whatsApp.configured || !workingHours(clock())) {
+      return { summary: false, reminded: [] };
+    }
+    const today = clock();
+    const day = today.toISOString().slice(0, 10);
+    const board = taskBoard((await improvementRecords.state()).anomalies, today);
+    const summary = board.open.length > 0 && (await improvementRecords.claimNotices([`resume:${day}`])).length > 0;
+    if (summary) {
+      await whatsApp.anomalySummary(board, today);
+    }
+    const due = await improvementRecords.claimNotices(board.late.map((anomaly) => `retard:${anomaly.number}:${day}`));
+    const reminded = board.late.filter((anomaly) => due.includes(`retard:${anomaly.number}:${day}`));
+    await whatsApp.taskReminders(reminded);
+    return { summary, reminded: reminded.map((anomaly) => anomaly.number) };
+  });
+
   app.decorate("sweepFollowUps", async () => {
     if (!whatsApp.configured || !workingHours(clock())) {
       return [];
@@ -870,6 +920,33 @@ export function buildApi({
       }
     });
 
+    // --- Tasks: assigned, moved, and closed by the direction only ----------
+    app.post("/api/improvement/anomalies/:number/assign", writeRouteOptions(), async (request, reply) => {
+      const field = (name) => (typeof request.body?.[name] === "string" ? request.body[name] : "");
+      const result = await assignTask({ anomalie: request.params.number, agent: field("agent"), personne: field("person"), telephone: field("phone"), echeance: field("dueDate"), gravite: field("severity"), consigne: field("instruction") }, taskContext(), request.principal.userId ?? "direction");
+      return result.ok ? reply.code(200).send({ task: result.tache, notified: result.prevenu }) : reply.code(/introuvable/.test(result.erreur) ? 404 : 400).send({ error: result.erreur });
+    });
+
+    app.post("/api/improvement/anomalies/:number/task", writeRouteOptions(), async (request, reply) => {
+      const action = request.body?.action;
+      if (!["prise_en_charge", "resolue"].includes(action)) {
+        return reply.code(400).send({ error: "action must be prise_en_charge or resolue." });
+      }
+      const result = await updateTask({ anomalie: request.params.number, action, note: typeof request.body?.note === "string" ? request.body.note : "" }, taskContext(), request.principal.userId ?? "direction");
+      return result.ok ? reply.code(200).send({ task: result.tache }) : reply.code(/introuvable/.test(result.erreur) ? 404 : 400).send({ error: result.erreur });
+    });
+
+    // Confirming a closure, or opening a task again, is the direction's decision.
+    app.post("/api/improvement/anomalies/:number/closure", decisionRouteOptions(), async (request, reply) => {
+      const decision = request.body?.decision;
+      if (decision !== "confirmer" && decision !== "rouvrir") {
+        return reply.code(400).send({ error: "decision must be confirmer or rouvrir." });
+      }
+      const by = request.principal.name ?? request.principal.userId ?? "direction";
+      const result = await updateTask({ anomalie: request.params.number, action: decision === "confirmer" ? "cloturer" : "rouvrir", note: typeof request.body?.note === "string" ? request.body.note : "" }, taskContext(), by);
+      return result.ok ? reply.code(200).send({ task: result.tache }) : reply.code(/introuvable/.test(result.erreur) ? 404 : 400).send({ error: result.erreur });
+    });
+
     // --- Commercial: the report of a period and the quotes' follow-ups -----
     app.get("/api/commercial", readRouteOptions(), async (request, reply) => {
       const today = clock();
@@ -913,7 +990,7 @@ export function buildApi({
         return {
           anomalies: [...anomalies].reverse(),
           rules: [...rules].reverse(),
-          labels: { anomalies: ANOMALY_STATUSES, rules: RULE_STATUSES },
+          labels: { anomalies: ANOMALY_STATUSES, rules: RULE_STATUSES, tasks: TASK_STATUSES, severities: SEVERITIES, owners: [...SPECIALIST_IDS, "director"] },
           analysis: agent.isConfigured()
         };
       } catch (error) {

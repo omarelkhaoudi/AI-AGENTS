@@ -88,7 +88,10 @@ test("a step blocked or late is told once to the order's chef de charge, and the
 
   // The cockpit reads the book: the anomaly is found, and told.
   assert.equal((await inject({ method: "GET", url: "/api/workshop" })).statusCode, 200);
-  assert.deepEqual(meta.sent, [{
+  // A blocking is also grave: the direction is told of it (see anomaly-tasks);
+  // here, only what the chef de charge is sent.
+  const alerts = () => meta.sent.filter((message) => !message.text.startsWith("Anomalie grave"));
+  assert.deepEqual(alerts(), [{
     to: LEAD,
     text: "Bonjour Samir, alerte sur le BC n° 171 (Client Exemple) dont vous êtes chef de charge : Assemblage bloquée : Charnières en rupture. Répondez ici avec la cause et la nouvelle date : la direction et l'agent Production seront informés."
   }], "the chef de charge without a number is not written to");
@@ -97,13 +100,13 @@ test("a step blocked or late is told once to the order's chef de charge, and the
   // Read again, by the cockpit or the timer: nothing more is sent.
   await inject({ method: "GET", url: "/api/workshop" });
   await app.sweepAnomalies();
-  assert.equal(meta.sent.length, 1);
+  assert.equal(alerts().length, 1);
 
   // A step whose day passed, found by the timer.
   await workshop.advance("171", "finition", { plannedDate: "05/11/2026" });
   await app.sweepAnomalies();
-  assert.equal(meta.sent.length, 2);
-  assert.match(meta.sent[1].text, /Peinture et finition prévue le 05\/11\/2026, pas terminée\./);
+  assert.equal(alerts().length, 2);
+  assert.match(alerts()[1].text, /Peinture et finition prévue le 05\/11\/2026, pas terminée\./);
 
   // The chef de charge answers on WhatsApp: a report to Production.
   const raw = JSON.stringify({ object: "whatsapp_business_account", entry: [{ changes: [{ field: "messages", value: { contacts: [{ wa_id: LEAD, profile: { name: "" } }], messages: [{ from: LEAD, id: "wamid.r1", timestamp: "1762682400", type: "text", text: { body: "Charnières livrées jeudi, assemblage fini samedi" } }] } }] }] });

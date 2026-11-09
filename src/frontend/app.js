@@ -1085,10 +1085,45 @@ improvementStats.addEventListener("click", (event) => {
     renderImprovement(improvementView.data);
   }
 });
+improvementList.addEventListener("submit", async (event) => {
+  const formNode = event.target.closest?.("[data-assign-form]");
+  if (!formNode) {
+    return;
+  }
+  event.preventDefault();
+  const read = (name) => formNode.querySelector(`[name='${name}']`)?.value ?? "";
+  const dueDate = read("dueDate");
+  try {
+    const result = await postJson(`/api/improvement/anomalies/${formNode.dataset.assignForm}/assign`, {
+      agent: read("agent"), person: read("person"), phone: read("phone"), severity: read("severity"), instruction: read("instruction"),
+      dueDate: dueDate ? dueDate.split("-").reverse().join("/") : ""
+    });
+    showToast(`Tâche n° ${formNode.dataset.assignForm} confiée : ${result.notified}.`);
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshImprovement();
+});
 improvementList.addEventListener("click", async (event) => {
-  const target = event.target.closest?.("[data-rule-decision], [data-analyse], [data-lift]");
+  const target = event.target.closest?.("[data-rule-decision], [data-analyse], [data-lift], [data-task-move], [data-closure]");
   if (!target) {
     return;
+  }
+  if (target.dataset.taskMove) {
+    const [number, action] = target.dataset.taskMove.split(":");
+    const note = action === "resolue" ? globalThis.prompt?.("Qu'est-ce qui a été fait ?") : "";
+    if (action === "resolue" && !note?.trim()) {
+      return;
+    }
+    await sendImprovementChange(`/api/improvement/anomalies/${number}/task`, { action, note }, action === "resolue" ? "Tâche notée résolue : confirmez sa clôture quand c'est vérifié." : "Tâche notée prise en charge.");
+  }
+  if (target.dataset.closure) {
+    const [number, decision] = target.dataset.closure.split(":");
+    const note = decision === "rouvrir" ? globalThis.prompt?.("Pourquoi rouvrir cette tâche ?") : "";
+    if (decision === "rouvrir" && !note?.trim()) {
+      return;
+    }
+    await sendImprovementChange(`/api/improvement/anomalies/${number}/closure`, { decision, note }, decision === "confirmer" ? "Clôture confirmée : l'anomalie est levée." : "Tâche rouverte : la personne en charge est prévenue.");
   }
   if (target.dataset.ruleDecision) {
     const [number, decision] = target.dataset.ruleDecision.split(":");
@@ -1147,7 +1182,8 @@ function renderImprovement(data) {
   const { anomalies, rules } = data;
   const proposed = rules.filter((rule) => rule.status === "proposee");
   const inForce = rules.filter((rule) => rule.status === "active");
-  const open = anomalies.filter((anomaly) => anomaly.status !== "levee");
+  // An anomaly given as a task stays open until the direction confirms its closure.
+  const open = anomalies.filter(isOpenAnomaly);
   const waiting = anomalies.filter((anomaly) => anomaly.status === "a_analyser");
   improvementCount.textContent = String(proposed.length);
   improvementCount.hidden = proposed.length === 0;
@@ -1182,7 +1218,7 @@ function renderImprovement(data) {
   if (show("rules") && inForce.length > 0) {
     sections.push(improvementSection("Règles en vigueur", "Données à leur agent, et au Director, à chaque mission.", inForce.map((rule) => ruleCard(rule, anomalyOf)).join("")));
   }
-  const past = [...anomalies.filter((anomaly) => anomaly.status === "levee"), ...rules.filter((rule) => ["refusee", "retiree"].includes(rule.status))];
+  const past = [...anomalies.filter((anomaly) => !isOpenAnomaly(anomaly)), ...rules.filter((rule) => ["refusee", "retiree"].includes(rule.status))];
   if (improvementView.filter === null && past.length > 0) {
     sections.push(`
       <details class="panel improvement-history">
@@ -1232,24 +1268,66 @@ function ruleCard(rule, anomalyOf) {
   `;
 }
 
+function isOpenAnomaly(anomaly) {
+  return anomaly.task ? anomaly.task.status !== "cloturee" : anomaly.status !== "levee";
+}
+
 function anomalyCard(anomaly, canAnalyse) {
   const busy = improvementView.busy.has(String(anomaly.number));
+  const severity = anomaly.severity ?? "moyenne";
   return `
     <article class="anomaly-card" data-kind="${escapeHtml(anomaly.kind)}">
       <span class="anomaly-icon" aria-hidden="true">${icon(anomaly.kind === "retard" ? "clock" : anomaly.kind === "blocage" ? "alert" : "bulb")}</span>
       <div class="min-w-0 flex-1">
-        <span class="eyebrow">Anomalie n° ${anomaly.number} · ${escapeHtml(anomaly.kind)} · le ${escapeHtml(formatIsoDay(anomaly.detectedAt.slice(0, 10)))}</span>
+        <span class="eyebrow">Anomalie n° ${anomaly.number} · ${escapeHtml(anomaly.kind)} · le ${escapeHtml(formatIsoDay(anomaly.detectedAt.slice(0, 10)))} <span class="tag ${severity === "haute" ? "warning" : ""}">gravité ${escapeHtml(severity)}</span></span>
         <p class="anomaly-fact">${escapeHtml(anomaly.fact)}</p>
         ${anomaly.cause
           ? `<p class="anomaly-cause"><b>Cause</b> (${escapeHtml(formatAgent(anomaly.analysedBy))}) : ${escapeHtml(anomaly.cause)}${anomaly.rule ? ` · règle n° ${anomaly.rule}` : ""}</p>`
           : `<p class="anomaly-cause muted">${busy ? "Analyse en cours…" : `En attente de l'analyse de ${escapeHtml(formatAgent(anomaly.owner))}.`}</p>`}
+        ${taskBlock(anomaly)}
       </div>
       <div class="anomaly-actions">
         ${anomaly.status === "a_analyser" && canAnalyse ? `<button type="button" class="secondary ${busy ? "is-loading" : ""}" data-analyse="${anomaly.number}" ${busy ? "disabled" : ""}>${icon("sparkles")}${busy ? "Analyse…" : "Analyser maintenant"}</button>` : ""}
-        ${anomaly.source === "signalee" ? `<button type="button" class="link-button" data-lift="${anomaly.number}">Marquer réglée</button>` : ""}
+        ${anomaly.task?.status === "ouverte" ? `<button type="button" class="secondary" data-task-move="${anomaly.number}:prise_en_charge">Prise en charge</button>` : ""}
+        ${["ouverte", "prise_en_charge"].includes(anomaly.task?.status) ? `<button type="button" class="secondary" data-task-move="${anomaly.number}:resolue">${icon("check")}Marquer résolue</button>` : ""}
+        ${anomaly.task?.status === "resolue" ? `
+          <button type="button" class="primary" data-closure="${anomaly.number}:confirmer">${icon("check")}Confirmer la clôture</button>
+          <button type="button" class="link-button" data-closure="${anomaly.number}:rouvrir">Rouvrir</button>` : ""}
+        ${anomaly.source === "signalee" && !anomaly.task ? `<button type="button" class="link-button" data-lift="${anomaly.number}">Marquer réglée</button>` : ""}
       </div>
     </article>
   `;
+}
+
+// Who carries the task, until when, where it stands; and the form that gives
+// it (or gives it again) to a trade and a person.
+function taskBlock(anomaly) {
+  const { task } = anomaly;
+  const labels = improvementView.data.labels;
+  const late = task && ["ouverte", "prise_en_charge"].includes(task.status) && task.dueDate < new Date().toISOString().slice(0, 10);
+  const line = task ? `
+    <p class="anomaly-task ${late ? "is-late" : ""}">
+      <b>Tâche</b> confiée à ${escapeHtml(task.person || formatAgent(task.agent))} (${escapeHtml(formatAgent(task.agent))}) · avant le ${escapeHtml(formatIsoDay(task.dueDate))}${late ? " · en retard" : ""} · <em>${escapeHtml(labels.tasks?.[task.status] ?? task.status)}</em>
+      ${task.instruction ? `<br>${escapeHtml(task.instruction)}` : ""}
+      ${task.resolution ? `<br>Fait : ${escapeHtml(task.resolution)}` : ""}
+    </p>` : '<p class="anomaly-task muted">Sans responsable : confiez-la à un métier.</p>';
+  if (task && !["ouverte", "prise_en_charge"].includes(task.status)) {
+    return line;
+  }
+  const option = (value, label, selected) => `<option value="${escapeHtml(value)}" ${selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
+  return `${line}
+    <details class="task-assign">
+      <summary>${task ? "Confier à quelqu'un d'autre" : "Assigner la tâche"}</summary>
+      <form data-assign-form="${anomaly.number}">
+        <label>Métier<select name="agent">${(labels.owners ?? []).map((id) => option(id, formatAgent(id), id === (task?.agent ?? anomaly.owner))).join("")}</select></label>
+        <label>Personne<input name="person" placeholder="celle reliée au métier" value="${escapeHtml(task?.person ?? "")}"></label>
+        <label>WhatsApp<input name="phone" inputmode="tel" placeholder="06 12 34 56 78" value="${escapeHtml(task?.phone ?? "")}"></label>
+        <label>Échéance<input name="dueDate" type="date" required value="${escapeHtml(task?.dueDate ?? "")}"></label>
+        <label>Gravité<select name="severity">${Object.entries(labels.severities ?? {}).map(([id, label]) => option(id, label, id === (anomaly.severity ?? "moyenne"))).join("")}</select></label>
+        <label class="wide">Consigne<input name="instruction" placeholder="ce qu'il faut faire (facultatif)" value="${escapeHtml(task?.instruction ?? "")}"></label>
+        <button type="submit" class="primary">${icon("check")}Confier</button>
+      </form>
+    </details>`;
 }
 
 // --- Team view ------------------------------------------------------------------

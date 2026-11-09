@@ -2,7 +2,8 @@ import { roundMoney } from "../documents/document-calculations.js";
 import { HKIDS_DOCUMENT_TYPES } from "../documents/document-schema.js";
 import { SPECIALISTS, SPECIALIST_IDS } from "./agent-team.js";
 import { CASH_CATEGORIES, CASH_METHODS, CashBookError, OPENING_CATEGORY } from "./cash-book.js";
-import { ANOMALY_STATUSES, ImprovementError, RULE_STATUSES, rulesInstruction } from "./improvement-book.js";
+import { ANOMALY_STATUSES, ImprovementError, RULE_STATUSES, SEVERITIES, TASK_STATUSES, rulesInstruction, taskBoard } from "./improvement-book.js";
+import { normalizeWhatsAppNumber } from "./whatsapp.js";
 import { TeamBookError } from "./team-book.js";
 import { FOLLOW_UP_CHANNELS, QUOTE_STATES, SalesBookError, frenchDay as salesDay, isoDay, quotePipeline, salesReport } from "./sales-book.js";
 
@@ -137,9 +138,10 @@ export const REPORT_ANOMALY_TOOL = Object.freeze({
       fait: { type: "string", description: "Ce qui s'est passé, précisément (qui, quoi, quand)." },
       domaine: { type: "string", enum: ["atelier", "achats", "commercial", "finance", "sav", "autre"] },
       numero_bc: { type: "string", description: "Bon de commande concerné ; chaîne vide sinon." },
-      responsable: { type: "string", enum: OWNERS, description: "L'agent responsable du domaine, qui analysera." }
+      responsable: { type: "string", enum: OWNERS, description: "L'agent responsable du domaine, qui analysera." },
+      gravite: { type: "string", enum: Object.keys(SEVERITIES), description: "haute : client ou argent en jeu, ou production arrêtée (la direction est prévenue tout de suite) ; moyenne par défaut." }
     },
-    required: ["fait", "domaine", "numero_bc", "responsable"]
+    required: ["fait", "domaine", "numero_bc", "responsable", "gravite"]
   }
 });
 
@@ -262,6 +264,89 @@ export async function recordFollowUp(args, { books, documentService, clock = () 
     }
     throw error;
   }
+}
+
+// The direction gives an anomaly to a trade and a person, and follows it.
+export const ASSIGN_TASK_TOOL = Object.freeze({
+  type: "function",
+  name: "assigner_tache",
+  description: "Confie une anomalie à un métier et à une personne, avec une échéance (« assigne l'anomalie 4 à la production, Samir, pour le 25/11 »). La personne est prévenue sur WhatsApp et répond quand c'est pris en charge, puis résolu. Seulement sur décision de la direction.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      anomalie: { type: "string", description: "Numéro de l'anomalie (c'est aussi le numéro de la tâche)." },
+      agent: { type: "string", enum: OWNERS, description: "Le métier responsable." },
+      personne: { type: "string", description: "Qui s'en charge ; chaîne vide pour la personne reliée à ce métier." },
+      telephone: { type: "string", description: "Son numéro WhatsApp s'il est donné ; chaîne vide sinon." },
+      echeance: { type: "string", description: "Date limite JJ/MM/AAAA." },
+      gravite: { type: "string", enum: ["", ...Object.keys(SEVERITIES)], description: "Nouvelle gravité si la direction la donne ; chaîne vide sinon." },
+      consigne: { type: "string", description: "Ce qu'il faut faire, si la direction le dit ; chaîne vide sinon." }
+    },
+    required: ["anomalie", "agent", "personne", "telephone", "echeance", "gravite", "consigne"]
+  }
+});
+
+export const TASK_TOOL = Object.freeze({
+  type: "function",
+  name: "suivre_tache",
+  description: "Enregistre où en est une tâche, pour un fait annoncé : prise en charge, résolue (avec ce qui a été fait), rouverte (avec pourquoi). La clôture d'une tâche résolue n'est jamais enregistrée par toi : la direction la confirme dans le cockpit ou en répondant « clôture tâche N » sur WhatsApp.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      anomalie: { type: "string", description: "Numéro de la tâche (celui de l'anomalie)." },
+      action: { type: "string", enum: ["prise_en_charge", "resolue", "rouvrir"] },
+      note: { type: "string", description: "Ce qui a été fait (resolue) ou pourquoi (rouvrir) ; chaîne vide sinon." }
+    },
+    required: ["anomalie", "action", "note"]
+  }
+});
+
+export async function assignTask(args, { books }, by) {
+  try {
+    const agent = OWNERS.includes(args.agent) ? args.agent : "director";
+    const member = await books.team.member(agent);
+    const given = text(args.telephone) ? normalizeWhatsAppNumber(text(args.telephone)) : "";
+    if (given === null) {
+      return { ok: false, erreur: "Numéro WhatsApp illisible : écrire par exemple 06 12 34 56 78." };
+    }
+    const person = text(args.personne) || member?.name || "";
+    const phone = given || (!text(args.personne) || text(args.personne) === member?.name ? member?.phone ?? "" : "");
+    const anomaly = await books.improvement.assign(text(args.anomalie), { agent, person, phone, dueDate: text(args.echeance), severity: text(args.gravite), instruction: text(args.consigne), by });
+    await books.team.log({ agent: SPECIALISTS[agent] ? agent : anomaly.owner, kind: "amelioration", text: `Tâche n° ${anomaly.number} confiée à ${person || agent} pour le ${frenchDay(anomaly.task.dueDate)} : ${anomaly.fact}`, ref: `anomalie:${anomaly.number}`, by });
+    return {
+      ok: true,
+      tache: describeAnomaly(anomaly),
+      prevenu: phone ? `${person || "la personne"} est prévenu(e) sur WhatsApp` : "personne n'est prévenu sur WhatsApp : aucun numéro (relier le métier à une personne avec son numéro, ou donner le numéro)"
+    };
+  } catch (error) {
+    return bookError(error);
+  }
+}
+
+export async function updateTask(args, { books }, by) {
+  try {
+    const anomaly = await books.improvement.updateTask(text(args.anomalie), text(args.action), { note: text(args.note), by });
+    await books.team.log({ agent: SPECIALISTS[anomaly.task.agent] ? anomaly.task.agent : anomaly.owner, kind: "amelioration", text: `Tâche n° ${anomaly.number} ${TASK_STATUSES[anomaly.task.status]}${text(args.note) ? ` : ${text(args.note)}` : ""}`, ref: `anomalie:${anomaly.number}`, by });
+    return { ok: true, tache: describeAnomaly(anomaly), ...(anomaly.task.status === "resolue" ? { suite: "La direction confirme la clôture (cockpit, ou « clôture tâche N » sur WhatsApp)." } : {}) };
+  } catch (error) {
+    return bookError(error);
+  }
+}
+
+// The task board as the Director reads it.
+export function taskLines(board) {
+  const numbers = (list) => list.slice(0, 8).map((anomaly) => anomaly.number).join(", ");
+  if (board.open.length === 0) {
+    return "";
+  }
+  return [
+    `Tâches d'amélioration : ${board.open.length} ouverte(s)${board.severe.length > 0 ? `, dont ${board.severe.length} de gravité haute (n° ${numbers(board.severe)})` : ""}.`,
+    board.unassigned.length > 0 ? `Sans responsable : n° ${numbers(board.unassigned)} (assigner_tache quand la direction décide).` : "",
+    board.late.length > 0 ? `En retard sur leur échéance : ${board.late.slice(0, 8).map((anomaly) => `n° ${anomaly.number} (${anomaly.task.person || anomaly.task.agent}, ${frenchDay(anomaly.task.dueDate)})`).join(", ")}.` : "",
+    board.toConfirm.length > 0 ? `Résolues, clôture à confirmer par la direction : n° ${numbers(board.toConfirm)}.` : ""
+  ].filter(Boolean).join(" ");
 }
 
 // The cash tools Finance is given; the balance alone for the Director.
@@ -422,11 +507,11 @@ function describeDay(day) {
 export async function listAnomalies(args, { books }) {
   const { anomalies, rules } = await books.improvement.state();
   const wanted = {
-    ouvertes: (entry) => entry.status !== "levee",
+    ouvertes: (entry) => (entry.task ? entry.task.status !== "cloturee" : entry.status !== "levee"),
     a_analyser: (entry) => entry.status === "a_analyser",
     analysee: (entry) => entry.status === "analysee",
     toutes: () => true
-  }[args.statut] ?? ((entry) => entry.status !== "levee");
+  }[args.statut] ?? ((entry) => (entry.task ? entry.task.status !== "cloturee" : entry.status !== "levee"));
   return {
     ok: true,
     anomalies: anomalies.filter(wanted).slice(-20).map(describeAnomaly),
@@ -444,7 +529,18 @@ export function describeAnomaly(anomaly) {
     responsable: anomaly.owner,
     detectee_le: frenchDay(anomaly.detectedAt.slice(0, 10)),
     cause: anomaly.cause ?? null,
-    regle: anomaly.rule ?? null
+    regle: anomaly.rule ?? null,
+    gravite: SEVERITIES[anomaly.severity ?? "moyenne"],
+    tache: anomaly.task
+      ? {
+        confiee_a: anomaly.task.person || anomaly.task.agent,
+        metier: anomaly.task.agent,
+        echeance: frenchDay(anomaly.task.dueDate),
+        statut: TASK_STATUSES[anomaly.task.status],
+        ...(anomaly.task.instruction ? { consigne: anomaly.task.instruction } : {}),
+        ...(anomaly.task.resolution ? { resolution: anomaly.task.resolution } : {})
+      }
+      : "non assignée"
   };
 }
 
@@ -497,7 +593,7 @@ export async function analyseAnomaly(args, { books }, by) {
 
 export async function reportAnomaly(args, { books }, by) {
   try {
-    const anomaly = await books.improvement.report({ fact: text(args.fait), area: text(args.domaine), orderNumber: text(args.numero_bc), agent: OWNERS.includes(args.responsable) ? args.responsable : "director", by });
+    const anomaly = await books.improvement.report({ fact: text(args.fait), area: text(args.domaine), orderNumber: text(args.numero_bc), agent: OWNERS.includes(args.responsable) ? args.responsable : "director", severity: SEVERITIES[args.gravite] ? args.gravite : "moyenne", by });
     await books.team.log({ agent: anomaly.owner, kind: "amelioration", text: `Anomalie n° ${anomaly.number} signalée : ${anomaly.fact}`, ref: `anomalie:${anomaly.number}`, by });
     return { ok: true, anomalie: describeAnomaly(anomaly), suite: `Confie l'analyse à ${anomaly.owner} (deleguer_a_un_agent) : cause et règle, avec analyser_anomalie.` };
   } catch (error) {
@@ -556,6 +652,7 @@ export async function directorBriefing({ books, workshop = null, documentService
       ? `Dépenses à régulariser : ${expenses.missingReceipt.length} sans justificatif${expenses.missingReceipt.length > 0 ? ` (n° ${expenses.missingReceipt.slice(-6).map((entry) => entry.number).join(", ")})` : ""}, ${expenses.awaitingApproval.length} au-dessus du seuil de ${formatDh(expenses.threshold)} à approuver par la direction dans le cockpit. Rappelle-le à la direction dans tout point de situation.`
       : "",
     dueQuotes.length > 0 ? `Devis à relancer (sans nouvelles depuis ${books.followUps.days} jours ou plus) : ${dueQuotes.slice(0, 8).map((quote) => `n° ${quote.number} (${quote.client}, ${quote.daysSilent} j)`).join(", ")}. Signale-les dans tout point de situation ; bilan_commercial pour le détail.` : "",
+    taskLines(taskBoard(state.anomalies, clock())),
     withoutLead.length > 0 ? `Bons de commande en cours sans chef de charge : n° ${withoutLead.slice(0, 8).join(", ")} (equipe_commande quand la direction le désigne).` : "",
     cncWaiting.length > 0 ? `${cncWaiting.length} fichier(s) CNC attendent la validation de la direction dans le cockpit (BC n° ${[...new Set(cncWaiting)].join(", ")}) : la découpe ne peut pas commencer avant.` : "",
     rulesInstruction(rules),

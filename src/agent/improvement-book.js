@@ -13,11 +13,25 @@ import { DATA_DIR, createFileJsonBook, createMemoryJsonBook } from "./json-book.
 // to its agent, and to the Director, with every mission from then on. If the
 // same kind of anomaly comes back under an active rule, the rule is counted as
 // not having held, so it can be strengthened.
+//
+// Each anomaly is also a task (CDC V1.1, section 12 and recette scenario 5):
+// it has a severity, the direction assigns it to a trade and a person with a
+// deadline, the person takes it and says when it is resolved, and only the
+// direction confirms the closure. The task carries the anomaly's number.
 
 export const DEFAULT_IMPROVEMENT_PATH = join(DATA_DIR, "amelioration.json");
 
 export const ANOMALY_STATUSES = Object.freeze({ a_analyser: "à analyser", analysee: "analysée", levee: "levée" });
 export const RULE_STATUSES = Object.freeze({ proposee: "à valider", active: "active", refusee: "refusée", retiree: "retirée" });
+export const SEVERITIES = Object.freeze({ faible: "faible", moyenne: "moyenne", haute: "haute" });
+export const TASK_STATUSES = Object.freeze({ ouverte: "ouverte", prise_en_charge: "prise en charge", resolue: "résolue, à confirmer", cloturee: "clôturée" });
+// What a task may become, from where.
+const TASK_MOVES = Object.freeze({
+  prise_en_charge: ["ouverte"],
+  resolue: ["ouverte", "prise_en_charge"],
+  cloturer: ["resolue"],
+  rouvrir: ["resolue", "cloturee"]
+});
 
 export class ImprovementError extends Error {
   constructor(message, code) {
@@ -27,7 +41,7 @@ export class ImprovementError extends Error {
   }
 }
 
-const EMPTY = Object.freeze({ anomalies: [], rules: [] });
+const EMPTY = Object.freeze({ anomalies: [], rules: [], notified: {} });
 
 export function createMemoryImprovementBook({ clock = () => new Date() } = {}) {
   return createImprovementBook({ book: createMemoryJsonBook(EMPTY), clock });
@@ -60,7 +74,7 @@ function createImprovementBook({ book, clock }) {
         for (const fact of facts) {
           const open = state.anomalies.find((entry) => entry.key === fact.key && entry.status !== "levee");
           if (!open) {
-            const anomaly = { id: randomUUID(), number: nextNumber(state.anomalies), ...fact, status: "a_analyser", detectedAt: at, journal: [{ at, by: "director", text: "Anomalie détectée au carnet d'atelier." }] };
+            const anomaly = { id: randomUUID(), number: nextNumber(state.anomalies), ...fact, severity: fact.kind === "blocage" ? "haute" : "moyenne", status: "a_analyser", detectedAt: at, journal: [{ at, by: "director", text: "Anomalie détectée au carnet d'atelier." }] };
             state.anomalies.push(anomaly);
             found.push(Object.freeze({ ...anomaly }));
           }
@@ -71,6 +85,12 @@ function createImprovementBook({ book, clock }) {
             anomaly.status = "levee";
             anomaly.liftedAt = at;
             anomaly.journal.push({ at, by: "director", text: "Le carnet ne la signale plus : anomalie levée." });
+            // A task given for it is resolved by the book; the direction
+            // still confirms its closure.
+            if (anomaly.task && ["ouverte", "prise_en_charge"].includes(anomaly.task.status)) {
+              Object.assign(anomaly.task, { status: "resolue", resolvedAt: at, resolvedBy: "carnet d'atelier", resolution: "Le carnet d'atelier ne la signale plus." });
+              anomaly.journal.push({ at, by: "director", text: "Tâche résolue d'après le carnet : à confirmer par la direction." });
+            }
           }
         }
         return found;
@@ -79,9 +99,12 @@ function createImprovementBook({ book, clock }) {
 
     // A problem the direction reports, outside the workshop book: a complaint,
     // a supplier late, a payment forgotten.
-    async report({ fact, area = "autre", orderNumber = "", agent = "director", by = "direction" }) {
+    async report({ fact, area = "autre", orderNumber = "", agent = "director", severity = "moyenne", by = "direction" }) {
       if (!text(fact)) {
         throw new ImprovementError("Décrire ce qui s'est passé.", "IMPROVEMENT_FACT_MISSING");
+      }
+      if (!SEVERITIES[severity]) {
+        throw new ImprovementError(`Gravité attendue : ${Object.keys(SEVERITIES).join(", ")}.`, "IMPROVEMENT_SEVERITY_UNKNOWN");
       }
       return book.change((state) => {
         const at = now();
@@ -96,6 +119,7 @@ function createImprovementBook({ book, clock }) {
           client: "",
           step: null,
           owner: text(agent) || "director",
+          severity,
           status: "a_analyser",
           detectedAt: at,
           journal: [{ at, by: text(by) || "direction", text: "Anomalie signalée." }]
@@ -179,17 +203,105 @@ function createImprovementBook({ book, clock }) {
     },
 
     // A reported anomaly is lifted by hand once it is dealt with; the workshop's
-    // own are lifted when the book no longer shows them.
+    // own are lifted when the book no longer shows them. Lifted by the
+    // direction, its task is closed with it.
     async lift(reference, { by = "direction" } = {}) {
       return book.change((state) => {
         const anomaly = find(state.anomalies, reference, "Anomalie", "IMPROVEMENT_ANOMALY_NOT_FOUND");
+        const at = now();
         if (anomaly.status !== "levee") {
-          const at = now();
           anomaly.status = "levee";
           anomaly.liftedAt = at;
           anomaly.journal.push({ at, by, text: "Anomalie levée." });
         }
+        if (anomaly.task && anomaly.task.status !== "cloturee") {
+          Object.assign(anomaly.task, { status: "cloturee", closedAt: at, closedBy: by });
+        }
         return Object.freeze({ ...anomaly });
+      });
+    },
+
+    // The direction gives the anomaly to a trade (agent) and a person, with a
+    // deadline. Given again, it goes to the new person, open again.
+    async assign(reference, { agent, person = "", phone = "", dueDate, severity = "", instruction = "", by = "direction" }) {
+      const due = isoDay(dueDate);
+      if (!due) {
+        throw new ImprovementError("Donner une échéance lisible (JJ/MM/AAAA).", "IMPROVEMENT_DUE_DATE_INVALID");
+      }
+      if (severity && !SEVERITIES[severity]) {
+        throw new ImprovementError(`Gravité attendue : ${Object.keys(SEVERITIES).join(", ")}.`, "IMPROVEMENT_SEVERITY_UNKNOWN");
+      }
+      if (!text(agent)) {
+        throw new ImprovementError("Dire à quel métier la tâche est confiée.", "IMPROVEMENT_ASSIGNEE_MISSING");
+      }
+      return book.change((state) => {
+        const anomaly = find(state.anomalies, reference, "Anomalie", "IMPROVEMENT_ANOMALY_NOT_FOUND");
+        if (anomaly.task?.status === "cloturee") {
+          throw new ImprovementError(`La tâche n° ${anomaly.number} est clôturée : rouvrez-la d'abord.`, "IMPROVEMENT_TASK_CLOSED");
+        }
+        const at = now();
+        if (severity) {
+          anomaly.severity = severity;
+        }
+        anomaly.task = { agent: text(agent), person: text(person), phone: text(phone), dueDate: due, instruction: text(instruction), status: "ouverte", assignedBy: by, assignedAt: at };
+        anomaly.journal.push({ at, by, text: `Tâche confiée à ${text(person) || text(agent)} pour le ${frenchDay(due)}${text(instruction) ? ` : ${text(instruction)}` : ""}.` });
+        return Object.freeze({ ...anomaly, task: Object.freeze({ ...anomaly.task }) });
+      });
+    },
+
+    // The task moves: taken, resolved (saying how), closed by the direction
+    // (cloturer), or opened again (rouvrir, saying why).
+    async updateTask(reference, action, { note = "", by = "direction" } = {}) {
+      if (!TASK_MOVES[action]) {
+        throw new ImprovementError(`Action attendue : ${Object.keys(TASK_MOVES).join(", ")}.`, "IMPROVEMENT_TASK_ACTION_UNKNOWN");
+      }
+      if (["resolue", "rouvrir"].includes(action) && !text(note)) {
+        throw new ImprovementError(action === "resolue" ? "Dire comment la tâche a été résolue." : "Dire pourquoi la tâche est rouverte.", "IMPROVEMENT_TASK_NOTE_MISSING");
+      }
+      return book.change((state) => {
+        const anomaly = find(state.anomalies, reference, "Anomalie", "IMPROVEMENT_ANOMALY_NOT_FOUND");
+        const task = anomaly.task;
+        if (!task) {
+          throw new ImprovementError(`L'anomalie n° ${anomaly.number} n'est confiée à personne : assignez-la d'abord.`, "IMPROVEMENT_TASK_NOT_ASSIGNED");
+        }
+        if (!TASK_MOVES[action].includes(task.status)) {
+          throw new ImprovementError(`La tâche n° ${anomaly.number} est ${TASK_STATUSES[task.status]}.`, "IMPROVEMENT_TASK_MOVE_INVALID");
+        }
+        const at = now();
+        if (action === "prise_en_charge") {
+          Object.assign(task, { status: "prise_en_charge", takenAt: at, takenBy: by });
+          anomaly.journal.push({ at, by, text: "Tâche prise en charge." });
+        } else if (action === "resolue") {
+          Object.assign(task, { status: "resolue", resolvedAt: at, resolvedBy: by, resolution: text(note) });
+          anomaly.journal.push({ at, by, text: `Tâche résolue : ${text(note)}. À confirmer par la direction.` });
+        } else if (action === "cloturer") {
+          Object.assign(task, { status: "cloturee", closedAt: at, closedBy: by });
+          if (anomaly.status !== "levee") {
+            anomaly.status = "levee";
+            anomaly.liftedAt = at;
+          }
+          anomaly.journal.push({ at, by, text: `Clôture confirmée par la direction${text(note) ? ` : ${text(note)}` : ""}.` });
+        } else {
+          Object.assign(task, { status: "prise_en_charge", reopenedAt: at, reopenedBy: by, reopenReason: text(note) });
+          if (anomaly.status === "levee" && anomaly.source === "signalee") {
+            anomaly.status = anomaly.cause ? "analysee" : "a_analyser";
+          }
+          anomaly.journal.push({ at, by, text: `Tâche rouverte : ${text(note)}.` });
+        }
+        return Object.freeze({ ...anomaly, task: Object.freeze({ ...task }) });
+      });
+    },
+
+    // The notices not yet sent, among those given; marked sent at once, so
+    // two sweeps never send the same one.
+    async claimNotices(keys) {
+      return book.change((state) => {
+        state.notified ??= {};
+        const fresh = keys.filter((key) => state.notified[key] === undefined);
+        for (const key of fresh) {
+          state.notified[key] = now();
+        }
+        return fresh;
       });
     },
 
@@ -224,6 +336,21 @@ function workshopFacts(orders) {
   return facts;
 }
 
+// The anomalies as the direction follows them: what is open, given to nobody,
+// late, and resolved but waiting for its closure to be confirmed.
+export function taskBoard(anomalies, today = new Date()) {
+  const day = isoDay(today);
+  const live = anomalies.filter((anomaly) => anomaly.task ? anomaly.task.status !== "cloturee" : anomaly.status !== "levee");
+  const working = live.filter((anomaly) => anomaly.task && ["ouverte", "prise_en_charge"].includes(anomaly.task.status));
+  return Object.freeze({
+    open: live,
+    severe: live.filter((anomaly) => anomaly.severity === "haute"),
+    unassigned: live.filter((anomaly) => !anomaly.task),
+    late: working.filter((anomaly) => anomaly.task.dueDate < day),
+    toConfirm: live.filter((anomaly) => anomaly.task?.status === "resolue")
+  });
+}
+
 // The rules as an agent reads them in its instructions.
 export function rulesInstruction(rules) {
   if (rules.length === 0) {
@@ -235,7 +362,20 @@ export function rulesInstruction(rules) {
   ].join("\n");
 }
 
-function frenchDay(iso) {
+function isoDay(value) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
+  }
+  const french = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(value ?? "").trim());
+  const iso = french ? `${french[3]}-${french[2]}-${french[1]}` : String(value ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    return null;
+  }
+  const date = new Date(`${iso}T00:00:00Z`);
+  return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== iso ? null : iso;
+}
+
+export function frenchDay(iso) {
   const [year, month, day] = String(iso ?? "").split("-");
   return day ? `${day}/${month}/${year}` : "";
 }

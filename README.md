@@ -833,6 +833,18 @@ Ce que fait le modèle et ce qu'il ne fait pas :
   20 h. Sa réponse « relance du devis 170 faite… » est enregistrée comme
   relance. Une livraison en retard est signalée au Commercial pour prévenir
   le client ;
+- chaque anomalie est une tâche (même numéro) avec une gravité (un blocage
+  est grave), un métier, une personne, une échéance et un statut : ouverte,
+  prise en charge, résolue à confirmer, clôturée. Une anomalie grave est
+  envoyée à la direction sur WhatsApp dès qu'elle est trouvée. Chaque matin
+  ouvré, la direction reçoit le résumé (ouvertes, graves, sans responsable,
+  en retard, à clôturer). La direction assigne la tâche dans la vue
+  Amélioration ou au Director (« assigne l'anomalie 4 à la production, Samir,
+  pour le 25/11 »), et la personne en est prévenue sur WhatsApp. Elle répond
+  « tâche 4 prise en charge » puis « tâche 4 résolue : … » ; une tâche passée
+  son échéance lui est rappelée une fois par jour. Seule la direction clôture
+  une tâche, par le bouton du cockpit (droit de décider) ou en répondant
+  « clôture tâche 4 » ; elle peut aussi la rouvrir avec un motif ;
 - le client suit sa commande sur un lien à lui (`/suivi/<jeton>`, page
   `src/frontend/suivi.html`) : avancement réel, étapes terminées, livraison
   prévue, échéancier, photos publiées et documents de sa vente, jamais les

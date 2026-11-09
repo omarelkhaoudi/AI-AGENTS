@@ -39,7 +39,7 @@ const DOCUMENT_EXTENSIONS = Object.freeze({
 // The Director's errors the sender can act on, told word for word.
 const TOLD_AS_IS = Object.freeze(["AGENT_NOT_CONFIGURED", "AGENT_MODEL_UNAVAILABLE", "AGENT_PHOTO_INVALID", "AGENT_FILE_INVALID"]);
 
-export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, workshop = null, transcriber = null, log = () => {} }) {
+export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, workshop = null, recordFollowUp = null, transcriber = null, log = () => {} }) {
   // One number's messages are handled in the order they came.
   const lanes = new Map();
   const inLane = (number, task) => {
@@ -180,8 +180,12 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
       text: `Compte rendu de ${member.name} par WhatsApp : ${said || `(${message.type} sans texte)`}`,
       by: member.name
     });
+    // « Relance du devis 170 faite, elle réfléchit » is a follow-up made.
+    const quote = /relanc/i.test(said) ? /devis\s*(?:n\s*[°o.]?\s*)?(\d{2,6})(?!\d)/i.exec(said)?.[1] : null;
+    const followUp = quote && recordFollowUp ? await recordFollowUp(quote, { note: said, by: member.name }) : null;
     return reply(message, [
       `Bien reçu, ${member.name}. Votre compte rendu est transmis à la direction et à l'agent ${label}.`,
+      followUp ? (followUp.ok ? `Relance du devis n° ${quote} enregistrée.` : followUp.erreur) : "",
       read.problem && !said ? read.problem : ""
     ].filter(Boolean).join("\n\n"));
   }
@@ -279,11 +283,23 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
       }
       for (const anomaly of anomalies.filter((entry) => entry.source === "atelier")) {
         const order = orders.find((candidate) => String(candidate.number) === anomaly.orderNumber);
-        const { lead = "", leadPhone = "" } = order?.team ?? {};
+        if (!order) {
+          continue;
+        }
+        const { lead = "", leadPhone = "" } = order.team ?? {};
+        const what = anomaly.fact.replace(/^BC \S+ \([^)]*\) : /, "");
+        // A late delivery is also the Commercial's: the client is to be told.
+        if (anomaly.step === "livraison_installation" && anomaly.kind === "retard") {
+          const commercial = await teamBook.member("commercial");
+          if (commercial?.phone) {
+            await send({ to: commercial.phone, text: `Bonjour ${commercial.name}, la livraison du BC n° ${order.number} (${order.client}) est en retard : ${what}. Prévenez le client et convenez d'une nouvelle date avec lui.`, name: commercial.name, by: "director", kind: "alerte" })
+              .then(() => teamBook.log({ agent: "commercial", kind: "relance", text: `Retard de livraison du BC ${order.number} signalé par WhatsApp à ${commercial.name}.`, ref: `bc:${order.number}`, by: "director" }))
+              .catch(log);
+          }
+        }
         if (!leadPhone) {
           continue;
         }
-        const what = anomaly.fact.replace(/^BC \S+ \([^)]*\) : /, "");
         const text = `Bonjour${lead ? ` ${lead}` : ""}, alerte sur le BC n° ${order.number} (${order.client}) dont vous êtes chef de charge : ${what}. Répondez ici avec la cause et la nouvelle date : la direction et l'agent Production seront informés.`;
         try {
           await send({ to: leadPhone, text, name: lead, by: "director", kind: "alerte" });
@@ -293,6 +309,35 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
           await teamBook.log({ agent: anomaly.owner, kind: "atelier", text: `Alerte non envoyée à ${lead || leadPhone} (chef de charge) : ${error.message}`, ref: `bc:${order.number}`, by: "director" });
         }
       }
+    },
+
+    // The quotes with no news for too long: to the person behind the
+    // Commercial agent, and to the direction for those twice as late (or all
+    // of them when nobody is behind the Commercial). One message each.
+    async remindFollowUps(quotes, { days }) {
+      if (!client || quotes.length === 0) {
+        return;
+      }
+      const commercial = await teamBook.member("commercial");
+      const line = (quote) => `- Devis n° ${quote.number}, ${quote.client}${quote.totalTtc === null ? "" : `, ${formatDh(quote.totalTtc)}`} : ${quote.daysSilent} jours sans nouvelles${quote.followUps.length > 0 ? " (dernière relance le " + frenchDate(quote.followUps.at(-1).day) + ")" : ""}`;
+      const late = quotes.filter((quote) => quote.level === 2);
+      const toDirection = commercial?.phone ? late : quotes;
+      if (commercial?.phone) {
+        await send({
+          to: commercial.phone,
+          text: [`Bonjour ${commercial.name}, devis à relancer :`, ...quotes.map(line), "Une fois la relance faite, répondez ici, par exemple « relance du devis " + quotes[0].number + " faite, le client réfléchit »."].join("\n"),
+          name: commercial.name, by: "director", kind: "relance"
+        }).catch(log);
+      }
+      if (toDirection.length > 0) {
+        const intro = commercial?.phone
+          ? `Relances en retard (sans nouvelles depuis ${days * 2} jours ou plus ; ${commercial.name} a été prévenu(e)) :`
+          : `Devis à relancer (sans nouvelles depuis ${days} jours ou plus ; aucun responsable commercial relié) :`;
+        for (const owner of config.ownerNumbers) {
+          await send({ to: owner, text: [intro, ...toDirection.map(line)].join("\n"), by: "director", kind: "relance" }).catch(log);
+        }
+      }
+      await teamBook.log({ agent: "commercial", kind: "relance", text: `Rappel de relance envoyé par WhatsApp : devis n° ${quotes.map((quote) => quote.number).join(", ")}.`, by: "director" });
     },
 
     // For tests: resolves once every number's messages were handled.
@@ -319,6 +364,15 @@ function waiting(outcome) {
 // « BC 171 », « bon de commande n° 171 », « BC171_panneaux.nc ».
 function orderNumberIn(text) {
   return /(?<![a-z])(?:bc|bon de commande|commande)[\s_-]*(?:n\s*[°o.]?\s*)?(\d{2,6})(?!\d)/i.exec(String(text ?? ""))?.[1] ?? null;
+}
+
+function formatDh(amount) {
+  return `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(amount).replace(/\u202f/g, " ")} DH`;
+}
+
+function frenchDate(iso) {
+  const [year, month, day] = String(iso ?? "").split("-");
+  return day ? `${day}/${month}/${year}` : "";
 }
 
 function clip(text, length) {

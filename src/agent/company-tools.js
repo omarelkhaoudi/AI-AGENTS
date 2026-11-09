@@ -4,6 +4,7 @@ import { SPECIALISTS, SPECIALIST_IDS } from "./agent-team.js";
 import { CASH_CATEGORIES, CASH_METHODS, CashBookError, OPENING_CATEGORY } from "./cash-book.js";
 import { ANOMALY_STATUSES, ImprovementError, RULE_STATUSES, rulesInstruction } from "./improvement-book.js";
 import { TeamBookError } from "./team-book.js";
+import { FOLLOW_UP_CHANNELS, QUOTE_STATES, SalesBookError, frenchDay as salesDay, isoDay, quotePipeline, salesReport } from "./sales-book.js";
 
 // The tools of Hiba's three requests of 09/11/2026, as the Director and its
 // agents call them: the cash book Finance keeps, the anomalies each head of
@@ -158,6 +159,110 @@ export const LINK_MEMBER_TOOL = Object.freeze({
     required: ["agent", "nom", "role", "telephone"]
   }
 });
+
+// The Commercial's report and follow-ups, on the quotes the cockpit issued.
+export const SALES_REPORT_TOOL = Object.freeze({
+  type: "function",
+  name: "bilan_commercial",
+  description: "Bilan commercial chiffré et vérifiable d'une période, calculé sur les documents générés par le cockpit : devis émis, ventes signées (devis → BC), taux de transformation, devis perdus et pourquoi, devis ouverts, devis à relancer (sans nouvelles depuis 5 jours ou plus) et livraisons en retard. Chaque chiffre cite ses numéros de documents. À appeler pour « le bilan commercial », « quels devis relancer », « où en sont les ventes ».",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      du: { type: "string", description: "Début JJ/MM/AAAA ; chaîne vide pour le mois en cours." },
+      au: { type: "string", description: "Fin JJ/MM/AAAA ; chaîne vide pour le mois en cours." }
+    },
+    required: ["du", "au"]
+  }
+});
+
+export const FOLLOW_UP_TOOL = Object.freeze({
+  type: "function",
+  name: "enregistrer_relance",
+  description: "Enregistre une relance FAITE d'un devis (« j'ai relancé Mme Alami pour le devis 170 au téléphone, elle réfléchit »), ou un devis refusé par le client (perdu, avec le motif). Seulement pour un fait annoncé : un message préparé n'est pas une relance faite.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      devis: { type: "string", description: "Numéro du devis." },
+      canal: { type: "string", enum: Object.keys(FOLLOW_UP_CHANNELS) },
+      date: { type: "string", description: "Jour de la relance JJ/MM/AAAA ; chaîne vide pour aujourd'hui." },
+      note: { type: "string", description: "Ce que le client a répondu ; chaîne vide sinon." },
+      perdu: { type: "boolean", description: "true si le client refuse le devis." },
+      motif: { type: "string", description: "Pourquoi le devis est perdu (obligatoire si perdu) ; chaîne vide sinon." }
+    },
+    required: ["devis", "canal", "date", "note", "perdu", "motif"]
+  }
+});
+
+export function salesTools(context, agentId) {
+  return [
+    { tool: SALES_REPORT_TOOL, run: (args) => salesReportFor(args, context) },
+    { tool: FOLLOW_UP_TOOL, run: (args) => recordFollowUp(args, context, agentId) }
+  ];
+}
+
+export async function salesReportFor(args, { books, documentService, workshop = null, clock = () => new Date() }) {
+  const today = clock();
+  const month = isoDay(today).slice(0, 7);
+  const last = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
+  const from = isoDay(text(args.du)) ?? `${month}-01`;
+  const to = isoDay(text(args.au)) ?? `${month}-${String(last).padStart(2, "0")}`;
+  const report = salesReport(await documentService.listIssued(), await books.followUps.state(), {
+    from, to, today, days: books.followUps.days, workshopOrders: workshop ? await workshop.book() : []
+  });
+  return {
+    ok: true,
+    periode: `du ${salesDay(from)} au ${salesDay(to)}`,
+    source: "documents générés par le cockpit et relances enregistrées ; un devis fait à la main hors cockpit n'est pas compté",
+    devis_emis: { nombre: report.issued.count, montant_ttc: formatDh(report.issued.totalTtc), numeros: report.issued.numbers },
+    ventes_signees: { nombre: report.signed.count, montant_ttc: formatDh(report.signed.totalTtc), documents: report.signed.pairs },
+    taux_de_transformation: report.conversion === null ? "aucun devis émis dans la période" : `${report.conversion} % des devis émis dans la période sont commandés`,
+    devis_perdus: { nombre: report.lost.count, montant_ttc: formatDh(report.lost.totalTtc), motifs: report.lost.quotes.map((quote) => `devis ${quote.number} : ${quote.reason}`) },
+    devis_ouverts: { nombre: report.open.count, montant_ttc: formatDh(report.open.totalTtc), numeros: report.open.numbers },
+    a_relancer: report.toFollowUp.map(describeQuote),
+    livraisons_en_retard: report.lateDeliveries.map((order) => `BC ${order.number} (${order.client}) prévue le ${salesDay(order.plannedDate)}`),
+    ...(report.unknownAmounts.length > 0 ? { montants_inconnus: `devis n° ${report.unknownAmounts.join(", ")} : montant illisible, non compté` } : {}),
+    regle_de_relance: `un devis ouvert sans nouvelles depuis ${report.followUpDays} jours est à relancer ; depuis ${report.followUpDays * 2} jours, la direction est prévenue`
+  };
+}
+
+function describeQuote(quote) {
+  const last = quote.followUps.at(-1);
+  return {
+    devis: quote.number,
+    client: quote.client,
+    montant_ttc: quote.totalTtc === null ? "inconnu" : formatDh(quote.totalTtc),
+    emis_le: salesDay(quote.date),
+    sans_nouvelles_depuis: `${quote.daysSilent} jours`,
+    derniere_relance: last ? `${salesDay(last.day)} par ${FOLLOW_UP_CHANNELS[last.channel]}${last.note ? ` : ${last.note}` : ""}` : "aucune",
+    urgence: quote.level === 2 ? "en retard : la direction est prévenue" : "à relancer"
+  };
+}
+
+export async function recordFollowUp(args, { books, documentService, clock = () => new Date() }, by) {
+  const number = text(args.devis);
+  try {
+    const quote = quotePipeline(await documentService.listIssued(), await books.followUps.state(), { today: clock() }).find((entry) => entry.number === number);
+    if (!quote) {
+      return { ok: false, erreur: `Aucun devis n° ${number} n'a été généré par le cockpit : je n'ai pas l'information.` };
+    }
+    if (quote.status === "commande") {
+      return { ok: false, erreur: `Le devis n° ${number} est déjà commandé (BC n° ${quote.order.number}) : plus de relance à faire.` };
+    }
+    await books.followUps.record(number, { channel: text(args.canal) || "autre", day: text(args.date), note: text(args.note), lost: args.perdu === true, reason: text(args.motif), by });
+    const line = args.perdu === true
+      ? `Devis n° ${number} (${quote.client}) perdu : ${text(args.motif)}.`
+      : `Relance du devis n° ${number} (${quote.client}) par ${FOLLOW_UP_CHANNELS[text(args.canal) || "autre"]}${text(args.note) ? ` : ${text(args.note)}` : ""}.`;
+    await books.team.log({ agent: "commercial", kind: "relance", text: line, ref: `devis:${number}`, by });
+    return { ok: true, enregistre: line, statut: QUOTE_STATES[args.perdu === true ? "perdu" : "ouvert"] };
+  } catch (error) {
+    if (error instanceof SalesBookError) {
+      return { ok: false, erreur: error.message };
+    }
+    throw error;
+  }
+}
 
 // The cash tools Finance is given; the balance alone for the Director.
 export function cashTools(context, agentId) {
@@ -428,11 +533,13 @@ export async function agentBriefing(agentId, { books }) {
 
 // The Director's own: who is behind each agent, every rule in force, and the
 // rules waiting for the direction.
-export async function directorBriefing({ books, workshop = null }) {
+export async function directorBriefing({ books, workshop = null, documentService = null, clock = () => new Date() }) {
   const since = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
   const [members, rules, state, recent, expenses, orders] = await Promise.all([books.team.members(), books.improvement.activeRules("director"), books.improvement.state(), books.team.activity({ limit: 200, since }), books.cash.pending?.() ?? null, workshop?.book().catch(() => []) ?? []]);
   const open = orders.filter((order) => !order.finished);
   const withoutLead = open.filter((order) => !order.team?.lead).map((order) => order.number);
+  const quotes = books.followUps && typeof documentService?.listIssued === "function" ? quotePipeline(await documentService.listIssued().catch(() => []), await books.followUps.state(), { today: clock(), days: books.followUps.days }) : [];
+  const dueQuotes = quotes.filter((quote) => quote.level > 0);
   const cncWaiting = open.flatMap((order) => (order.cnc ?? []).filter((entry) => entry.status === "a_valider").map(() => order.number));
   const linked = Object.entries(members).filter(([agent]) => SPECIALISTS[agent]);
   const reports = recent.filter((entry) => entry.kind === "compte_rendu").slice(0, 8).reverse();
@@ -448,6 +555,7 @@ export async function directorBriefing({ books, workshop = null }) {
     expenses && (expenses.missingReceipt.length > 0 || expenses.awaitingApproval.length > 0)
       ? `Dépenses à régulariser : ${expenses.missingReceipt.length} sans justificatif${expenses.missingReceipt.length > 0 ? ` (n° ${expenses.missingReceipt.slice(-6).map((entry) => entry.number).join(", ")})` : ""}, ${expenses.awaitingApproval.length} au-dessus du seuil de ${formatDh(expenses.threshold)} à approuver par la direction dans le cockpit. Rappelle-le à la direction dans tout point de situation.`
       : "",
+    dueQuotes.length > 0 ? `Devis à relancer (sans nouvelles depuis ${books.followUps.days} jours ou plus) : ${dueQuotes.slice(0, 8).map((quote) => `n° ${quote.number} (${quote.client}, ${quote.daysSilent} j)`).join(", ")}. Signale-les dans tout point de situation ; bilan_commercial pour le détail.` : "",
     withoutLead.length > 0 ? `Bons de commande en cours sans chef de charge : n° ${withoutLead.slice(0, 8).join(", ")} (equipe_commande quand la direction le désigne).` : "",
     cncWaiting.length > 0 ? `${cncWaiting.length} fichier(s) CNC attendent la validation de la direction dans le cockpit (BC n° ${[...new Set(cncWaiting)].join(", ")}) : la découpe ne peut pas commencer avant.` : "",
     rulesInstruction(rules),

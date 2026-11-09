@@ -33,6 +33,8 @@ import { TeamBookError, createMemoryTeamBook } from "../agent/team-book.js";
 import { SPECIALISTS, SPECIALIST_IDS } from "../agent/agent-team.js";
 import { createMemoryWhatsAppInbox } from "../agent/whatsapp-inbox.js";
 import { createWhatsAppGateway } from "../agent/whatsapp-gateway.js";
+import { createMemoryFollowUpBook, dueReminders, isoDay, quotePipeline, salesReport } from "../agent/sales-book.js";
+import { recordFollowUp } from "../agent/company-tools.js";
 import { createOpenAiTranscriberFromEnv } from "../agent/transcriber.js";
 import { WhatsAppCloudError, createWhatsAppCloudClient, loadWhatsAppCloudConfig, verifyWebhookSignature } from "../integrations/whatsapp-cloud.js";
 import { timingSafeEqual } from "node:crypto";
@@ -88,6 +90,8 @@ export function buildApi({
   cashBook = null,
   improvementBook = null,
   teamBook = null,
+  // The quotes' follow-ups (data/relances.json for the server process).
+  followUpBook = null,
   // A new anomaly is handed to its agent for analysis at once. The server
   // process turns it on; a test does it by hand.
   autoAnalyseAnomalies = false,
@@ -189,6 +193,7 @@ export function buildApi({
   const workshopBook = workshopStore ?? createMemoryWorkshopStore();
   const workshop = createWorkshop({ store: workshopBook, documentService: hkidsDocuments, clock, publicBaseUrl });
   const cash = cashBook ?? createMemoryCashBook({ clock });
+  const followUps = followUpBook ?? createMemoryFollowUpBook({ clock });
   const improvementRecords = improvementBook ?? createMemoryImprovementBook({ clock });
   // Wherever the workshop book is read (the Director, the cockpit, the timer),
   // a step newly blocked or late is told to its order's chef de charge.
@@ -214,6 +219,7 @@ export function buildApi({
     cashBook: cash,
     improvementBook: improvement,
     teamBook: teamFeed,
+    followUpBook: followUps,
     autoAnalyse: autoAnalyseAnomalies,
     publicBaseUrl,
     client: agentClient
@@ -229,6 +235,8 @@ export function buildApi({
     teamBook: teamFeed,
     agent,
     workshop,
+    // A follow-up a team member reports (« relance du devis 170 faite »).
+    recordFollowUp: (number, { note, by }) => recordFollowUp({ devis: number, canal: "autre", date: "", note, perdu: false, motif: "" }, { books: { followUps, team: teamFeed }, documentService: hkidsDocuments, clock }, by),
     transcriber: whatsAppTranscriber === undefined ? createOpenAiTranscriberFromEnv() : whatsAppTranscriber,
     log: (error) => app.log.error(error)
   });
@@ -244,6 +252,17 @@ export function buildApi({
   // server process calls this on a timer, so the anomaly is found anyway.
   app.decorate("sweepAnomalies", async () => syncAnomalies(await workshop.book()));
   app.decorate("whatsApp", whatsApp);
+  // The quotes with no news for too long, told on WhatsApp during working
+  // hours (Casablanca), each once; the server process calls it on a timer.
+  app.decorate("sweepFollowUps", async () => {
+    if (!whatsApp.configured || !workingHours(clock())) {
+      return [];
+    }
+    const pipeline = quotePipeline(await hkidsDocuments.listIssued(), await followUps.state(), { today: clock(), days: followUps.days });
+    const fresh = await followUps.claimReminders(dueReminders(pipeline));
+    await whatsApp.remindFollowUps(fresh.map((reminder) => reminder.quote), { days: followUps.days });
+    return fresh;
+  });
 
   // C1 - Edge. The limiter is global and runs BEFORE authentication, so an
   // anonymous flood is capped instead of reaching the credential lookup. It
@@ -851,6 +870,41 @@ export function buildApi({
       }
     });
 
+    // --- Commercial: the report of a period and the quotes' follow-ups -----
+    app.get("/api/commercial", readRouteOptions(), async (request, reply) => {
+      const today = clock();
+      const month = isoDay(today).slice(0, 7);
+      const last = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
+      const from = isoDay(typeof request.query?.from === "string" ? request.query.from : "") ?? `${month}-01`;
+      const to = isoDay(typeof request.query?.to === "string" ? request.query.to : "") ?? `${month}-${String(last).padStart(2, "0")}`;
+      try {
+        const [issued, state, orders] = await Promise.all([hkidsDocuments.listIssued(), followUps.state(), workshop.book()]);
+        return {
+          report: salesReport(issued, state, { from, to, today, days: followUps.days, workshopOrders: orders }),
+          quotes: quotePipeline(issued, state, { today, days: followUps.days })
+        };
+      } catch (error) {
+        return sendDomainError(reply, "Commercial report unavailable.", error);
+      }
+    });
+
+    // A follow-up made, or a quote the client turned down, as told from the cockpit.
+    app.post("/api/commercial/quotes/:number/follow-ups", writeRouteOptions(), async (request, reply) => {
+      const field = (name) => (typeof request.body?.[name] === "string" ? request.body[name] : "");
+      const result = await recordFollowUp({
+        devis: request.params.number,
+        canal: field("channel") || "autre",
+        date: field("day"),
+        note: field("note"),
+        perdu: request.body?.lost === true,
+        motif: field("reason")
+      }, { books: { followUps, team: teamFeed }, documentService: hkidsDocuments, clock }, request.principal.userId ?? "direction");
+      if (!result.ok) {
+        return reply.code(result.erreur.startsWith("Aucun devis") ? 404 : 400).send({ error: result.erreur });
+      }
+      return reply.code(200).send({ recorded: result.enregistre });
+    });
+
     // --- Continuous improvement: anomalies, causes and rules ---------------
     app.get("/api/improvement", readRouteOptions(), async (_request, reply) => {
       try {
@@ -1308,6 +1362,12 @@ function sendBookError(reply, error, fallback) {
     return reply.code(statusCode).send({ error: error.message, details: { code: error.code } });
   }
   return sendDomainError(reply, fallback, error);
+}
+
+// From 8:00 to 20:00 in Casablanca: nobody is woken by a reminder.
+function workingHours(now) {
+  const hour = Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Casablanca", hour: "2-digit", hourCycle: "h23" }).format(now));
+  return hour >= 8 && hour < 20;
 }
 
 function sendWorkshopError(reply, error, fallback) {

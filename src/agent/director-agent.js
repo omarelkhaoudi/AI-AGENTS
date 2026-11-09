@@ -15,6 +15,7 @@ import { OBJECTIVE_INDICATORS, currentMonth, measureObjective } from "./sales-ob
 import { createMemoryCashBook } from "./cash-book.js";
 import { createMemoryImprovementBook } from "./improvement-book.js";
 import { createMemoryTeamBook } from "./team-book.js";
+import { createMemoryFollowUpBook } from "./sales-book.js";
 import {
   ANOMALIES_TOOL,
   CASH_BALANCE_TOOL,
@@ -28,7 +29,12 @@ import {
   improvementTools,
   linkMember,
   listAnomalies,
-  reportAnomaly
+  reportAnomaly,
+  FOLLOW_UP_TOOL,
+  SALES_REPORT_TOOL,
+  recordFollowUp,
+  salesReportFor,
+  salesTools
 } from "./company-tools.js";
 
 // The Director as a conversational agent, and as a director: it carries the
@@ -392,6 +398,8 @@ const TOOLS = Object.freeze([
   CLIENT_LINK_TOOL,
   ORDER_TEAM_TOOL,
   PUBLISH_PHOTO_TOOL,
+  SALES_REPORT_TOOL,
+  FOLLOW_UP_TOOL,
   CASH_BALANCE_TOOL,
   ANOMALIES_TOOL,
   REPORT_ANOMALY_TOOL,
@@ -436,6 +444,8 @@ function instructions(today, briefing = []) {
     "",
     `Atelier, après le bon de commande : chaque bon de commande validé suit ${WORKSHOP_STEPS.length} étapes (${WORKSHOP_STEPS.map((step) => step.label).join(", ")}). « Le BC 166 est en découpe », « l'assemblage du 166 est fini », « la peinture est bloquée, il manque la laque », « Youssef s'occupe de l'étude, prévue pour le 12/11 » → c'est un fait que la direction t'annonce : avancer_commande toi-même, un appel par étape (une étape commencée = en_cours ; les étapes d'avant qu'elle dit finies = terminee), puis confirme en une ligne avec l'avancement. « Où en est la commande de Mme X / le BC 166 », « quelles commandes sont en retard » → carnet_atelier, puis l'étape en cours, l'avancement (calculé sur les étapes terminées, jamais estimé), les dates prévues et les alertes. Planning, priorités ou charge de l'atelier → production. Suite de la chaîne, tout de suite après l'avoir enregistrée : contrôle qualité terminé → commercial : préparer le message au client pour convenir de la date de livraison et d'installation ; livraison et installation terminée → finance : facture du solde du devis (si le dossier n'est pas soldé). Pour tout point de situation ou toute question d'urgences, regarde aussi carnet_atelier et signale les commandes bloquées ou en retard.`,
     "",
+    "Bilan commercial et relances : « fais le bilan commercial du mois », « quels devis relancer ? », « où en sont les ventes » → bilan_commercial (chiffres calculés sur les documents du cockpit : cite les numéros, ne recalcule rien, ne complète jamais avec un chiffre supposé). « J'ai relancé Mme Alami pour le devis 170, elle réfléchit », « le client du devis 172 a refusé, trop cher » → enregistrer_relance toi-même (perdu avec son motif pour un refus). Un devis ouvert sans nouvelles depuis 5 jours est à relancer : le responsable commercial est prévenu sur WhatsApp, et la direction au bout de 10 jours ; pour rédiger les messages de relance, confie-les au commercial.",
+    "",
     "Bureau d'études, avant la découpe : chaque bon de commande a un chef de charge qui le contrôle de bout en bout ; avec son numéro, il reçoit sur WhatsApp chaque étape de sa commande qui se bloque ou prend du retard, et sa réponse arrive à la Production comme compte rendu ; quand le client a un architecte, une personne de l'équipe est en lien avec lui ; après la fiche technique (étude technique terminée), le dessinateur fait le fichier de la machine CNC (G-code ou DXF) et le dépose dans le cockpit, ou l'envoie au numéro WhatsApp de l'entreprise avec « BC n° » en légende (son numéro doit être enregistré sur la commande). « Samir est chef de charge du BC 166 », « l'architecte de Mme Alami est M. Bennani, c'est Hiba qui le suit », « Karim fait le G-code » → equipe_commande. Le fichier n'atteint la machine qu'une fois validé par la direction dans le cockpit (vue Atelier) : tu ne le valides jamais, et la découpe CNC ne peut pas commencer avant. Une commande lancée sans chef de charge, un fichier CNC qui attend sa validation : signale-le dans tout point de situation.",
     "",
     "Caisse et bilan du jour : chaque entrée ou sortie d'argent que la direction t'annonce (« j'ai reçu 3 000 DH d'acompte de Mme Alami en espèces pour le devis 170 », « j'ai payé 1 200 DH de laque à Sodipeint par chèque », « j'ai versé les salaires, 18 000 DH par virement », « il y a 5 000 DH en caisse au départ ») → confie-la tout de suite au Directeur financier (finance) avec deleguer_a_un_agent, en recopiant tout : entrée ou sortie, montant, ce que c'est, moyen de paiement, qui a payé ou a été payé, numéro du devis ou du BC, la date si ce n'est pas aujourd'hui, et qui l'annonce. Plusieurs mouvements annoncés ensemble → une seule mission qui les liste tous. Finance l'enregistre au journal de caisse et te rend le bilan du jour : réponds en deux ou trois lignes (mouvement n°, montant, solde du jour, et pour un client ce qui reste à encaisser sur sa vente). « Où en est la caisse », « bilan du jour », « combien j'ai en caisse » → bilan_caisse toi-même. Pour tout point de situation, donne aussi le bilan de caisse du jour. Une erreur de saisie (« ce n'était pas 3 000 mais 2 000 ») → finance : annuler le mouvement et enregistrer le bon. Justificatifs : une dépense annoncée avec la photo d'un reçu, d'un ticket ou d'une facture → écris « justificatif : photo n° X » dans la mission ; une photo envoyée plus tard pour une dépense déjà enregistrée (« voici le reçu du MDF ») → mission à finance : joindre la photo n° X au mouvement n° N. Sans photo, rappelle à la direction d'envoyer le justificatif. Une dépense au-dessus du seuil d'alerte s'approuve dans la vue Caisse du cockpit, par une personne : tu ne l'approuves jamais.",
@@ -479,12 +489,12 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
   const loadCatalogue = createCatalogueLoader(cataloguePath ? { path: cataloguePath } : {});
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, autoAnalyse, publicBaseUrl, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, autoAnalyse, publicBaseUrl, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -504,6 +514,7 @@ export function createDirectorAgent({
   cashBook = null,
   improvementBook = null,
   teamBook = null,
+  followUpBook = null,
   // A new anomaly found in the workshop book is handed to its agent at once,
   // in the background, for its cause and a rule. Off unless the server asks.
   autoAnalyse = false,
@@ -516,7 +527,8 @@ export function createDirectorAgent({
   const books = Object.freeze({
     cash: cashBook ?? createMemoryCashBook({ clock }),
     improvement: improvementBook ?? createMemoryImprovementBook({ clock }),
-    team: teamBook ?? createMemoryTeamBook({ clock, agents: SPECIALIST_IDS })
+    team: teamBook ?? createMemoryTeamBook({ clock, agents: SPECIALIST_IDS }),
+    followUps: followUpBook ?? createMemoryFollowUpBook({ clock })
   });
   const configured = () => Boolean(client) || apiKey !== "";
   // The context every tool runs in; a turn adds its own outcome and user.
@@ -799,6 +811,12 @@ async function runTool(call, context) {
     }
     if (call.name === CLIENT_LINK_TOOL.name) {
       return await clientLink(args, context, "director");
+    }
+    if (call.name === SALES_REPORT_TOOL.name) {
+      return await salesReportFor(args, context);
+    }
+    if (call.name === FOLLOW_UP_TOOL.name) {
+      return await recordFollowUp(args, context, "director");
     }
     if (call.name === ORDER_TEAM_TOOL.name) {
       return await setOrderTeam(args, context, "director");
@@ -1221,7 +1239,7 @@ async function runAgent(agentId, mission, context) {
     agentId,
     mission,
     extraTools: [
-      ...(books ? [...(agentId === "finance" ? cashTools(context, agentId) : []), ...improvementTools(context, agentId)] : []),
+      ...(books ? [...(agentId === "finance" ? cashTools(context, agentId) : []), ...(agentId === "commercial" ? salesTools(context, agentId) : []), ...improvementTools(context, agentId)] : []),
       ...(SPECIALISTS[agentId].workshop === "write" ? [{ tool: ORDER_TEAM_TOOL, run: (teamArgs, by) => setOrderTeam(teamArgs, context, by) }] : [])
     ],
     briefing: books ? await agentBriefing(agentId, context) : [],

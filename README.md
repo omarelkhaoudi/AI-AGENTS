@@ -820,6 +820,19 @@ Ce que fait le modèle et ce qu'il ne fait pas :
   valide ou le refuse avec un motif (droit de décider, jamais un agent), et la
   découpe CNC ne peut pas commencer avant. Rien de tout cela n'est montré au
   client ;
+- le bilan commercial (outil `bilan_commercial` du Director et du Commercial,
+  route `GET /api/commercial`) est calculé sur les documents générés par le
+  cockpit : devis émis, ventes signées (devis → BC, datées par le BC), taux de
+  transformation, devis perdus et leur motif, devis ouverts, à relancer,
+  livraisons en retard ; chaque chiffre cite ses numéros. Les relances faites
+  et les refus sont enregistrés (`enregistrer_relance`, fichier
+  `data/relances.json`) ; un devis ouvert sans nouvelles depuis
+  `HKIDS_FOLLOW_UP_DAYS` jours (5 par défaut) est rappelé par WhatsApp à la
+  personne reliée au Commercial, et à la direction au double de ce délai
+  (ou tout de suite si personne n'est relié), une seule fois, entre 8 h et
+  20 h. Sa réponse « relance du devis 170 faite… » est enregistrée comme
+  relance. Une livraison en retard est signalée au Commercial pour prévenir
+  le client ;
 - le client suit sa commande sur un lien à lui (`/suivi/<jeton>`, page
   `src/frontend/suivi.html`) : avancement réel, étapes terminées, livraison
   prévue, échéancier, photos publiées et documents de sa vente, jamais les

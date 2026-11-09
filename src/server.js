@@ -9,6 +9,7 @@ import { createFileConversationStore } from "./agent/conversation-store.js";
 import { createFileWorkshopStore } from "./agent/workshop-book.js";
 import { createFileCashBook } from "./agent/cash-book.js";
 import { createFileImprovementBook } from "./agent/improvement-book.js";
+import { createFileFollowUpBook } from "./agent/sales-book.js";
 import { createFileTeamBook } from "./agent/team-book.js";
 import { SPECIALIST_IDS } from "./agent/agent-team.js";
 import { createFileWhatsAppInbox } from "./agent/whatsapp-inbox.js";
@@ -55,6 +56,10 @@ const cashBook = createFileCashBook(Number(process.env.HKIDS_EXPENSE_ALERT_DH) >
 const improvementBook = createFileImprovementBook();
 const teamBook = createFileTeamBook({ agents: SPECIALIST_IDS });
 
+// The quotes' follow-ups (data/relances.json). A quote with no news for
+// HKIDS_FOLLOW_UP_DAYS days (5 by default) is to follow up.
+const followUpBook = createFileFollowUpBook(Number(process.env.HKIDS_FOLLOW_UP_DAYS) > 0 ? { days: Number(process.env.HKIDS_FOLLOW_UP_DAYS) } : {});
+
 // A late or blocked step is analysed by its agent as soon as it is found;
 // HKIDS_AUTO_ANALYSIS=off leaves it for the direction to ask.
 const autoAnalyseAnomalies = process.env.HKIDS_AUTO_ANALYSIS !== "off";
@@ -63,11 +68,13 @@ const autoAnalyseAnomalies = process.env.HKIDS_AUTO_ANALYSIS !== "off";
 // The number itself is configured by the WHATSAPP_* keys of .env.
 const whatsAppStore = createFileWhatsAppInbox();
 
-const app = buildApi({ repository, config, toolRegistry, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, autoAnalyseAnomalies, whatsAppStore });
+const app = buildApi({ repository, config, toolRegistry, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, autoAnalyseAnomalies, whatsAppStore });
 
-// Every half hour, the workshop book is read for steps that became late.
+// Every half hour, the workshop book is read for steps that became late, and
+// the quotes for follow-ups that became due.
 const sweep = setInterval(() => {
   app.sweepAnomalies().catch((error) => app.log.error(error));
+  app.sweepFollowUps().catch((error) => app.log.error(error));
 }, 30 * 60 * 1000);
 sweep.unref();
 

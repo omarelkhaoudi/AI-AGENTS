@@ -27,7 +27,7 @@ import { createMvpToolRegistry } from "../tools/mvp-tools.js";
 import { CONSISTENCY_DOMAINS, checkConsistency } from "../agent/consistency.js";
 import { PlanStoreError, createMemoryPlanStore } from "../agent/plan-store.js";
 import { WorkshopError, createMemoryWorkshopStore, createWorkshop } from "../agent/workshop-book.js";
-import { CASH_CATEGORIES, CASH_METHODS, CashBookError, OPENING_CATEGORY, createMemoryCashBook } from "../agent/cash-book.js";
+import { CASH_CATEGORIES, CASH_METHODS, CashBookError, EXPENSE_STATUSES, OPENING_CATEGORY, createMemoryCashBook } from "../agent/cash-book.js";
 import { ANOMALY_STATUSES, ImprovementError, RULE_STATUSES, createMemoryImprovementBook } from "../agent/improvement-book.js";
 import { TeamBookError, createMemoryTeamBook } from "../agent/team-book.js";
 import { SPECIALISTS, SPECIALIST_IDS } from "../agent/agent-team.js";
@@ -665,6 +665,9 @@ export function buildApi({
           today: cash.today(),
           day,
           month: await cash.month(day.day.slice(0, 7)),
+          // The expenses still to put in order, whatever their day.
+          pending: await cash.pending(),
+          statuses: EXPENSE_STATUSES,
           categories: { ...CASH_CATEGORIES, opening: OPENING_CATEGORY },
           methods: CASH_METHODS
         };
@@ -708,6 +711,64 @@ export function buildApi({
         return reply.code(200).send({ entry, day: await cash.day(entry.day) });
       } catch (error) {
         return sendBookError(reply, error, "Cash cancellation failed.");
+      }
+    });
+
+    // The proof of an expense, joined from the cockpit: a photo or a PDF, sent
+    // as a data URL like the workshop photos.
+    app.post("/api/cash/:number/receipts", { ...writeRouteOptions(), bodyLimit: Math.max(securityConfig.bodyLimitBytes, RECEIPT_BODY_LIMIT_BYTES) }, async (request, reply) => {
+      const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/.exec(typeof request.body?.data === "string" ? request.body.data.trim() : "");
+      const by = request.principal.userId ?? "direction";
+      try {
+        const entry = await cash.attachReceipt(request.params.number, {
+          bytes: match ? Buffer.from(match[2], "base64") : Buffer.alloc(0),
+          mimeType: match?.[1] ?? "",
+          name: typeof request.body?.name === "string" ? request.body.name.slice(0, 160) : "",
+          by
+        });
+        await teamFeed.log({ agent: "finance", kind: "caisse", text: `Justificatif joint au cockpit à la dépense n° ${entry.number} (${entry.label}).`, ref: `caisse:${entry.number}`, by });
+        return reply.code(201).send({ entry });
+      } catch (error) {
+        return sendBookError(reply, error, "Receipt upload failed.");
+      }
+    });
+
+    app.get("/api/cash/:number/receipts/:id", readRouteOptions(), async (request, reply) => {
+      try {
+        const receipt = await cash.receipt(request.params.number, request.params.id);
+        return reply
+          .code(200)
+          .header("content-type", receipt.mimeType)
+          .header("content-disposition", `inline; filename="${receipt.name.replace(/[^\w.\- ]/g, "_")}"`)
+          .header("x-content-type-options", "nosniff")
+          .header("cache-control", "private, no-store")
+          .send(receipt.bytes);
+      } catch (error) {
+        return sendBookError(reply, error, "Receipt unavailable.");
+      }
+    });
+
+    // Approving and reconciling are decisions: a person of the direction
+    // takes them, never an agent, with the right to decide approvals.
+    app.post("/api/cash/:number/approve", decisionRouteOptions(), async (request, reply) => {
+      const by = request.principal.name ?? request.principal.userId ?? "direction";
+      try {
+        const entry = await cash.approve(request.params.number, { by });
+        await teamFeed.log({ agent: "finance", kind: "caisse", text: `Dépense n° ${entry.number} approuvée par ${by} (${entry.label}, ${entry.amount} DH).`, ref: `caisse:${entry.number}`, by });
+        return reply.code(200).send({ entry });
+      } catch (error) {
+        return sendBookError(reply, error, "Expense approval failed.");
+      }
+    });
+
+    app.post("/api/cash/:number/reconcile", decisionRouteOptions(), async (request, reply) => {
+      const by = request.principal.name ?? request.principal.userId ?? "direction";
+      try {
+        const entry = await cash.reconcile(request.params.number, { by, note: typeof request.body?.note === "string" ? request.body.note : "" });
+        await teamFeed.log({ agent: "finance", kind: "caisse", text: `Dépense n° ${entry.number} rapprochée par ${by}.`, ref: `caisse:${entry.number}`, by });
+        return reply.code(200).send({ entry });
+      } catch (error) {
+        return sendBookError(reply, error, "Expense reconciliation failed.");
       }
     });
 
@@ -1144,7 +1205,9 @@ function clientPageHeaders(reply) {
 
 // The books' own errors are the person's to fix: what they typed, or a line
 // that does not exist. A line already in the book is a conflict to confirm.
-const BOOK_NOT_FOUND = new Set(["CASH_ENTRY_NOT_FOUND", "IMPROVEMENT_ANOMALY_NOT_FOUND", "IMPROVEMENT_RULE_NOT_FOUND", "TEAM_AGENT_UNKNOWN"]);
+// A receipt of 5 MB, base64 included.
+const RECEIPT_BODY_LIMIT_BYTES = 8 * 1024 * 1024;
+const BOOK_NOT_FOUND = new Set(["CASH_ENTRY_NOT_FOUND", "CASH_RECEIPT_NOT_FOUND", "IMPROVEMENT_ANOMALY_NOT_FOUND", "IMPROVEMENT_RULE_NOT_FOUND", "TEAM_AGENT_UNKNOWN"]);
 const WHATSAPP_STATUS = Object.freeze({
   WHATSAPP_NOT_CONFIGURED: 503,
   WHATSAPP_UNREACHABLE: 503,

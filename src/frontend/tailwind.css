@@ -1956,6 +1956,46 @@
     @apply border-t border-line;
   }
 
+  .cash-expense {
+    @apply mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5;
+  }
+
+  .cash-expense .link-button {
+    @apply inline-flex items-center gap-1 text-[12.5px];
+  }
+
+  .cash-expense .link-button .i {
+    @apply size-3.5;
+  }
+
+  .cash-attach {
+    @apply cursor-pointer;
+  }
+
+  .cash-attach:focus-within {
+    @apply rounded-md outline-2 outline-offset-2 outline-brand;
+  }
+
+  .cash-decide {
+    @apply min-h-0 px-3 py-1 text-[12.5px];
+  }
+
+  .cash-pending {
+    @apply border-warn/30;
+  }
+
+  .cash-pending-groups {
+    @apply grid grid-cols-[repeat(auto-fit,minmax(min(100%,24rem),1fr))] gap-5 [&>*]:min-w-0;
+  }
+
+  .cash-pending-group h3 {
+    @apply mb-1 flex flex-wrap items-center gap-2 text-[14px] font-semibold;
+  }
+
+  .cash-pending-group h3 small {
+    @apply text-[12px] font-normal text-muted;
+  }
+
   .cash-sign {
     @apply grid size-9 shrink-0 place-items-center rounded-xl bg-good-soft text-good;
   }

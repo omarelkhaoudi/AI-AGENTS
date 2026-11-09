@@ -301,6 +301,15 @@
             </div>
           </header>
           <div id="cash-balance" class="cash-balance" aria-live="polite"></div>
+          <section id="cash-pending" class="panel cash-pending" aria-labelledby="cash-pending-title" hidden>
+            <div class="panel-heading mb-4!">
+              <div>
+                <h2 id="cash-pending-title"><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg>Dépenses à régulariser</h2>
+                <p id="cash-pending-hint">Chaque dépense passe par quatre états : déclarée, justifiée (reçu ou facture joint), approuvée par la direction au-dessus du seuil, puis rapprochée avec la banque ou la caisse.</p>
+              </div>
+            </div>
+            <div id="cash-pending-groups" class="cash-pending-groups"></div>
+          </section>
           <div class="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_380px] [&>*]:min-w-0">
             <section class="panel" aria-labelledby="cash-entries-title">
               <div class="panel-heading">

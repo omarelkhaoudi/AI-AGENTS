@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { roundMoney } from "../documents/document-calculations.js";
 import { DATA_DIR, createFileJsonBook, createMemoryJsonBook } from "./json-book.js";
+import { createFileReceiptStore, createMemoryReceiptStore } from "./receipt-store.js";
 
 // The cash book of H KIDS (Hiba's request of 09/11/2026): the boss announces
 // each money in or out to the Director, the Director has Finance record it,
@@ -12,6 +13,13 @@ import { DATA_DIR, createFileJsonBook, createMemoryJsonBook } from "./json-book.
 // never erased: a mistake is cancelled with its reason and stays in the book.
 // The balance of a day is computed from the lines, never typed: the opening
 // balance is everything before that day, the closing balance adds the day.
+//
+// An expense (CDC V1.1, section 6) goes through four states, in order:
+// declared (announced), justified (a receipt or invoice is joined), approved
+// (by a person of the direction, in the cockpit, required above the alert
+// threshold) and reconciled (found on the bank statement or in the cash
+// count). An agent may declare and join a receipt; only a person approves or
+// reconciles.
 
 export const DEFAULT_CASH_PATH = join(DATA_DIR, "caisse.json");
 
@@ -39,6 +47,16 @@ export const CASH_CATEGORIES = Object.freeze({
 // the balance, not in the day's takings.
 export const OPENING_CATEGORY = "solde_depart";
 
+export const EXPENSE_STATUSES = Object.freeze({ declaree: "Déclarée", justifiee: "Justifiée", approuvee: "Approuvée", rapprochee: "Rapprochée" });
+
+// An expense of this amount or more is flagged and waits for the direction's
+// approval. HKIDS_EXPENSE_ALERT_DH changes it.
+export const DEFAULT_EXPENSE_THRESHOLD = 2000;
+
+// What a proof of payment may be: a photo of the receipt or the invoice as PDF.
+export const RECEIPT_TYPES = Object.freeze({ "image/jpeg": "jpg", "image/png": "png", "application/pdf": "pdf" });
+export const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
+
 export const CASH_METHODS = Object.freeze({ especes: "Espèces", virement: "Virement", cheque: "Chèque", carte: "Carte", autre: "Autre" });
 
 export class CashBookError extends Error {
@@ -49,19 +67,38 @@ export class CashBookError extends Error {
   }
 }
 
-export function createMemoryCashBook({ clock = () => new Date() } = {}) {
-  return createCashBook({ book: createMemoryJsonBook({ entries: [] }), clock });
+export function createMemoryCashBook({ clock = () => new Date(), expenseThreshold = DEFAULT_EXPENSE_THRESHOLD } = {}) {
+  return createCashBook({ book: createMemoryJsonBook({ entries: [] }), receipts: createMemoryReceiptStore(), clock, expenseThreshold });
 }
 
-export function createFileCashBook({ path = DEFAULT_CASH_PATH, clock = () => new Date() } = {}) {
-  return createCashBook({ book: createFileJsonBook(path, { entries: [] }), clock });
+export function createFileCashBook({ path = DEFAULT_CASH_PATH, receiptsDir = undefined, clock = () => new Date(), expenseThreshold = DEFAULT_EXPENSE_THRESHOLD } = {}) {
+  return createCashBook({ book: createFileJsonBook(path, { entries: [] }), receipts: createFileReceiptStore(receiptsDir ? { dir: receiptsDir } : {}), clock, expenseThreshold });
 }
 
-function createCashBook({ book, clock }) {
+function createCashBook({ book, receipts, clock, expenseThreshold }) {
   const today = () => localDay(clock());
+  const threshold = Number.isFinite(Number(expenseThreshold)) && Number(expenseThreshold) > 0 ? roundMoney(Number(expenseThreshold)) : DEFAULT_EXPENSE_THRESHOLD;
+  const find = (state, reference) => {
+    const entry = state.entries.find((other) => other.id === reference || String(other.number) === String(reference));
+    if (!entry) {
+      throw new CashBookError(`Aucun mouvement n° ${reference} au journal de caisse.`, "CASH_ENTRY_NOT_FOUND");
+    }
+    if (entry.cancelled) {
+      throw new CashBookError(`Le mouvement n° ${entry.number} est annulé.`, "CASH_ENTRY_CANCELLED");
+    }
+    return entry;
+  };
+  const expense = (state, reference) => {
+    const entry = find(state, reference);
+    if (entry.kind !== "sortie") {
+      throw new CashBookError(`Le mouvement n° ${entry.number} est une entrée : seule une dépense s'approuve et se rapproche.`, "CASH_NOT_AN_EXPENSE");
+    }
+    return entry;
+  };
 
   return Object.freeze({
     today,
+    expenseThreshold: threshold,
 
     // kind: entree | sortie. day: JJ/MM/AAAA or AAAA-MM-JJ, today when empty.
     // A line identical to one already in the book that day (same direction,
@@ -100,7 +137,11 @@ function createCashBook({ book, clock }) {
         orderNumber: text(orderNumber),
         announcedBy: text(announcedBy) || "direction",
         recordedBy: text(by) || "direction",
-        at: clock().toISOString()
+        at: clock().toISOString(),
+        // Set when recorded, so a later change of threshold does not move
+        // the expenses already in the book.
+        needsApproval: kind === "sortie" && value >= threshold,
+        receipts: []
       };
       return book.change((state) => {
         const twin = state.entries.find((other) => !other.cancelled && other.day === entry.day && other.kind === entry.kind && other.amount === entry.amount
@@ -128,8 +169,90 @@ function createCashBook({ book, clock }) {
         if (entry.cancelled) {
           throw new CashBookError(`Le mouvement n° ${entry.number} est déjà annulé.`, "CASH_ENTRY_CANCELLED");
         }
+        if (entry.reconciliation) {
+          throw new CashBookError(`La dépense n° ${entry.number} est déjà rapprochée avec la banque ou la caisse : elle ne s'annule plus.`, "CASH_ALREADY_RECONCILED");
+        }
         entry.cancelled = { at: clock().toISOString(), by: text(by) || "direction", reason: text(reason) };
         return Object.freeze({ ...entry });
+      });
+    },
+
+    // A proof of payment for a movement: a photo (JPEG, PNG) or a PDF.
+    async attachReceipt(reference, { bytes, mimeType, name = "", by = "direction" }) {
+      const extension = RECEIPT_TYPES[mimeType];
+      if (!extension) {
+        throw new CashBookError("Le justificatif doit être une photo (JPEG ou PNG) ou un PDF.", "CASH_RECEIPT_INVALID");
+      }
+      if (!Buffer.isBuffer(bytes) || bytes.length === 0) {
+        throw new CashBookError("Le justificatif est vide.", "CASH_RECEIPT_INVALID");
+      }
+      if (bytes.length > MAX_RECEIPT_BYTES) {
+        throw new CashBookError(`Le justificatif dépasse ${MAX_RECEIPT_BYTES / 1024 / 1024} Mo.`, "CASH_RECEIPT_INVALID");
+      }
+      // Checked before the file is written, so no file is left for a line
+      // that does not exist.
+      find(await book.load(), reference);
+      const id = `${randomUUID()}.${extension}`;
+      await receipts.put(id, bytes);
+      return book.change((state) => {
+        const entry = find(state, reference);
+        entry.receipts = [...(entry.receipts ?? []), { id, name: text(name) || `justificatif.${extension}`, mimeType, size: bytes.length, at: clock().toISOString(), by: text(by) || "direction" }];
+        return describeEntry(entry);
+      });
+    },
+
+    async receipt(reference, id) {
+      const entry = (await book.load()).entries.find((other) => String(other.number) === String(reference) || other.id === reference);
+      const meta = entry?.receipts?.find((receipt) => receipt.id === id);
+      const bytes = meta ? await receipts.get(meta.id) : null;
+      if (!bytes) {
+        throw new CashBookError("Justificatif introuvable.", "CASH_RECEIPT_NOT_FOUND");
+      }
+      return Object.freeze({ ...meta, bytes });
+    },
+
+    // A person of the direction approves an expense, once it is justified.
+    async approve(reference, { by }) {
+      return book.change((state) => {
+        const entry = expense(state, reference);
+        if ((entry.receipts ?? []).length === 0) {
+          throw new CashBookError(`Joindre d'abord le justificatif de la dépense n° ${entry.number}.`, "CASH_RECEIPT_MISSING");
+        }
+        if (entry.approval) {
+          throw new CashBookError(`La dépense n° ${entry.number} est déjà approuvée.`, "CASH_ALREADY_APPROVED");
+        }
+        entry.approval = { at: clock().toISOString(), by: text(by) || "direction" };
+        return describeEntry(entry);
+      });
+    },
+
+    // The expense is found on the bank statement or in the cash count.
+    async reconcile(reference, { by, note = "" }) {
+      return book.change((state) => {
+        const entry = expense(state, reference);
+        if ((entry.receipts ?? []).length === 0) {
+          throw new CashBookError(`Joindre d'abord le justificatif de la dépense n° ${entry.number}.`, "CASH_RECEIPT_MISSING");
+        }
+        if (entry.needsApproval && !entry.approval) {
+          throw new CashBookError(`La dépense n° ${entry.number} dépasse le seuil d'alerte : elle doit être approuvée avant d'être rapprochée.`, "CASH_APPROVAL_MISSING");
+        }
+        if (entry.reconciliation) {
+          throw new CashBookError(`La dépense n° ${entry.number} est déjà rapprochée.`, "CASH_ALREADY_RECONCILED");
+        }
+        entry.reconciliation = { at: clock().toISOString(), by: text(by) || "direction", note: text(note) };
+        return describeEntry(entry);
+      });
+    },
+
+    // The expenses still to put in order: without a proof, waiting for
+    // approval, or not yet reconciled.
+    async pending() {
+      const open = (await book.load()).entries.filter((entry) => entry.kind === "sortie" && !entry.cancelled).map(describeEntry);
+      return Object.freeze({
+        threshold,
+        missingReceipt: Object.freeze(open.filter((entry) => entry.status === "declaree")),
+        awaitingApproval: Object.freeze(open.filter((entry) => entry.status === "justifiee" && entry.needsApproval)),
+        toReconcile: Object.freeze(open.filter((entry) => entry.status === "approuvee" || (entry.status === "justifiee" && !entry.needsApproval)))
       });
     },
 
@@ -228,8 +351,25 @@ export function describeEntry(entry) {
     announcedBy: entry.announcedBy,
     recordedBy: entry.recordedBy,
     at: entry.at,
-    cancelled: entry.cancelled ? Object.freeze({ ...entry.cancelled }) : null
+    cancelled: entry.cancelled ? Object.freeze({ ...entry.cancelled }) : null,
+    receipts: Object.freeze((entry.receipts ?? []).map(({ id, name, mimeType, size, at, by }) => Object.freeze({ id, name, mimeType, size, at, by }))),
+    // Only an expense has a state; null for money received.
+    status: entry.kind === "sortie" ? expenseStatus(entry) : null,
+    statusLabel: entry.kind === "sortie" ? EXPENSE_STATUSES[expenseStatus(entry)] : null,
+    needsApproval: entry.needsApproval === true,
+    approval: entry.approval ? Object.freeze({ ...entry.approval }) : null,
+    reconciliation: entry.reconciliation ? Object.freeze({ ...entry.reconciliation }) : null
   });
+}
+
+function expenseStatus(entry) {
+  if (entry.reconciliation) {
+    return "rapprochee";
+  }
+  if (entry.approval) {
+    return "approuvee";
+  }
+  return (entry.receipts ?? []).length > 0 ? "justifiee" : "declaree";
 }
 
 export function categoryLabel(kind, category) {

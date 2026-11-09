@@ -49,7 +49,9 @@ const workshopStore = createFileWorkshopStore();
 
 // The cash book (data/caisse.json), the anomalies and their rules
 // (data/amelioration.json), and the team with its feed (data/equipe.json).
-const cashBook = createFileCashBook();
+// An expense of HKIDS_EXPENSE_ALERT_DH or more (2 000 DH by default) waits
+// for the direction's approval; its receipts go to data/justificatifs/.
+const cashBook = createFileCashBook(Number(process.env.HKIDS_EXPENSE_ALERT_DH) > 0 ? { expenseThreshold: Number(process.env.HKIDS_EXPENSE_ALERT_DH) } : {});
 const improvementBook = createFileImprovementBook();
 const teamBook = createFileTeamBook({ agents: SPECIALIST_IDS });
 

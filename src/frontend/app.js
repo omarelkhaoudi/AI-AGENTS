@@ -776,6 +776,116 @@ cashForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   await submitCashMovement(false);
 });
+const cashPending = document.querySelector("#cash-pending");
+const cashPendingGroups = document.querySelector("#cash-pending-groups");
+const EXPENSE_TONES = Object.freeze({ declaree: "warning", justifiee: "info", approuvee: "ok", rapprochee: "ok" });
+for (const container of [cashEntries, cashPendingGroups]) {
+  container.addEventListener("click", (event) => handleExpenseAction(event));
+  container.addEventListener("change", (event) => {
+    const input = event.target.closest?.("[data-receipt-for]");
+    if (input?.files?.[0]) {
+      uploadReceipt(input.dataset.receiptFor, input.files[0]);
+    }
+  });
+}
+
+// Opening a proof, approving, reconciling: the buttons of an expense, the
+// same in the day's list and in the panel of expenses to put in order.
+async function handleExpenseAction(event) {
+  const view = event.target.closest?.("[data-receipt-view]");
+  if (view) {
+    const [number, id] = view.dataset.receiptView.split("/");
+    await openReceipt(number, id);
+    return;
+  }
+  const decision = event.target.closest?.("[data-expense-decision]");
+  if (!decision) {
+    return;
+  }
+  const [number, action] = decision.dataset.expenseDecision.split(":");
+  const question = action === "approve"
+    ? `Approuver la dépense n° ${number} ? Vous confirmez l'avoir vérifiée avec son justificatif.`
+    : `Rapprocher la dépense n° ${number} ? Vous l'avez retrouvée sur le relevé de banque ou dans le comptage de la caisse.`;
+  if (!globalThis.confirm?.(question)) {
+    return;
+  }
+  decision.disabled = true;
+  try {
+    await postJson(`/api/cash/${number}/${action}`, {});
+    showToast(action === "approve" ? `Dépense n° ${number} approuvée.` : `Dépense n° ${number} rapprochée.`);
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshCash();
+}
+
+async function uploadReceipt(number, file) {
+  try {
+    await postJson(`/api/cash/${number}/receipts`, { name: file.name, data: await readAsDataUrl(file) });
+    showToast(`Justificatif joint à la dépense n° ${number}.`);
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshCash();
+}
+
+// A proof needs the session token, so it is fetched, then shown from memory.
+async function openReceipt(number, id) {
+  try {
+    const response = await fetch(`/api/cash/${encodeURIComponent(number)}/receipts/${encodeURIComponent(id)}`, { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("Justificatif introuvable.");
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+}
+
+// The state of an expense and what can be done next, for one line.
+function expenseControls(entry) {
+  if (entry.kind !== "sortie" || entry.cancelled) {
+    return "";
+  }
+  const receipts = entry.receipts.map((receipt, index) => `<button type="button" class="link-button" data-receipt-view="${entry.number}/${escapeHtml(receipt.id)}">${icon(receipt.mimeType === "application/pdf" ? "file" : "image")}Justificatif${entry.receipts.length > 1 ? ` ${index + 1}` : ""}</button>`).join("");
+  const attach = entry.status === "declaree" || entry.status === "justifiee"
+    ? `<label class="link-button cash-attach">${icon("paperclip")}${entry.receipts.length > 0 ? "Ajouter" : "Joindre le justificatif"}<input type="file" accept="image/jpeg,image/png,application/pdf" data-receipt-for="${entry.number}" class="visually-hidden"></label>`
+    : "";
+  const decide = entry.status === "justifiee" && entry.needsApproval
+    ? `<button type="button" class="secondary cash-decide" data-expense-decision="${entry.number}:approve">${icon("check")}Approuver</button>`
+    : (entry.status === "justifiee" && !entry.needsApproval) || entry.status === "approuvee"
+      ? `<button type="button" class="link-button" data-expense-decision="${entry.number}:reconcile">${icon("check-circle")}Rapprocher</button>`
+      : "";
+  return `
+    <div class="cash-expense">
+      <span class="tag ${EXPENSE_TONES[entry.status] ?? "info"}">${escapeHtml(entry.statusLabel)}</span>
+      ${entry.needsApproval && !entry.approval ? '<span class="tag danger">au-dessus du seuil</span>' : ""}
+      ${receipts}${attach}${decide}
+    </div>`;
+}
+
+function renderCashPending(pending) {
+  const groups = [
+    { title: "Sans justificatif", hint: "envoyez la photo du reçu au Director, ou joignez-la ici", entries: pending.missingReceipt },
+    { title: "À approuver", hint: `au-dessus de ${formatDh(pending.threshold)}`, entries: pending.awaitingApproval },
+    { title: "À rapprocher", hint: "à retrouver sur le relevé ou dans la caisse", entries: pending.toReconcile }
+  ].filter((group) => group.entries.length > 0);
+  cashPending.hidden = groups.length === 0;
+  cashPendingGroups.innerHTML = groups.map((group) => `
+    <div class="cash-pending-group">
+      <h3>${escapeHtml(group.title)} <span class="tag info">${group.entries.length}</span> <small>${escapeHtml(group.hint)}</small></h3>
+      <ul class="cash-entries">${[...group.entries].reverse().slice(0, 8).map((entry) => cashEntryLine(entry, { withDay: true })).join("")}</ul>
+    </div>`).join("");
+}
+
 cashEntries.addEventListener("click", async (event) => {
   const button = event.target.closest?.("[data-cash-cancel]");
   if (!button) {
@@ -833,6 +943,9 @@ function renderCash(data) {
     <div class="cash-tile is-closing" data-tone="${day.closing < 0 ? "danger" : "brand"}"><span>Solde de clôture</span><strong>${formatDhNbsp(day.closing)}</strong><small>dont espèces ${formatDhNbsp(day.closingCash)} · banque ${formatDhNbsp(day.closingBank)}</small></div>
   `;
 
+  if (data.pending) {
+    renderCashPending(data.pending);
+  }
   cashEntriesLabel.textContent = isToday ? "Mouvements du jour" : `Mouvements du ${formatIsoDay(day.day)}`;
   cashEntries.innerHTML = day.entries.length > 0
     ? [...day.entries].reverse().map((entry) => cashEntryLine(entry)).join("")
@@ -860,8 +973,9 @@ function renderCash(data) {
   `;
 }
 
-function cashEntryLine(entry) {
+function cashEntryLine(entry, { withDay = false } = {}) {
   const meta = [
+    withDay ? formatIsoDay(entry.day) : "",
     entry.categoryLabel,
     entry.methodLabel,
     entry.party,
@@ -876,9 +990,10 @@ function cashEntryLine(entry) {
         <strong>${escapeHtml(entry.label)}</strong>
         <small>n° ${entry.number} · ${escapeHtml(meta.join(" · "))}</small>
         ${entry.cancelled ? `<small class="cash-cancel-reason">Annulé : ${escapeHtml(entry.cancelled.reason)}</small>` : ""}
+        ${expenseControls(entry)}
       </div>
       <b class="cash-amount">${entry.kind === "entree" ? "+" : "−"}\u00a0${formatDhNbsp(entry.amount)}</b>
-      ${entry.cancelled ? "" : `<button type="button" class="icon-button cash-cancel" data-cash-cancel="${entry.number}" title="Annuler ce mouvement">${icon("x")}<span class="visually-hidden">Annuler le mouvement n° ${entry.number}</span></button>`}
+      ${entry.cancelled || entry.reconciliation || withDay ? "" : `<button type="button" class="icon-button cash-cancel" data-cash-cancel="${entry.number}" title="Annuler ce mouvement">${icon("x")}<span class="visually-hidden">Annuler le mouvement n° ${entry.number}</span></button>`}
     </li>
   `;
 }

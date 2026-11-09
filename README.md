@@ -129,9 +129,28 @@ doivent jamais y aller.
 | `data/catalogue-hkids.xlsx` | Produits et prix TTC de base : le Commercial s'en sert quand Hiba ne donne pas le prix, et pour bâtir les ventes d'un objectif. Relu à chaque demande, sans redémarrage. | [`docs/catalogue-hkids.xlsx`](docs/catalogue-hkids.xlsx) |
 | `data/plans-director.json` | Les plans d'action du Director, créés et mis à jour automatiquement. | — |
 | `data/caisse.json` | Le journal de caisse tenu par le Directeur financier : chaque entrée ou sortie annoncée au Director, d'où viennent le bilan du jour et celui du mois. Un mouvement annulé reste écrit avec son motif. | — |
+| `data/justificatifs/` | Les justificatifs des dépenses (photo du reçu, facture PDF), un fichier par pièce, reliés à leur mouvement de caisse. | — |
 | `data/amelioration.json` | Les anomalies (étape d'atelier bloquée ou en retard, ou signalée) et les règles proposées par les agents pour qu'elles ne se répètent pas. Une règle ne s'applique qu'une fois validée. | — |
 | `data/equipe.json` | Le responsable humain relié à chaque agent et le fil d'équipe (missions, caisse, atelier, documents, comptes rendus reçus par WhatsApp), que chaque agent relit avant de travailler. | — |
 | `data/whatsapp.json` | Les messages reçus et envoyés par le numéro WhatsApp Business de H-KIDS, et la conversation du Director de chaque numéro de la direction. | — |
+
+Chaque **dépense** passe par quatre états, dans l'ordre (cahier des charges,
+section 6) :
+
+1. **déclarée** : annoncée au Director (texte, vocal) ou saisie au cockpit ;
+2. **justifiée** : la photo du reçu ou la facture est jointe. Envoyée avec le
+   message (« j'ai payé 2 500 DH de MDF, voici le reçu »), Finance la joint
+   seule ; sinon l'agent la demande, et elle se joint aussi depuis la vue Caisse ;
+3. **approuvée** : par une personne de la direction, dans la vue Caisse, et
+   seulement si la dépense atteint le **seuil d'alerte** (2 000 DH par défaut,
+   `HKIDS_EXPENSE_ALERT_DH` dans `.env`) ;
+4. **rapprochée** : retrouvée sur le relevé de banque ou dans le comptage de la
+   caisse. Une dépense rapprochée ne s'annule plus.
+
+Aucun agent ne peut approuver ni rapprocher : ce sont des décisions humaines,
+réservées aux comptes qui ont le droit de décider. Le panneau « Dépenses à
+régulariser » de la vue Caisse liste ce qui manque, et le Director le rappelle
+dans ses points de situation.
 
 Toutes les 30 minutes, le serveur repère les nouvelles anomalies d'atelier et
 demande à l'agent concerné d'en chercher la cause (appel à OpenAI). Pour couper

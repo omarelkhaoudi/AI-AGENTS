@@ -10,7 +10,7 @@ import { SPECIALISTS, SPECIALIST_IDS, runSpecialist } from "./agent-team.js";
 import { draftWhatsAppMessage } from "./whatsapp.js";
 import { STEP_LABELS, createMemoryPlanStore } from "./plan-store.js";
 import { createMemoryConversationStore } from "./conversation-store.js";
-import { WORKSHOP_STATUSES, WORKSHOP_STATUS_LABELS, WORKSHOP_STEPS, WORKSHOP_STEP_IDS, WorkshopError, createMemoryWorkshopStore, createWorkshop, frenchDay } from "./workshop-book.js";
+import { CNC_FILE_STATUS_LABELS, WORKSHOP_STATUSES, WORKSHOP_STATUS_LABELS, WORKSHOP_STEPS, WORKSHOP_STEP_IDS, WorkshopError, createMemoryWorkshopStore, createWorkshop, frenchDay } from "./workshop-book.js";
 import { OBJECTIVE_INDICATORS, currentMonth, measureObjective } from "./sales-objective.js";
 import { createMemoryCashBook } from "./cash-book.js";
 import { createMemoryImprovementBook } from "./improvement-book.js";
@@ -309,6 +309,27 @@ const CLIENT_LINK_TOOL = Object.freeze({
     }
 });
 
+// Who answers for an order: its chef de charge, the client's architect and
+// who deals with them, the draughtsman of the CNC files.
+const ORDER_TEAM_TOOL = Object.freeze({
+    type: "function",
+    name: "equipe_commande",
+    description: "Enregistre qui répond d'un bon de commande : le chef de charge qui contrôle la commande de bout en bout, l'architecte du client (et son numéro), la personne de l'équipe en lien avec l'architecte, le dessinateur qui fait le G-code de la machine CNC après la fiche technique. Seulement pour ce que la direction ou l'atelier a dit. Chaîne vide pour ne pas changer un rôle, « - » pour le retirer.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        numero: { type: "string", description: "Numéro du bon de commande." },
+        chef_de_charge: { type: "string", description: "Prénom ou nom du chef de charge." },
+        architecte: { type: "string", description: "Nom de l'architecte du client (cabinet compris s'il est dit)." },
+        telephone_architecte: { type: "string", description: "Numéro de l'architecte, tel que donné." },
+        lien_architecte: { type: "string", description: "La personne de l'équipe qui échange avec l'architecte." },
+        dessinateur: { type: "string", description: "Le dessinateur qui fait le G-code." }
+      },
+      required: ["numero", "chef_de_charge", "architecte", "telephone_architecte", "lien_architecte", "dessinateur"]
+    }
+});
+
 const PUBLISH_PHOTO_TOOL = Object.freeze({
     type: "function",
     name: "publier_photo_suivi",
@@ -367,6 +388,7 @@ const TOOLS = Object.freeze([
   WORKSHOP_BOOK_TOOL,
   ADVANCE_ORDER_TOOL,
   CLIENT_LINK_TOOL,
+  ORDER_TEAM_TOOL,
   PUBLISH_PHOTO_TOOL,
   CASH_BALANCE_TOOL,
   ANOMALIES_TOOL,
@@ -411,6 +433,8 @@ function instructions(today, briefing = []) {
     "Chaîne d'une vente : devis → bon de commande (le client accepte) → bon de livraison → factures (acompte, solde). Chaque document cite le devis : écris toujours son numéro dans la mission. « Le client a accepté le devis 170 », « fais le BC du devis 170 » → commercial : « bon de commande à partir du devis n° 170 », avec les conditions et l'acompte s'ils sont donnés ; il reprend le devis lui-même, rien n'est à ressaisir. « Facture l'acompte du devis 170 », « facture le solde » → finance avec le numéro du devis. « Où en est le devis 170 », « qu'est-ce qui reste à facturer » → suivre_dossier toi-même, puis réponds avec l'étape, le déjà facturé, le reste à facturer et les anomalies. Une facture refusée parce qu'elle facturerait la vente deux fois ne se contourne pas : dis-le à la direction avec les factures déjà faites.",
     "",
     `Atelier, après le bon de commande : chaque bon de commande validé suit ${WORKSHOP_STEPS.length} étapes (${WORKSHOP_STEPS.map((step) => step.label).join(", ")}). « Le BC 166 est en découpe », « l'assemblage du 166 est fini », « la peinture est bloquée, il manque la laque », « Youssef s'occupe de l'étude, prévue pour le 12/11 » → c'est un fait que la direction t'annonce : avancer_commande toi-même, un appel par étape (une étape commencée = en_cours ; les étapes d'avant qu'elle dit finies = terminee), puis confirme en une ligne avec l'avancement. « Où en est la commande de Mme X / le BC 166 », « quelles commandes sont en retard » → carnet_atelier, puis l'étape en cours, l'avancement (calculé sur les étapes terminées, jamais estimé), les dates prévues et les alertes. Planning, priorités ou charge de l'atelier → production. Suite de la chaîne, tout de suite après l'avoir enregistrée : contrôle qualité terminé → commercial : préparer le message au client pour convenir de la date de livraison et d'installation ; livraison et installation terminée → finance : facture du solde du devis (si le dossier n'est pas soldé). Pour tout point de situation ou toute question d'urgences, regarde aussi carnet_atelier et signale les commandes bloquées ou en retard.`,
+    "",
+    "Bureau d'études, avant la découpe : chaque bon de commande a un chef de charge qui le contrôle de bout en bout ; quand le client a un architecte, une personne de l'équipe est en lien avec lui ; après la fiche technique (étude technique terminée), le dessinateur fait le fichier de la machine CNC (G-code ou DXF), déposé dans le cockpit sur la commande. « Samir est chef de charge du BC 166 », « l'architecte de Mme Alami est M. Bennani, c'est Hiba qui le suit », « Karim fait le G-code » → equipe_commande. Le fichier n'atteint la machine qu'une fois validé par la direction dans le cockpit (vue Atelier) : tu ne le valides jamais, et la découpe CNC ne peut pas commencer avant. Une commande lancée sans chef de charge, un fichier CNC qui attend sa validation : signale-le dans tout point de situation.",
     "",
     "Caisse et bilan du jour : chaque entrée ou sortie d'argent que la direction t'annonce (« j'ai reçu 3 000 DH d'acompte de Mme Alami en espèces pour le devis 170 », « j'ai payé 1 200 DH de laque à Sodipeint par chèque », « j'ai versé les salaires, 18 000 DH par virement », « il y a 5 000 DH en caisse au départ ») → confie-la tout de suite au Directeur financier (finance) avec deleguer_a_un_agent, en recopiant tout : entrée ou sortie, montant, ce que c'est, moyen de paiement, qui a payé ou a été payé, numéro du devis ou du BC, la date si ce n'est pas aujourd'hui, et qui l'annonce. Plusieurs mouvements annoncés ensemble → une seule mission qui les liste tous. Finance l'enregistre au journal de caisse et te rend le bilan du jour : réponds en deux ou trois lignes (mouvement n°, montant, solde du jour, et pour un client ce qui reste à encaisser sur sa vente). « Où en est la caisse », « bilan du jour », « combien j'ai en caisse » → bilan_caisse toi-même. Pour tout point de situation, donne aussi le bilan de caisse du jour. Une erreur de saisie (« ce n'était pas 3 000 mais 2 000 ») → finance : annuler le mouvement et enregistrer le bon. Justificatifs : une dépense annoncée avec la photo d'un reçu, d'un ticket ou d'une facture → écris « justificatif : photo n° X » dans la mission ; une photo envoyée plus tard pour une dépense déjà enregistrée (« voici le reçu du MDF ») → mission à finance : joindre la photo n° X au mouvement n° N. Sans photo, rappelle à la direction d'envoyer le justificatif. Une dépense au-dessus du seuil d'alerte s'approuve dans la vue Caisse du cockpit, par une personne : tu ne l'approuves jamais.",
     "",
@@ -774,6 +798,9 @@ async function runTool(call, context) {
     if (call.name === CLIENT_LINK_TOOL.name) {
       return await clientLink(args, context, "director");
     }
+    if (call.name === ORDER_TEAM_TOOL.name) {
+      return await setOrderTeam(args, context, "director");
+    }
     if (call.name === PUBLISH_PHOTO_TOOL.name) {
       return await publishPhoto(args, context, "director");
     }
@@ -964,6 +991,15 @@ async function readWorkshopBook(args, context) {
         note: step.note || null,
         en_retard: step.late
       })),
+      equipe: orderTeam(order),
+      fichiers_cnc: order.cnc.map((entry) => ({
+        fichier: entry.name,
+        format: entry.format === "gcode" ? "G-code" : "DXF",
+        statut: CNC_FILE_STATUS_LABELS[entry.status],
+        depose_le: frenchDay(entry.depositedAt.slice(0, 10)),
+        ...(entry.note ? { note: entry.note } : {}),
+        ...(entry.reason ? { motif_du_refus: entry.reason } : {})
+      })),
       bons_de_livraison: order.deliveryNotes,
       factures: order.invoices,
       deja_facture: order.invoiced,
@@ -1010,8 +1046,41 @@ function orderLine(order) {
     statut: order.status,
     avancement: `${order.progress.done}/${order.progress.total} étapes terminées (${order.progress.percent} %)`,
     etape_en_cours: order.currentStep,
+    chef_de_charge: order.team.lead || "à désigner",
     alertes: order.alerts
   };
+}
+
+function orderTeam(order) {
+  const { lead, architect, architectPhone, liaison, drafter } = order.team;
+  return {
+    chef_de_charge: lead || "à désigner",
+    architecte: architect ? `${architect}${architectPhone ? ` (${architectPhone})` : ""}` : "aucun",
+    lien_avec_l_architecte: liaison || (architect ? "à désigner" : null),
+    dessinateur: drafter || "à désigner"
+  };
+}
+
+async function setOrderTeam(args, { workshop, books }, by) {
+  const role = (value) => (text(value) === "" ? undefined : text(value) === "-" ? "" : text(value));
+  try {
+    const { changed, order } = await workshop.setTeam(text(args.numero), {
+      lead: role(args.chef_de_charge),
+      architect: role(args.architecte),
+      architectPhone: role(args.telephone_architecte),
+      liaison: role(args.lien_architecte),
+      drafter: role(args.dessinateur)
+    }, { by });
+    if (changed) {
+      await books?.team.log({ agent: SPECIALISTS[by] ? by : "production", kind: "atelier", text: `BC ${order.number} (${order.client}) — ${order.journal.at(-1).text}`, ref: `bc:${order.number}`, by });
+    }
+    return { ok: true, bc: order.number, enregistre: changed ? order.journal.at(-1).text : "rien de nouveau", equipe: orderTeam(order) };
+  } catch (error) {
+    if (error instanceof WorkshopError) {
+      return { ok: false, erreur: error.message };
+    }
+    throw error;
+  }
 }
 
 async function advanceOrder(args, { workshop, books }, by) {
@@ -1147,7 +1216,10 @@ async function runAgent(agentId, mission, context) {
   const run = await runSpecialist({
     agentId,
     mission,
-    extraTools: books ? [...(agentId === "finance" ? cashTools(context, agentId) : []), ...improvementTools(context, agentId)] : [],
+    extraTools: [
+      ...(books ? [...(agentId === "finance" ? cashTools(context, agentId) : []), ...improvementTools(context, agentId)] : []),
+      ...(SPECIALISTS[agentId].workshop === "write" ? [{ tool: ORDER_TEAM_TOOL, run: (teamArgs, by) => setOrderTeam(teamArgs, context, by) }] : [])
+    ],
     briefing: books ? await agentBriefing(agentId, context) : [],
     callModel: (payload) => callModel(team.client, payload),
     model: team.model,

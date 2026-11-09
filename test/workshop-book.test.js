@@ -9,7 +9,7 @@ import { WORKSHOP_STEP_IDS, buildWorkshopBook, createFileWorkshopStore, createMe
 import { buildAuthenticatedApi } from "../test-support/api-auth.js";
 
 // The workshop book: each purchase order validated in the cockpit follows the
-// seven steps of the manufacturing route, from the technical study to delivery
+// eight steps of the manufacturing route, from the technical study to delivery
 // and installation. Its progress counts the steps actually finished. Invented
 // clients and figures only.
 
@@ -47,6 +47,15 @@ const order = (number, overrides = {}) => ({
 async function issue(documents, input) {
   const preview = await documents.preview(input);
   await documents.generate({ ...input, previewToken: preview.previewToken, userConfirmation: true });
+}
+
+// The technical sheet done and the draughtsman's G-code validated: what the
+// CNC cut waits for.
+const GCODE = Buffer.from("%\nG21 G90\nG0 X0 Y0\nG1 X100 Y0 F1200\nM30\n%\n");
+async function drawingValidated(store, number, by = "direction") {
+  await store.updateStep(number, "etude_technique", { status: "terminee", by });
+  const id = await store.addCncFile(number, { bytes: GCODE, name: `panneaux-${number}.nc`, format: "gcode", by });
+  await store.decideCncFile(number, id, { approve: true, by });
 }
 
 async function documentsWith(t, ...inputs) {
@@ -96,15 +105,15 @@ test("an unblocked step drops the reason it was blocked for", async () => {
 
 test("the book survives a restart", async (t) => {
   const path = join(await tempDir(t), "atelier.json");
-  await createFileWorkshopStore({ path, clock }).updateStep("171", "decoupe_cnc", { status: "en_cours" });
+  await createFileWorkshopStore({ path, clock }).updateStep("171", "assemblage", { status: "en_cours" });
   const reopened = await createFileWorkshopStore({ path, clock }).all();
-  assert.equal(reopened["171"].steps.decoupe_cnc.status, "en_cours");
+  assert.equal(reopened["171"].steps.assemblage.status, "en_cours");
 });
 
 test("progress counts the finished steps, and blocked or late steps raise an alert", async (t) => {
   const documents = await documentsWith(t, quote, order("171"), order("172", { quoteReference: "" }));
   const store = createMemoryWorkshopStore({ clock });
-  await store.updateStep("171", "etude_technique", { status: "terminee" });
+  await drawingValidated(store, "171");
   await store.updateStep("171", "approvisionnement", { status: "terminee" });
   await store.updateStep("171", "decoupe_cnc", { status: "en_cours", plannedDate: "05/11/2026" });
   await store.updateStep("171", "assemblage", { status: "bloquee", note: "Charnières en rupture" });
@@ -114,7 +123,7 @@ test("progress counts the finished steps, and blocked or late steps raise an ale
   const [first, second] = book;
   assert.equal(first.number, "172", "the latest order first");
   assert.equal(second.number, "171");
-  assert.deepEqual(second.progress, { done: 2, total: 7, percent: 29 });
+  assert.deepEqual(second.progress, { done: 3, total: 8, percent: 38 });
   assert.equal(second.currentStep, "Découpe CNC");
   assert.equal(second.status, "bloquée");
   assert.deepEqual(second.alerts, ["Découpe CNC prévue le 05/11/2026, pas terminée", "Assemblage bloquée : Charnières en rupture"]);
@@ -122,13 +131,14 @@ test("progress counts the finished steps, and blocked or late steps raise an ale
   assert.equal(second.client, "Client Exemple");
   assert.equal(second.object, "Lit cabane");
   assert.equal(first.status, "à lancer");
-  assert.deepEqual(first.progress, { done: 0, total: 7, percent: 0 });
+  assert.deepEqual(first.progress, { done: 0, total: 8, percent: 0 });
 });
 
 test("an installed order whose sale is not fully invoiced is flagged, and only then", async (t) => {
   const documents = await documentsWith(t, quote, order("171"), order("172", { quoteReference: "" }));
   const store = createMemoryWorkshopStore({ clock });
   for (const number of ["171", "172"]) {
+    await drawingValidated(store, number);
     for (const step of WORKSHOP_STEP_IDS) {
       await store.updateStep(number, step, { status: "terminee" });
     }
@@ -138,7 +148,7 @@ test("an installed order whose sale is not fully invoiced is flagged, and only t
 
   const fromQuote = book.find((entry) => entry.number === "171");
   assert.equal(fromQuote.status, "livrée et installée");
-  assert.deepEqual(fromQuote.progress, { done: 7, total: 7, percent: 100 });
+  assert.deepEqual(fromQuote.progress, { done: 8, total: 8, percent: 100 });
   assert.deepEqual(fromQuote.alerts, ["Installée, reste à facturer 4500 DH"]);
   assert.deepEqual(book.find((entry) => entry.number === "172").alerts, [], "an order with no quote cannot be matched to its invoices");
 });
@@ -200,6 +210,7 @@ const step = (etape, statut, extra = {}) => ({ numero: "171", etape, statut, res
 test("told that an order moved, the Director records it in the book and reports the real progress", async (t) => {
   const documents = await documentsWith(t, quote, order("171"));
   const workshopStore = createMemoryWorkshopStore({ clock });
+  await drawingValidated(workshopStore, "171", "director");
   const { agent, calls } = agentWith(documents, workshopStore, {
     "Tu es le Director IA": [
       together(
@@ -207,7 +218,7 @@ test("told that an order moved, the Director records it in the book and reports 
         ["avancer_commande", step("approvisionnement", "terminee"), "a2"],
         ["avancer_commande", step("decoupe_cnc", "en_cours", { responsable: "Youssef", date_prevue: "12/11/2026" }), "a3"]
       ),
-      say("BC 171 : découpe en cours, 2/7 étapes terminées.")
+      say("BC 171 : découpe en cours, 3/8 étapes terminées.")
     ]
   });
 
@@ -218,9 +229,9 @@ test("told that an order moved, the Director records it in the book and reports 
   const outputs = director[1].input.filter((item) => item.type === "function_call_output").map((item) => JSON.parse(item.output));
   assert.ok(outputs.every((output) => output.ok));
   const book = await createWorkshop({ store: workshopStore, documentService: documents, clock }).order("171");
-  assert.deepEqual(book.progress, { done: 2, total: 7, percent: 29 });
-  assert.equal(book.steps[2].responsible, "Youssef");
-  assert.equal(book.steps[2].plannedDate, "2026-11-12");
+  assert.deepEqual(book.progress, { done: 3, total: 8, percent: 38 });
+  assert.equal(book.steps[3].responsible, "Youssef");
+  assert.equal(book.steps[3].plannedDate, "2026-11-12");
   assert.ok(book.journal.every((entry) => entry.by === "director"));
 });
 
@@ -255,7 +266,7 @@ test("Production reads the book and the orders and moves a step; Commercial only
   assert.ok(!tools.includes("preparer_document"), "Production prepares no document");
   const read = JSON.parse(production[1].input.at(-1).output);
   assert.equal(read.bc, "171");
-  assert.equal(read.etapes.length, 7);
+  assert.equal(read.etapes.length, 8);
 
   const commercial = calls.filter((payload) => payload.instructions.includes("Tu es l'agent Commercial"));
   const commercialTools = commercial[0].tools.map((tool) => tool.name);
@@ -264,6 +275,6 @@ test("Production reads the book and the orders and moves a step; Commercial only
   assert.equal(JSON.parse(commercial[1].input.at(-1).output).ok, false, "the Commercial cannot move a step");
 
   const book = await createWorkshop({ store: workshopStore, documentService: documents, clock }).order("171");
-  assert.equal(book.steps[3].status, "bloquee");
+  assert.equal(book.steps[4].status, "bloquee");
   assert.equal(book.journal.at(-1).by, "production");
 });

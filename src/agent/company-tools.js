@@ -428,9 +428,12 @@ export async function agentBriefing(agentId, { books }) {
 
 // The Director's own: who is behind each agent, every rule in force, and the
 // rules waiting for the direction.
-export async function directorBriefing({ books }) {
+export async function directorBriefing({ books, workshop = null }) {
   const since = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
-  const [members, rules, state, recent, expenses] = await Promise.all([books.team.members(), books.improvement.activeRules("director"), books.improvement.state(), books.team.activity({ limit: 200, since }), books.cash.pending?.() ?? null]);
+  const [members, rules, state, recent, expenses, orders] = await Promise.all([books.team.members(), books.improvement.activeRules("director"), books.improvement.state(), books.team.activity({ limit: 200, since }), books.cash.pending?.() ?? null, workshop?.book().catch(() => []) ?? []]);
+  const open = orders.filter((order) => !order.finished);
+  const withoutLead = open.filter((order) => !order.team?.lead).map((order) => order.number);
+  const cncWaiting = open.flatMap((order) => (order.cnc ?? []).filter((entry) => entry.status === "a_valider").map(() => order.number));
   const linked = Object.entries(members).filter(([agent]) => SPECIALISTS[agent]);
   const reports = recent.filter((entry) => entry.kind === "compte_rendu").slice(0, 8).reverse();
   const waiting = state.rules.filter((rule) => rule.status === "proposee").length;
@@ -445,6 +448,8 @@ export async function directorBriefing({ books }) {
     expenses && (expenses.missingReceipt.length > 0 || expenses.awaitingApproval.length > 0)
       ? `Dépenses à régulariser : ${expenses.missingReceipt.length} sans justificatif${expenses.missingReceipt.length > 0 ? ` (n° ${expenses.missingReceipt.slice(-6).map((entry) => entry.number).join(", ")})` : ""}, ${expenses.awaitingApproval.length} au-dessus du seuil de ${formatDh(expenses.threshold)} à approuver par la direction dans le cockpit. Rappelle-le à la direction dans tout point de situation.`
       : "",
+    withoutLead.length > 0 ? `Bons de commande en cours sans chef de charge : n° ${withoutLead.slice(0, 8).join(", ")} (equipe_commande quand la direction le désigne).` : "",
+    cncWaiting.length > 0 ? `${cncWaiting.length} fichier(s) CNC attendent la validation de la direction dans le cockpit (BC n° ${[...new Set(cncWaiting)].join(", ")}) : la découpe ne peut pas commencer avant.` : "",
     rulesInstruction(rules),
     waiting > 0 ? `${waiting} règle(s) d'amélioration attendent la validation de la direction (vue Amélioration du cockpit).` : "",
     toAnalyse > 0 ? `${toAnalyse} anomalie(s) restent à analyser (lister_anomalies).` : ""

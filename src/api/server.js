@@ -26,7 +26,7 @@ import { ToolExecutionService, ToolExecutionServiceError } from "../tools/execut
 import { createMvpToolRegistry } from "../tools/mvp-tools.js";
 import { CONSISTENCY_DOMAINS, checkConsistency } from "../agent/consistency.js";
 import { PlanStoreError, createMemoryPlanStore } from "../agent/plan-store.js";
-import { WorkshopError, createMemoryWorkshopStore, createWorkshop } from "../agent/workshop-book.js";
+import { ORDER_ROLE_IDS, WorkshopError, createMemoryWorkshopStore, createWorkshop } from "../agent/workshop-book.js";
 import { CASH_CATEGORIES, CASH_METHODS, CashBookError, EXPENSE_STATUSES, OPENING_CATEGORY, createMemoryCashBook } from "../agent/cash-book.js";
 import { ANOMALY_STATUSES, ImprovementError, RULE_STATUSES, createMemoryImprovementBook } from "../agent/improvement-book.js";
 import { TeamBookError, createMemoryTeamBook } from "../agent/team-book.js";
@@ -657,6 +657,74 @@ export function buildApi({
       }
     });
 
+    // Who answers for the order: chef de charge, architect, who deals with
+    // them, draughtsman. Only the roles sent change; an empty one is removed.
+    app.patch("/api/workshop/:number/team", writeRouteOptions(), async (request, reply) => {
+      const roles = Object.fromEntries(ORDER_ROLE_IDS.filter((id) => typeof request.body?.[id] === "string").map((id) => [id, request.body[id]]));
+      try {
+        const { order } = await workshop.setTeam(request.params.number, roles, { by: request.principal.userId ?? "direction" });
+        return reply.code(200).send({ order });
+      } catch (error) {
+        return sendWorkshopError(reply, error, "Order team update failed.");
+      }
+    });
+
+    // The draughtsman's machine file, sent as base64; it waits for the
+    // direction's validation.
+    app.post("/api/workshop/:number/cnc", { ...writeRouteOptions(), bodyLimit: Math.max(securityConfig.bodyLimitBytes, CNC_BODY_LIMIT_BYTES) }, async (request, reply) => {
+      try {
+        const id = await workshop.depositCncFile(request.params.number, {
+          content: typeof request.body?.content === "string" ? request.body.content : "",
+          name: typeof request.body?.name === "string" ? request.body.name : "",
+          note: typeof request.body?.note === "string" ? request.body.note : "",
+          by: request.principal.userId ?? "direction"
+        });
+        return reply.code(201).send({ id });
+      } catch (error) {
+        return sendWorkshopError(reply, error, "CNC file deposit failed.");
+      }
+    });
+
+    // Always a download, never shown in the page.
+    app.get("/api/workshop/:number/cnc/:id", readRouteOptions(), async (request, reply) => {
+      try {
+        const file = await workshop.readCncFile(request.params.number, request.params.id);
+        if (!file) {
+          return reply.code(404).send({ error: "Fichier CNC introuvable." });
+        }
+        return reply
+          .code(200)
+          .header("content-type", "application/octet-stream")
+          .header("content-disposition", `attachment; filename="${file.name.replace(/[^\w.\- ()]/g, "_")}"`)
+          .header("x-content-type-options", "nosniff")
+          .header("cache-control", "private, no-store")
+          .send(file.bytes);
+      } catch (error) {
+        return sendWorkshopError(reply, error, "CNC file unavailable.");
+      }
+    });
+
+    // Validating a file for the machine is a decision of the direction, never
+    // an agent's.
+    app.post("/api/workshop/:number/cnc/:id/decision", decisionRouteOptions(), async (request, reply) => {
+      const decision = request.body?.decision;
+      if (decision !== "valider" && decision !== "refuser") {
+        return reply.code(400).send({ error: "decision must be valider or refuser." });
+      }
+      const by = request.principal.name ?? request.principal.userId ?? "direction";
+      try {
+        const file = await workshop.decideCncFile(request.params.number, request.params.id, {
+          approve: decision === "valider",
+          reason: typeof request.body?.reason === "string" ? request.body.reason : "",
+          by
+        });
+        await teamFeed.log({ agent: "production", kind: "atelier", text: `BC ${request.params.number} : fichier CNC « ${file.name} » ${decision === "valider" ? "validé" : `refusé (${file.reason})`} par ${by}.`, ref: `bc:${request.params.number}`, by });
+        return reply.code(200).send({ file, order: await workshop.order(request.params.number) });
+      } catch (error) {
+        return sendWorkshopError(reply, error, "CNC file decision failed.");
+      }
+    });
+
     // --- Cash book: the balance of a day, the month, and the lines ---------
     app.get("/api/cash", readRouteOptions(), async (request, reply) => {
       try {
@@ -1233,7 +1301,7 @@ function sendBookError(reply, error, fallback) {
 
 function sendWorkshopError(reply, error, fallback) {
   if (error instanceof WorkshopError) {
-    return reply.code(error.code === "WORKSHOP_ORDER_NOT_FOUND" ? 404 : 400).send({ error: error.message, details: { code: error.code } });
+    return reply.code(["WORKSHOP_ORDER_NOT_FOUND", "WORKSHOP_CNC_NOT_FOUND"].includes(error.code) ? 404 : error.code === "WORKSHOP_CNC_ALREADY_DECIDED" ? 409 : 400).send({ error: error.message, details: { code: error.code } });
   }
   return sendDomainError(reply, fallback, error);
 }
@@ -1322,6 +1390,8 @@ function writeRouteOptions() {
 // A purchase order may carry its reference visual, which does not fit in the
 // general body limit. Only the two document routes get the larger allowance.
 const DOCUMENT_BODY_LIMIT_BYTES = 5 * 1024 * 1024;
+// A CNC file of 8 MB, sent as base64.
+const CNC_BODY_LIMIT_BYTES = 12 * 1024 * 1024;
 const CHAT_BODY_LIMIT_BYTES = 40 * 1024 * 1024;
 
 function documentRouteOptions(securityConfig) {

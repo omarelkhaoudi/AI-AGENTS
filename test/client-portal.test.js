@@ -91,6 +91,9 @@ test("the client sees progress, steps, delivery and schedule, never a note, a pe
   const store = createMemoryWorkshopStore({ clock });
   const workshop = createWorkshop({ store, documentService: documents, clock });
   await workshop.advance("171", "etude_technique", { status: "terminee", responsible: "Youssef", doneDate: "04/11/2026", note: "Plans revus par Karim" });
+  await workshop.setTeam("171", { lead: "Samir", architect: "Cabinet Bennani", architectPhone: "0612345678", liaison: "Youssef", drafter: "Karim" });
+  const drawing = await workshop.depositCncFile("171", { content: Buffer.from("G21\nG0 X0 Y0\nM30\n"), name: "panneaux-171.nc", note: "MDF 18 mm" });
+  await workshop.decideCncFile("171", drawing, { approve: true });
   await workshop.advance("171", "approvisionnement", { status: "terminee" });
   await workshop.advance("171", "decoupe_cnc", { status: "bloquee", responsible: "Samir", note: "Panneaux en rupture chez le fournisseur" });
   await workshop.advance("171", "livraison_installation", { plannedDate: "20/11/2026" });
@@ -99,10 +102,11 @@ test("the client sees progress, steps, delivery and schedule, never a note, a pe
   const view = await workshop.clientView(token);
 
   assert.deepEqual(view.order, { number: "171", date: "03/11/2026", object: "Lit cabane", client: "Client Exemple" });
-  assert.deepEqual(view.progress, { done: 2, total: 7, percent: 29 });
+  assert.deepEqual(view.progress, { done: 3, total: 8, percent: 38 });
   assert.equal(view.finished, false);
-  assert.deepEqual(view.steps.slice(0, 4).map((step) => [step.label, step.state, step.doneDate]), [
+  assert.deepEqual(view.steps.slice(0, 5).map((step) => [step.label, step.state, step.doneDate]), [
     ["Étude technique", "terminee", "2026-11-04"],
+    ["Dessin CNC", "terminee", "2026-11-06"],
     ["Approvisionnement", "terminee", "2026-11-06"],
     ["Découpe CNC", "en_cours", null],
     ["Assemblage", "a_venir", null]
@@ -113,7 +117,7 @@ test("the client sees progress, steps, delivery and schedule, never a note, a pe
   assert.equal(view.company.name.length > 0, true);
 
   const shown = JSON.stringify(view);
-  for (const internal of ["Youssef", "Samir", "Karim", "rupture", "bloquee", "journal", "responsible", "note", "Autre Client", "Bureau"]) {
+  for (const internal of ["Youssef", "Samir", "Karim", "rupture", "bloquee", "journal", "responsible", "note", "Autre Client", "Bureau", "Bennani", "0612345678", "panneaux-171", "MDF 18", "G21", "cnc"]) {
     assert.ok(!shown.includes(internal), `the client never sees « ${internal} »`);
   }
 });

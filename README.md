@@ -802,8 +802,17 @@ Ce que fait le modèle et ce qu'il ne fait pas :
   documents générés (`src/documents/document-ledger.js`) : une facture qui
   dépasserait le montant de la vente est refusée ;
 - le carnet d'atelier (`src/agent/workshop-book.js`, fichier `data/atelier.json`)
-  suit chaque bon de commande validé à travers les 7 étapes de fabrication ;
+  suit chaque bon de commande validé à travers les 8 étapes de fabrication ;
   l'avancement est calculé sur les étapes terminées, jamais estimé ;
+- le bureau d'études de chaque commande (panneau « Bureau d'études » de la vue
+  Atelier, outil `equipe_commande` du Director et de la Production) : le chef
+  de charge qui en répond, l'architecte du client et la personne de l'équipe
+  en lien avec lui, le dessinateur. Après la fiche technique (étude technique
+  terminée), le dessinateur dépose le G-code ou le DXF
+  (`data/atelier-cnc/`, 8 Mo au plus, contenu vérifié) ; la direction le
+  valide ou le refuse avec un motif (droit de décider, jamais un agent), et la
+  découpe CNC ne peut pas commencer avant. Rien de tout cela n'est montré au
+  client ;
 - le client suit sa commande sur un lien à lui (`/suivi/<jeton>`, page
   `src/frontend/suivi.html`) : avancement réel, étapes terminées, livraison
   prévue, échéancier, photos publiées et documents de sa vente, jamais les

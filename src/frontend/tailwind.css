@@ -1816,6 +1816,75 @@
     @apply text-muted;
   }
 
+  /* The design office of an order: who answers for it, the CNC files. */
+  .design-office {
+    @apply grid gap-3 rounded-2xl border border-line bg-surface-2 p-3.5;
+  }
+
+  .order-team {
+    @apply grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-3;
+  }
+
+  .order-team label {
+    @apply grid gap-1;
+  }
+
+  .order-team input {
+    @apply py-2 text-[13px];
+  }
+
+  .order-team button {
+    @apply justify-self-start;
+  }
+
+  .cnc-files > p {
+    @apply text-[12.5px] text-muted;
+  }
+
+  .cnc-files ul {
+    @apply mt-2 grid list-none gap-2 p-0;
+  }
+
+  .cnc-files li {
+    @apply flex flex-wrap items-center gap-2.5 rounded-lg border border-line bg-surface p-2 text-[12.5px];
+  }
+
+  .cnc-files li > div:not(.cnc-actions) {
+    @apply min-w-0 flex-1 basis-48 break-words;
+  }
+
+  .cnc-files li small {
+    @apply block text-muted;
+  }
+
+  .cnc-files li small.block {
+    @apply text-danger;
+  }
+
+  .cnc-icon {
+    @apply grid size-9 shrink-0 place-items-center rounded-md bg-surface-3 text-muted;
+  }
+
+  .cnc-actions {
+    @apply flex flex-wrap items-center gap-2;
+  }
+
+  .cnc-files li.cnc-add {
+    @apply border-dashed p-0;
+  }
+
+  .cnc-add label {
+    @apply flex min-h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-lg px-3 text-[12.5px] font-semibold text-brand hover:bg-brand-soft;
+  }
+
+  .cnc-add label:has(input:disabled) {
+    @apply cursor-not-allowed text-muted hover:bg-transparent;
+  }
+
+  .cnc-add label:focus-within {
+    @apply outline-2 outline-offset-2 outline-brand-2;
+  }
+
   /* What the client sees of an order: the link and the published photos. */
   .client-access {
     @apply rounded-2xl border border-line bg-surface-2 p-3.5;

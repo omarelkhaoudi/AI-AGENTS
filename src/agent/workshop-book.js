@@ -7,6 +7,7 @@ import { dossierOf, latestIssued } from "../documents/document-ledger.js";
 import { validateAndPrepareDocument } from "../documents/document-validation.js";
 import { HKIDS_FIXED_IDENTITY } from "../documents/hkids-template.js";
 import { parseReferenceImage } from "../documents/purchase-order.js";
+import { normalizeWhatsAppNumber } from "./whatsapp.js";
 
 // The workshop book: every purchase order validated in the cockpit follows the
 // manufacturing route of the specification (section 5), from the technical
@@ -29,12 +30,21 @@ import { parseReferenceImage } from "../documents/purchase-order.js";
 // steps, the planned delivery, the payment schedule, the published photos and
 // the documents of the sale. Never a note, a person in charge or a blocking
 // reason: those stay inside the company.
+//
+// The design office (Hiba's request of 09/11/2026): each order has a chef de
+// charge who answers for it, the client's architect when there is one and the
+// member of the team who deals with them, and the draughtsman who turns the
+// technical sheet into the files of the CNC machine. Those files (G-code, DXF)
+// are kept with the order and only reach the machine once the direction has
+// validated them: the CNC cut cannot start before. None of this is shown to
+// the client.
 
 const PROJECT_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 export const DEFAULT_WORKSHOP_PATH = join(PROJECT_ROOT, "data", "atelier.json");
 
 export const WORKSHOP_STEPS = Object.freeze([
   Object.freeze({ id: "etude_technique", label: "Étude technique", detail: "plans et fiche de fabrication" }),
+  Object.freeze({ id: "dessin_cnc", label: "Dessin CNC", detail: "G-code du dessinateur, validé avant découpe" }),
   Object.freeze({ id: "approvisionnement", label: "Approvisionnement", detail: "vérification des matières" }),
   Object.freeze({ id: "decoupe_cnc", label: "Découpe CNC", detail: "découpe des panneaux" }),
   Object.freeze({ id: "assemblage", label: "Assemblage", detail: "montage en atelier" }),
@@ -46,6 +56,25 @@ export const WORKSHOP_STEP_IDS = Object.freeze(WORKSHOP_STEPS.map((step) => step
 export const WORKSHOP_STATUSES = Object.freeze(["a_faire", "en_cours", "bloquee", "terminee"]);
 export const WORKSHOP_STATUS_LABELS = Object.freeze({ a_faire: "à faire", en_cours: "en cours", bloquee: "bloquée", terminee: "terminée" });
 
+// Who answers for an order, beside the person in charge of each step.
+export const ORDER_ROLES = Object.freeze([
+  Object.freeze({ id: "lead", label: "Chef de charge" }),
+  Object.freeze({ id: "architect", label: "Architecte" }),
+  Object.freeze({ id: "architectPhone", label: "Téléphone de l'architecte" }),
+  Object.freeze({ id: "liaison", label: "Lien avec l'architecte" }),
+  Object.freeze({ id: "drafter", label: "Dessinateur" })
+]);
+export const ORDER_ROLE_IDS = Object.freeze(ORDER_ROLES.map((role) => role.id));
+
+// The machine files of an order, by extension.
+export const CNC_FORMATS = Object.freeze({
+  gcode: Object.freeze(["nc", "gcode", "ngc", "tap", "cnc", "gc", "iso"]),
+  dxf: Object.freeze(["dxf"])
+});
+export const MAX_CNC_FILE_BYTES = 8 * 1024 * 1024;
+export const CNC_FILE_STATUSES = Object.freeze(["a_valider", "valide", "refuse"]);
+export const CNC_FILE_STATUS_LABELS = Object.freeze({ a_valider: "à valider", valide: "validé", refuse: "refusé" });
+
 export class WorkshopError extends Error {
   constructor(message, code) {
     super(message);
@@ -56,51 +85,22 @@ export class WorkshopError extends Error {
 
 export function createMemoryWorkshopStore({ clock = () => new Date() } = {}) {
   let orders = {};
-  const photos = new Map();
   return createWorkshopStore({
     clock,
     load: async () => orders,
     save: async (next) => {
       orders = next;
     },
-    photoFiles: {
-      write: async (name, bytes) => {
-        photos.set(name, bytes);
-      },
-      read: async (name) => photos.get(name) ?? null,
-      remove: async (name) => {
-        photos.delete(name);
-      }
-    }
+    photoFiles: memoryFolder(),
+    cncFiles: memoryFolder()
   });
 }
 
-export function createFileWorkshopStore({ path = DEFAULT_WORKSHOP_PATH, photosDir = join(dirname(path), "atelier-photos"), clock = () => new Date() } = {}) {
+export function createFileWorkshopStore({ path = DEFAULT_WORKSHOP_PATH, photosDir = join(dirname(path), "atelier-photos"), cncDir = join(dirname(path), "atelier-cnc"), clock = () => new Date() } = {}) {
   return createWorkshopStore({
     clock,
-    photoFiles: {
-      write: async (name, bytes) => {
-        await mkdir(photosDir, { recursive: true });
-        await writeFile(join(photosDir, name), bytes);
-      },
-      read: async (name) => {
-        try {
-          return await readFile(join(photosDir, name));
-        } catch (error) {
-          if (error.code === "ENOENT") {
-            return null;
-          }
-          throw error;
-        }
-      },
-      remove: async (name) => {
-        await unlink(join(photosDir, name)).catch((error) => {
-          if (error.code !== "ENOENT") {
-            throw error;
-          }
-        });
-      }
-    },
+    photoFiles: diskFolder(photosDir),
+    cncFiles: diskFolder(cncDir),
     load: async () => {
       try {
         return JSON.parse(await readFile(path, "utf8"));
@@ -121,7 +121,47 @@ export function createFileWorkshopStore({ path = DEFAULT_WORKSHOP_PATH, photosDi
   });
 }
 
-function createWorkshopStore({ load, save, clock, photoFiles }) {
+// Where the files of the orders are kept: photos and machine files, one each.
+function memoryFolder() {
+  const files = new Map();
+  return {
+    write: async (name, bytes) => {
+      files.set(name, bytes);
+    },
+    read: async (name) => files.get(name) ?? null,
+    remove: async (name) => {
+      files.delete(name);
+    }
+  };
+}
+
+function diskFolder(dir) {
+  return {
+    write: async (name, bytes) => {
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, name), bytes);
+    },
+    read: async (name) => {
+      try {
+        return await readFile(join(dir, name));
+      } catch (error) {
+        if (error.code === "ENOENT") {
+          return null;
+        }
+        throw error;
+      }
+    },
+    remove: async (name) => {
+      await unlink(join(dir, name)).catch((error) => {
+        if (error.code !== "ENOENT") {
+          throw error;
+        }
+      });
+    }
+  };
+}
+
+function createWorkshopStore({ load, save, clock, photoFiles, cncFiles }) {
   // Changes are applied one at a time, so two requests never overwrite each other.
   let queue = Promise.resolve();
   const exclusive = (work) => {
@@ -211,6 +251,107 @@ function createWorkshopStore({ load, save, clock, photoFiles }) {
       return bytes ? { bytes, format: photo.format } : null;
     },
 
+    // Who answers for the order. Only the roles given change; an empty name
+    // removes one.
+    async setTeam(number, roles = {}, { by = "direction" } = {}) {
+      const next = {};
+      for (const role of ORDER_ROLES) {
+        if (typeof roles[role.id] !== "string") {
+          continue;
+        }
+        let value = text(roles[role.id]);
+        if (role.id === "architectPhone" && value) {
+          value = normalizeWhatsAppNumber(value);
+          if (value === null) {
+            throw new WorkshopError("Numéro de l'architecte illisible : écrire par exemple 06 12 34 56 78 ou +212 6 12 34 56 78.", "WORKSHOP_PHONE_INVALID");
+          }
+        }
+        next[role.id] = value;
+      }
+      return mutate(number, (order, at) => {
+        const team = { ...order.team };
+        const changes = [];
+        for (const role of ORDER_ROLES) {
+          if (!(role.id in next) || next[role.id] === (team[role.id] ?? "")) {
+            continue;
+          }
+          if (next[role.id]) {
+            team[role.id] = next[role.id];
+            changes.push(`${role.label.toLowerCase()} : ${next[role.id]}`);
+          } else {
+            delete team[role.id];
+            changes.push(`${role.label.toLowerCase()} retiré(e)`);
+          }
+        }
+        if (changes.length === 0) {
+          return false;
+        }
+        order.team = team;
+        order.journal.push({ at, by, text: `Équipe de la commande : ${changes.join(" ; ")}.` });
+        return true;
+      });
+    },
+
+    // A machine file from the draughtsman, once the technical sheet is done.
+    // It waits for the direction's validation; the drawing step is under way
+    // until then.
+    async addCncFile(number, { bytes, name, format, note = "", by = "direction" }) {
+      return mutate(number, async (order, at) => {
+        if (order.steps.etude_technique?.status !== "terminee") {
+          throw new WorkshopError("La fiche technique vient d'abord : terminez l'étude technique avant de déposer le dessin CNC.", "WORKSHOP_STUDY_NOT_DONE");
+        }
+        const id = randomUUID();
+        const file = `${String(number).replace(/[^0-9A-Za-z_-]/g, "_")}_${id}.${extensionOf(name)}`;
+        await cncFiles.write(file, bytes);
+        order.cnc = [...(order.cnc ?? []), { id, file, name, format, size: bytes.length, note: text(note), status: "a_valider", depositedAt: at, by }];
+        const drawing = { status: "a_faire", responsible: "", plannedDate: null, startedDate: null, doneDate: null, note: "", ...order.steps.dessin_cnc };
+        if (drawing.status !== "en_cours") {
+          drawing.status = "en_cours";
+          drawing.startedDate ??= at.slice(0, 10);
+          drawing.doneDate = null;
+        }
+        drawing.responsible ||= order.team?.drafter ?? "";
+        drawing.updatedAt = at;
+        order.steps.dessin_cnc = drawing;
+        order.journal.push({ at, by, text: `Dessin CNC : fichier « ${name} » déposé, à valider par la direction${text(note) ? ` (${text(note)})` : ""}.` });
+        return id;
+      });
+    },
+
+    // The direction's word on a machine file. Once every file is decided and
+    // one is valid, the drawing is finished; a refused file says why.
+    async decideCncFile(number, id, { approve, reason = "", by = "direction" }) {
+      if (!approve && !text(reason)) {
+        throw new WorkshopError("Un fichier CNC refusé doit dire pourquoi, pour que le dessinateur le corrige.", "WORKSHOP_CNC_REASON_MISSING");
+      }
+      return mutate(number, (order, at) => {
+        const entry = (order.cnc ?? []).find((candidate) => candidate.id === id);
+        if (!entry) {
+          throw new WorkshopError("Fichier CNC introuvable.", "WORKSHOP_CNC_NOT_FOUND");
+        }
+        if (entry.status !== "a_valider") {
+          throw new WorkshopError(`Ce fichier est déjà ${CNC_FILE_STATUS_LABELS[entry.status]}.`, "WORKSHOP_CNC_ALREADY_DECIDED");
+        }
+        Object.assign(entry, { status: approve ? "valide" : "refuse", decidedAt: at, decidedBy: by, ...(approve ? {} : { reason: text(reason) }) });
+        order.journal.push({ at, by, text: approve ? `Dessin CNC : fichier « ${entry.name} » validé pour la machine.` : `Dessin CNC : fichier « ${entry.name} » refusé : ${text(reason)}.` });
+        const files = order.cnc;
+        if (files.some((candidate) => candidate.status === "valide") && !files.some((candidate) => candidate.status === "a_valider")) {
+          const drawing = order.steps.dessin_cnc ?? { status: "a_faire", responsible: "", plannedDate: null, startedDate: null, note: "" };
+          if (drawing.status !== "terminee") {
+            order.steps.dessin_cnc = { ...drawing, status: "terminee", doneDate: at.slice(0, 10), updatedAt: at };
+            order.journal.push({ at, by, text: "Dessin CNC : en cours → terminée." });
+          }
+        }
+        return { ...entry };
+      });
+    },
+
+    async readCncFile(number, id) {
+      const entry = ((await load())[String(number)]?.cnc ?? []).find((candidate) => candidate.id === id);
+      const bytes = entry ? await cncFiles.read(entry.file) : null;
+      return bytes ? { bytes, name: entry.name, format: entry.format, status: entry.status } : null;
+    },
+
     // One step of one order. Only the fields given change; dates are JJ/MM/AAAA
     // or AAAA-MM-JJ. A finished step without a date is finished today, a blocked
     // one says why.
@@ -236,6 +377,7 @@ function createWorkshopStore({ load, save, clock, photoFiles }) {
         const key = String(number);
         const order = orders[key] ?? { steps: {}, journal: [] };
         const current = { status: "a_faire", responsible: "", plannedDate: null, startedDate: null, doneDate: null, note: "", ...order.steps[stepId] };
+        refuseWithoutValidatedFile(order, stepId, current.status, status);
         const at = clock().toISOString();
         const today = at.slice(0, 10);
         const changes = [];
@@ -382,6 +524,29 @@ export function createWorkshop({ store, documentService, clock = () => new Date(
       return store.removePhoto(String(number).trim(), id, { by });
     },
 
+    async setTeam(number, roles, { by = "direction" } = {}) {
+      await issuedOrder(number);
+      const changed = await store.setTeam(String(number).trim(), roles, { by });
+      return { changed, order: await order(number) };
+    },
+
+    // content: the file as base64 (or bytes), name: its name with extension.
+    async depositCncFile(number, { content, name, note = "", by = "direction" }) {
+      await issuedOrder(number);
+      const upload = readCncUpload(content, name);
+      return store.addCncFile(String(number).trim(), { ...upload, note, by });
+    },
+
+    async decideCncFile(number, id, { approve, reason = "", by = "direction" }) {
+      await issuedOrder(number);
+      return store.decideCncFile(String(number).trim(), id, { approve, reason, by });
+    },
+
+    async readCncFile(number, id) {
+      await issuedOrder(number);
+      return store.readCncFile(String(number).trim(), id);
+    },
+
     clientView,
 
     async clientPhoto(token, id) {
@@ -464,6 +629,22 @@ function workshopOrder(order, record = { steps: {}, journal: [] }, issued, day) 
       alerts.push(`${step.label} prévue le ${frenchDay(step.plannedDate)}, pas terminée`);
     }
   }
+  const cnc = (record.cnc ?? []).map((entry) => Object.freeze({
+    id: entry.id,
+    name: entry.name,
+    format: entry.format,
+    size: entry.size,
+    note: entry.note ?? "",
+    status: entry.status,
+    depositedAt: entry.depositedAt,
+    by: entry.by,
+    decidedAt: entry.decidedAt ?? null,
+    decidedBy: entry.decidedBy ?? null,
+    reason: entry.reason ?? ""
+  }));
+  for (const entry of cnc.filter((candidate) => candidate.status === "a_valider")) {
+    alerts.push(`Fichier CNC « ${entry.name} » à valider par la direction avant la découpe`);
+  }
   // Only an order made from a quote can tell: invoices name their quote, never
   // the order.
   if (finished && dossier?.quoteNumber && dossier.remaining > 0) {
@@ -491,10 +672,57 @@ function workshopOrder(order, record = { steps: {}, journal: [] }, issued, day) 
             : "à lancer",
     finished,
     alerts: Object.freeze(alerts),
+    team: Object.freeze(Object.fromEntries(ORDER_ROLE_IDS.map((id) => [id, record.team?.[id] ?? ""]))),
+    cnc: Object.freeze(cnc),
     portal: record.portal?.active ? Object.freeze({ path: portalLink(record.portal.token).path, createdAt: record.portal.createdAt }) : null,
     photos: Object.freeze((record.photos ?? []).map((photo) => Object.freeze({ id: photo.id, caption: photo.caption, publishedAt: photo.publishedAt }))),
     journal: Object.freeze([...(record.journal ?? [])])
   });
+}
+
+// The CNC cut, and the end of the drawing, wait for a machine file the
+// direction validated. A cut already under way before this rule may finish.
+function refuseWithoutValidatedFile(order, stepId, from, to) {
+  const files = order.cnc ?? [];
+  if (stepId === "decoupe_cnc" && ["en_cours", "terminee"].includes(to) && !["en_cours", "terminee"].includes(from) && !files.some((entry) => entry.status === "valide")) {
+    throw new WorkshopError("Aucun fichier CNC validé pour cette commande : le G-code du dessinateur doit être validé par la direction avant la découpe.", "WORKSHOP_CNC_NOT_VALIDATED");
+  }
+  if (stepId === "dessin_cnc" && to === "terminee" && from !== "terminee" && (!files.some((entry) => entry.status === "valide") || files.some((entry) => entry.status === "a_valider"))) {
+    throw new WorkshopError("Le dessin CNC se termine quand la direction a validé son fichier (G-code ou DXF) dans le cockpit.", "WORKSHOP_CNC_NOT_VALIDATED");
+  }
+}
+
+// A machine file as sent: its format told by its extension, and its content
+// checked to be what the extension says, so a photo or a document renamed .nc
+// never reaches the machine.
+export function readCncUpload(content, name) {
+  const fileName = String(name ?? "").split(/[\\/]/).pop().replace(/[^\p{L}\p{N} ._()-]/gu, "_").trim().slice(-120);
+  const extension = extensionOf(fileName);
+  const format = Object.entries(CNC_FORMATS).find(([, extensions]) => extensions.includes(extension))?.[0];
+  if (!fileName || !format) {
+    throw new WorkshopError(`Fichier CNC attendu : G-code (.${CNC_FORMATS.gcode.join(", .")}) ou DXF (.dxf).`, "WORKSHOP_CNC_FORMAT");
+  }
+  const bytes = Buffer.isBuffer(content) ? content : typeof content === "string" ? Buffer.from(content.replace(/^data:[^,]*,/, ""), "base64") : null;
+  if (!bytes || bytes.length === 0) {
+    throw new WorkshopError("Le fichier CNC est vide.", "WORKSHOP_CNC_EMPTY");
+  }
+  if (bytes.length > MAX_CNC_FILE_BYTES) {
+    throw new WorkshopError("Le fichier CNC dépasse 8 Mo.", "WORKSHOP_CNC_TOO_LARGE");
+  }
+  const head = bytes.subarray(0, 64 * 1024);
+  const readable = !head.includes(0);
+  const looksRight = format === "gcode"
+    ? readable && /(^|[\s%(])[GM]\s?\d/im.test(head.toString("latin1"))
+    : head.subarray(0, 18).toString("latin1") === "AutoCAD Binary DXF" || (readable && /^\s*0\s*[\r\n]+\s*SECTION/m.test(head.toString("latin1")));
+  if (!looksRight) {
+    throw new WorkshopError(`« ${fileName} » ne ressemble pas à un fichier ${format === "gcode" ? "G-code" : "DXF"} : vérifiez le fichier du dessinateur.`, "WORKSHOP_CNC_CONTENT");
+  }
+  return { bytes, name: fileName, format };
+}
+
+function extensionOf(name) {
+  const match = /\.([A-Za-z0-9]+)$/.exec(String(name ?? ""));
+  return match ? match[1].toLowerCase() : "";
 }
 
 function isoDay(value) {

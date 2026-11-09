@@ -1533,6 +1533,16 @@ const WORKSHOP_STATUS_OPTIONS = Object.freeze({ a_faire: "À faire", en_cours: "
 // The plan's step styles, reused: same colours for the same meaning.
 const WORKSHOP_STEP_CLASSES = Object.freeze({ a_faire: "todo", en_cours: "in_progress", bloquee: "blocked", terminee: "done" });
 const ORDER_STATUS_TONES = Object.freeze({ "livrée et installée": "ok", "bloquée": "danger", "en retard": "danger", "en cours": "info" });
+// Who answers for an order, as the design office panel asks for them.
+const ORDER_ROLE_FIELDS = Object.freeze([
+  ["lead", "Chef de charge", "contrôle la commande de bout en bout"],
+  ["architect", "Architecte du client", "nom, cabinet"],
+  ["architectPhone", "Téléphone de l'architecte", "06 12 34 56 78"],
+  ["liaison", "En lien avec l'architecte", "qui, dans l'équipe"],
+  ["drafter", "Dessinateur", "fait le G-code"]
+]);
+const CNC_STATUS_TAGS = Object.freeze({ a_valider: ["warning", "à valider"], valide: ["ok", "validé"], refuse: ["danger", "refusé"] });
+const CNC_ACCEPT = ".nc,.gcode,.ngc,.tap,.cnc,.gc,.iso,.dxf";
 // The filters above the book: each says how many orders it holds.
 const ORDER_FILTERS = Object.freeze([
   { id: "all", label: "Toutes", hint: "au carnet", test: () => true },
@@ -1634,6 +1644,31 @@ function renderOrders(orders) {
         await sendPortalChange(number, "fermer");
       }
     });
+    article.querySelector("[data-team-form]")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const roles = Object.fromEntries(ORDER_ROLE_FIELDS.map(([id]) => [id, event.currentTarget.elements[id]?.value ?? ""]));
+      await sendOrderTeam(number, roles);
+    });
+    const cncField = article.querySelector("[data-cnc-input]");
+    cncField?.addEventListener("change", async () => {
+      const file = cncField.files?.[0];
+      if (file) {
+        await depositCncFile(number, file);
+      }
+    });
+    article.querySelectorAll("[data-cnc-download]").forEach((button) => {
+      button.addEventListener("click", () => downloadCncFile(number, button.dataset.cncDownload, button.dataset.cncName));
+    });
+    article.querySelectorAll("[data-cnc-decide]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const approve = button.dataset.cncDecide === "valider";
+        const reason = approve ? "" : globalThis.prompt?.("Pourquoi ce fichier est-il refusé ? Le dessinateur le lira pour le corriger.") ?? "";
+        if (approve ? !globalThis.confirm?.("Valider ce fichier pour la machine CNC ? La découpe pourra commencer avec lui.") : reason.trim() === "") {
+          return;
+        }
+        await decideCncFile(number, button.dataset.cncId, approve ? "valider" : "refuser", reason);
+      });
+    });
     const photoField = article.querySelector("[data-photo-input]");
     photoField?.addEventListener("change", async () => {
       const file = photoField.files?.[0];
@@ -1651,7 +1686,7 @@ function renderOrders(orders) {
   });
 }
 
-// One order of the book: who and what, the route of its seven steps, what
+// One order of the book: who and what, the route of its steps, what
 // needs attention, then three sections that open on demand.
 function orderCard(order) {
   const current = order.steps.findIndex((step) => step.status !== "terminee");
@@ -1676,7 +1711,7 @@ function orderCard(order) {
       <ol class="order-route" aria-label="${done} étape${done > 1 ? "s" : ""} terminée${done > 1 ? "s" : ""} sur ${total}">
         ${order.steps.map((step, index) => routeStep(step, index, index === current)).join("")}
       </ol>
-      <p class="order-progress">${done}/${total} étapes terminées · ${percent} % · ${where}</p>
+      <p class="order-progress">${done}/${total} étapes terminées · ${percent} % · ${where}${order.finished ? "" : ` · ${order.team.lead ? `chef de charge : <b>${escapeHtml(order.team.lead)}</b>` : `<span class="late">chef de charge à désigner</span>`}`}</p>
       ${order.alerts.length > 0 ? `
         <ul class="order-alerts">
           ${order.alerts.map((alert) => `<li class="${alert.startsWith("Installée") ? "warn" : ""}">${icon("alert")}<span>${escapeHtml(alert)}</span></li>`).join("")}
@@ -1699,6 +1734,7 @@ function orderCard(order) {
             `).join("")}
           </ul>
         `)}
+        ${designOffice(order)}
         ${clientAccess(order)}
         ${order.journal.length > 0 ? orderPanel(order, "journal", `${icon("history")}<span>Journal</span><small>${order.journal.length} entrée${order.journal.length > 1 ? "s" : ""}</small>`, `
           <ul class="order-journal">${[...order.journal].reverse().map((entry) => `<li><small>${escapeHtml(formatIsoDay(entry.at.slice(0, 10)))} ${escapeHtml(entry.at.slice(11, 16))}</small> ${escapeHtml(entry.text)}</li>`).join("")}</ul>
@@ -1736,6 +1772,119 @@ function orderPanel(order, id, summary, content) {
       <div class="order-panel-body">${content}</div>
     </details>
   `;
+}
+
+// The design office of an order: who answers for it, and the machine files
+// of the draughtsman, which reach the CNC only once the direction validated
+// them. Never shown to the client.
+function designOffice(order) {
+  const waiting = order.cnc.filter((file) => file.status === "a_valider").length;
+  const studyDone = order.steps.find((step) => step.id === "etude_technique")?.status === "terminee";
+  const summary = order.team.lead ? `chef de charge : ${escapeHtml(order.team.lead)}` : "chef de charge à désigner";
+  return orderPanel(order, "bureau", `${icon("users")}<span>Bureau d'études</span>${waiting > 0 ? `<span class="tag warning">${waiting} fichier${waiting > 1 ? "s" : ""} CNC à valider</span>` : ""}<small>${summary}</small>`, `
+    <div class="design-office">
+      <form class="order-team" data-team-form>
+        ${ORDER_ROLE_FIELDS.map(([id, label, hint]) => `
+          <label><span>${escapeHtml(label)}</span><input name="${id}" value="${escapeHtml(order.team[id] ?? "")}" placeholder="${escapeHtml(hint)}" autocomplete="off"></label>`).join("")}
+        <button type="submit" class="secondary">${icon("user-check")}Enregistrer</button>
+      </form>
+      <div class="cnc-files">
+        <p>${studyDone
+          ? "Le dessinateur dépose ici le G-code (ou le DXF) fait d'après la fiche technique. La découpe CNC ne commence qu'une fois le fichier validé par la direction."
+          : "Après la fiche technique (étude technique terminée), le dessinateur dépose ici le G-code ou le DXF. La découpe CNC attend sa validation."}</p>
+        <ul>
+          ${order.cnc.map((file) => {
+            const [tone, label] = CNC_STATUS_TAGS[file.status] ?? ["", file.status];
+            return `
+            <li>
+              <span class="cnc-icon">${icon("file")}</span>
+              <div>
+                <strong>${escapeHtml(file.name)}</strong> <span class="tag ${tone}">${escapeHtml(label)}</span>
+                <small>${file.format === "gcode" ? "G-code" : "DXF"} · ${escapeHtml(formatBytes(file.size))} · déposé le ${escapeHtml(formatIsoDay(file.depositedAt.slice(0, 10)))}${file.decidedBy ? ` · ${escapeHtml(label)} par ${escapeHtml(file.decidedBy)}` : ""}</small>
+                ${file.note ? `<small>${escapeHtml(file.note)}</small>` : ""}
+                ${file.reason ? `<small class="block">Refusé : ${escapeHtml(file.reason)}</small>` : ""}
+              </div>
+              <div class="cnc-actions">
+                <button type="button" class="link-button" data-cnc-download="${escapeHtml(file.id)}" data-cnc-name="${escapeHtml(file.name)}">Télécharger</button>
+                ${file.status === "a_valider" ? `
+                  <button type="button" class="secondary" data-cnc-decide="valider" data-cnc-id="${escapeHtml(file.id)}">${icon("check")}Valider</button>
+                  <button type="button" class="link-button" data-cnc-decide="refuser" data-cnc-id="${escapeHtml(file.id)}">Refuser</button>` : ""}
+              </div>
+            </li>`;
+          }).join("")}
+          <li class="cnc-add">
+            <label>${icon("plus")} Déposer le G-code ou le DXF<input type="file" accept="${CNC_ACCEPT}" data-cnc-input class="visually-hidden" ${studyDone ? "" : "disabled"}></label>
+          </li>
+        </ul>
+      </div>
+    </div>
+  `);
+}
+
+function formatBytes(size) {
+  return size >= 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1).replace(".", ",")} Mo` : `${Math.max(1, Math.round(size / 1024))} Ko`;
+}
+
+async function sendOrderTeam(number, roles) {
+  try {
+    const response = await fetch(`/api/workshop/${encodeURIComponent(number)}/team`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify(roles)
+    });
+    if (!response.ok) {
+      throw new Error((await response.json()).error ?? "L'équipe de la commande n'a pas pu être enregistrée.");
+    }
+    showToast(`Équipe du BC n° ${number} enregistrée.`);
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshOrders();
+}
+
+async function depositCncFile(number, file) {
+  const note = globalThis.prompt?.("Une précision pour la direction (facultative), par exemple « panneaux du lit, MDF 18 mm » :", "");
+  if (note === null) {
+    await refreshOrders();
+    return;
+  }
+  try {
+    await postJson(`/api/workshop/${encodeURIComponent(number)}/cnc`, { name: file.name, content: await readAsDataUrl(file), note: note ?? "" });
+    showToast("Fichier CNC déposé : il attend la validation de la direction.");
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshOrders();
+}
+
+async function decideCncFile(number, id, decision, reason) {
+  try {
+    await postJson(`/api/workshop/${encodeURIComponent(number)}/cnc/${encodeURIComponent(id)}/decision`, { decision, reason });
+    showToast(decision === "valider" ? "Fichier validé : la découpe CNC peut commencer." : "Fichier refusé : le dessinateur verra pourquoi.");
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshOrders();
+}
+
+// The file needs the session token, so it is fetched, then saved from memory.
+async function downloadCncFile(number, id, name) {
+  try {
+    const response = await fetch(`/api/workshop/${encodeURIComponent(number)}/cnc/${encodeURIComponent(id)}`, { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("Fichier CNC introuvable.");
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name || "fichier-cnc";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
 }
 
 // What the client sees of the order, and the controls of the link: made,

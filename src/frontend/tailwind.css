@@ -2271,6 +2271,18 @@
     @apply mt-1 text-[13px] text-ink-2 break-words;
   }
 
+  .cash-confidential {
+    @apply mt-1 flex items-start gap-2 text-[13.5px] text-ink;
+  }
+
+  .cash-confidential input {
+    @apply mt-0.5 size-4 w-auto shrink-0 accent-accent;
+  }
+
+  .cash-confidential small {
+    @apply block text-[12px] text-muted;
+  }
+
   .anomaly-task {
     @apply mt-2 rounded-2xl bg-surface-2 px-3 py-2 text-[13px] text-ink-2 break-words;
   }

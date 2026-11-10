@@ -1,7 +1,7 @@
 import { roundMoney } from "../documents/document-calculations.js";
 import { HKIDS_DOCUMENT_TYPES } from "../documents/document-schema.js";
 import { SPECIALISTS, SPECIALIST_IDS } from "./agent-team.js";
-import { CASH_CATEGORIES, CASH_METHODS, CashBookError, OPENING_CATEGORY } from "./cash-book.js";
+import { CASH_CATEGORIES, CASH_METHODS, CONFIDENTIAL_CATEGORIES, CashBookError, OPENING_CATEGORY } from "./cash-book.js";
 import { ANOMALY_STATUSES, ImprovementError, RULE_STATUSES, SEVERITIES, TASK_STATUSES, rulesInstruction, taskBoard } from "./improvement-book.js";
 import { normalizeWhatsAppNumber } from "./whatsapp.js";
 import { TeamBookError } from "./team-book.js";
@@ -42,9 +42,10 @@ export const CASH_RECORD_TOOL = Object.freeze({
       reference_bc: { type: "string", description: "Numéro du bon de commande concerné ; chaîne vide sinon." },
       date: { type: "string", description: "JJ/MM/AAAA seulement si le mouvement n'a pas eu lieu aujourd'hui ; chaîne vide sinon." },
       annonce_par: { type: "string", description: "Qui l'a annoncé (« Hiba », « Omar », « la direction »)." },
-      confirme_doublon: { type: "boolean", description: "true seulement si la mission dit clairement que c'est un second paiement identique le même jour." }
+      confirme_doublon: { type: "boolean", description: "true seulement si la mission dit clairement que c'est un second paiement identique le même jour." },
+      confidentiel: { type: "boolean", description: "true si la direction dit que cette dépense est confidentielle (un salaire l'est toujours) : seule la direction en verra le détail." }
     },
-    required: ["sens", "montant", "categorie", "libelle", "moyen", "tiers", "reference_devis", "reference_bc", "date", "annonce_par", "confirme_doublon"]
+    required: ["sens", "montant", "categorie", "libelle", "moyen", "tiers", "reference_devis", "reference_bc", "date", "annonce_par", "confirme_doublon", "confidentiel"]
   }
 });
 
@@ -366,8 +367,11 @@ export function improvementTools(context, agentId) {
   ];
 }
 
-export async function recordCash(args, { books, documentService }, by) {
+export async function recordCash(args, { books, documentService, confidential = true }, by) {
   const { cash, team } = books;
+  if (!confidential && args.sens === "sortie" && (args.confidentiel === true || CONFIDENTIAL_CATEGORIES.includes(args.categorie))) {
+    return { ok: false, erreur: "Les salaires et les dépenses confidentielles sont saisis par la direction." };
+  }
   try {
     const entry = await cash.record({
       kind: args.sens,
@@ -381,12 +385,16 @@ export async function recordCash(args, { books, documentService }, by) {
       day: text(args.date),
       announcedBy: text(args.annonce_par) || "direction",
       by,
-      confirmDuplicate: args.confirme_doublon === true
+      confirmDuplicate: args.confirme_doublon === true,
+      confidential: args.confidentiel === true
     });
     await team.log({
       agent: SPECIALISTS[by] ? by : "finance",
       kind: "caisse",
-      text: `${entry.kind === "entree" ? "Entrée" : "Sortie"} n° ${entry.number} : ${formatDh(entry.amount)} — ${entry.label}${entry.party ? ` (${entry.party})` : ""}, annoncée par ${entry.announcedBy}.`,
+      // The team feed is read by everyone: a confidential line says no more.
+      text: entry.confidential
+        ? `Sortie confidentielle n° ${entry.number} enregistrée (détail réservé à la direction).`
+        : `${entry.kind === "entree" ? "Entrée" : "Sortie"} n° ${entry.number} : ${formatDh(entry.amount)} — ${entry.label}${entry.party ? ` (${entry.party})` : ""}, annoncée par ${entry.announcedBy}.`,
       ref: `caisse:${entry.number}`,
       by
     });
@@ -400,11 +408,12 @@ export async function recordCash(args, { books, documentService }, by) {
         montant: entry.amount,
         libelle: entry.label,
         moyen: CASH_METHODS[entry.method],
-        tiers: entry.party || null
+        tiers: entry.party || null,
+        ...(entry.confidential ? { confidentiel: "oui : montant, libellé et tiers visibles de la direction seule" } : {})
       },
       ...(entry.kind === "sortie" ? { justificatif: expenseFollowUp(entry, cash.expenseThreshold) } : {}),
       ...(sale ? { vente: sale } : {}),
-      bilan_du_jour: describeDay(await cash.day(entry.day))
+      bilan_du_jour: describeDay(await cash.day(entry.day, { confidential }))
     };
   } catch (error) {
     return bookError(error);
@@ -421,15 +430,18 @@ function expenseFollowUp(entry, threshold) {
   };
 }
 
-export async function attachReceipt(args, { books, outcome }, by) {
+export async function attachReceipt(args, { books, outcome, confidential = true }, by) {
   const photo = outcome?.photos?.[Number(args.photo) - 1];
   const match = /^data:(image\/(?:jpeg|png));base64,([A-Za-z0-9+/=]+)$/.exec(typeof photo === "string" ? photo.trim() : "");
   if (!match) {
     return { ok: false, erreur: `Aucune photo n° ${args.photo} dans la conversation : demander à la direction d'envoyer la photo du justificatif.` };
   }
   try {
+    if (!confidential && (await books.cash.entries()).some((entry) => String(entry.number) === String(args.numero) && entry.confidential)) {
+      return { ok: false, erreur: `La dépense n° ${args.numero} est confidentielle : réservée à la direction.` };
+    }
     const entry = await books.cash.attachReceipt(String(args.numero), { bytes: Buffer.from(match[2], "base64"), mimeType: match[1], name: `justificatif-${args.numero}.${match[1] === "image/png" ? "png" : "jpg"}`, by });
-    await books.team.log({ agent: SPECIALISTS[by] ? by : "finance", kind: "caisse", text: `Justificatif joint à la dépense n° ${entry.number} (${entry.label}, ${formatDh(entry.amount)}).`, ref: `caisse:${entry.number}`, by });
+    await books.team.log({ agent: SPECIALISTS[by] ? by : "finance", kind: "caisse", text: `Justificatif joint à la dépense n° ${entry.number}${entry.confidential ? " (confidentielle)" : ` (${entry.label}, ${formatDh(entry.amount)})`}.`, ref: `caisse:${entry.number}`, by });
     return {
       ok: true,
       justifie: `n° ${entry.number} (${entry.label}, ${formatDh(entry.amount)})`,
@@ -456,20 +468,23 @@ async function saleCollection(entry, { cash, documentService }) {
   };
 }
 
-export async function cancelCash(args, { books }, by) {
+export async function cancelCash(args, { books, confidential = true }, by) {
   try {
+    if (!confidential && (await books.cash.entries()).some((entry) => String(entry.number) === String(args.numero) && entry.confidential)) {
+      return { ok: false, erreur: `Le mouvement n° ${args.numero} est confidentiel : seule la direction l'annule.` };
+    }
     const entry = await books.cash.cancel(String(args.numero), { reason: text(args.raison), by });
-    await books.team.log({ agent: SPECIALISTS[by] ? by : "finance", kind: "caisse", text: `Mouvement n° ${entry.number} annulé : ${entry.cancelled.reason}.`, ref: `caisse:${entry.number}`, by });
-    return { ok: true, annule: `n° ${entry.number} (${entry.label}, ${formatDh(entry.amount)})`, bilan_du_jour: describeDay(await books.cash.day(entry.day)) };
+    await books.team.log({ agent: SPECIALISTS[by] ? by : "finance", kind: "caisse", text: entry.confidential ? `Mouvement confidentiel n° ${entry.number} annulé.` : `Mouvement n° ${entry.number} annulé : ${entry.cancelled.reason}.`, ref: `caisse:${entry.number}`, by });
+    return { ok: true, annule: `n° ${entry.number} (${entry.label}, ${formatDh(entry.amount)})`, bilan_du_jour: describeDay(await books.cash.day(entry.day, { confidential })) };
   } catch (error) {
     return bookError(error);
   }
 }
 
-export async function cashBalance(args, { books }) {
+export async function cashBalance(args, { books, confidential = true }) {
   try {
-    const day = await books.cash.day(text(args.date));
-    const month = await books.cash.month(text(args.mois) || day.day.slice(0, 7));
+    const day = await books.cash.day(text(args.date), { confidential });
+    const month = await books.cash.month(text(args.mois) || day.day.slice(0, 7), { confidential });
     return {
       ok: true,
       jour: describeDay(day),
@@ -500,7 +515,7 @@ function describeDay(day) {
     solde_cloture: day.closing,
     dont_especes: day.closingCash,
     dont_banque: day.closingBank,
-    mouvements: day.entries.map((entry) => `n° ${entry.number} ${entry.kind === "entree" ? "+" : "−"} ${formatDh(entry.amount)} ${entry.label}${entry.party ? ` (${entry.party})` : ""} · ${entry.methodLabel}${entry.status && !entry.cancelled ? ` · ${entry.statusLabel}${entry.needsApproval && !entry.approval ? " (au-dessus du seuil)" : ""}` : ""}${entry.cancelled ? ` — ANNULÉ : ${entry.cancelled.reason}` : ""}`)
+    mouvements: day.entries.map((entry) => `n° ${entry.number} ${entry.kind === "entree" ? "+" : "−"} ${entry.masked ? "(montant réservé à la direction)" : formatDh(entry.amount)} ${entry.label}${entry.party ? ` (${entry.party})` : ""} · ${entry.methodLabel}${entry.status && !entry.cancelled ? ` · ${entry.statusLabel}${entry.needsApproval && !entry.approval ? " (au-dessus du seuil)" : ""}` : ""}${entry.cancelled ? ` — ANNULÉ : ${entry.cancelled.reason}` : ""}`)
   };
 }
 
@@ -629,9 +644,9 @@ export async function agentBriefing(agentId, { books }) {
 
 // The Director's own: who is behind each agent, every rule in force, and the
 // rules waiting for the direction.
-export async function directorBriefing({ books, workshop = null, documentService = null, clock = () => new Date() }) {
+export async function directorBriefing({ books, workshop = null, documentService = null, clock = () => new Date(), confidential = true }) {
   const since = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
-  const [members, rules, state, recent, expenses, orders] = await Promise.all([books.team.members(), books.improvement.activeRules("director"), books.improvement.state(), books.team.activity({ limit: 200, since }), books.cash.pending?.() ?? null, workshop?.book().catch(() => []) ?? []]);
+  const [members, rules, state, recent, expenses, orders] = await Promise.all([books.team.members(), books.improvement.activeRules("director"), books.improvement.state(), books.team.activity({ limit: 200, since }), books.cash.pending?.({ confidential }) ?? null, workshop?.book().catch(() => []) ?? []]);
   const open = orders.filter((order) => !order.finished);
   const withoutLead = open.filter((order) => !order.team?.lead).map((order) => order.number);
   const quotes = books.followUps && typeof documentService?.listIssued === "function" ? quotePipeline(await documentService.listIssued().catch(() => []), await books.followUps.state(), { today: clock(), days: books.followUps.days }) : [];

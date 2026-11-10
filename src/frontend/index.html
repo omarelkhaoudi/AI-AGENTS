@@ -364,6 +364,10 @@
                     <label for="cash-order">BC n°</label>
                     <input id="cash-order" name="orderNumber" inputmode="numeric" placeholder="171">
                   </div>
+                  <label class="cash-confidential col-span-2" id="cash-confidential-field" hidden>
+                    <input id="cash-confidential" name="confidential" type="checkbox">
+                    <span>Dépense confidentielle <small>visible de la direction seule ; un salaire l'est toujours</small></span>
+                  </label>
                 </div>
                 <button type="submit" class="primary mt-4 w-full justify-center" id="cash-submit"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Enregistrer</button>
               </form>

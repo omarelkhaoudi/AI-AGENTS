@@ -761,6 +761,8 @@ const cashDate = document.querySelector("#cash-date");
 const cashParty = document.querySelector("#cash-party");
 const cashQuote = document.querySelector("#cash-quote");
 const cashOrder = document.querySelector("#cash-order");
+const cashConfidential = document.querySelector("#cash-confidential");
+const cashConfidentialField = document.querySelector("#cash-confidential-field");
 const cashSubmit = document.querySelector("#cash-submit");
 const cashView = { data: null, kind: "entree" };
 
@@ -854,6 +856,9 @@ async function openReceipt(number, id) {
 function expenseControls(entry) {
   if (entry.kind !== "sortie" || entry.cancelled) {
     return "";
+  }
+  if (entry.masked) {
+    return `<div class="cash-expense"><span class="tag ${EXPENSE_TONES[entry.status] ?? "info"}">${escapeHtml(entry.statusLabel)}</span><span class="tag">réservée à la direction</span></div>`;
   }
   const receipts = entry.receipts.map((receipt, index) => `<button type="button" class="link-button" data-receipt-view="${entry.number}/${escapeHtml(receipt.id)}">${icon(receipt.mimeType === "application/pdf" ? "file" : "image")}Justificatif${entry.receipts.length > 1 ? ` ${index + 1}` : ""}</button>`).join("");
   const attach = entry.status === "declaree" || entry.status === "justifiee"
@@ -987,13 +992,13 @@ function cashEntryLine(entry, { withDay = false } = {}) {
     <li class="cash-entry ${entry.cancelled ? "is-cancelled" : ""}" data-kind="${entry.kind}">
       <span class="cash-sign" aria-hidden="true">${icon(entry.kind === "entree" ? "plus" : "minus")}</span>
       <div class="min-w-0 flex-1">
-        <strong>${escapeHtml(entry.label)}</strong>
+        <strong>${entry.confidential && !entry.masked ? `${icon("shield")}` : ""}${escapeHtml(entry.label)}</strong>
         <small>n° ${entry.number} · ${escapeHtml(meta.join(" · "))}</small>
         ${entry.cancelled ? `<small class="cash-cancel-reason">Annulé : ${escapeHtml(entry.cancelled.reason)}</small>` : ""}
         ${expenseControls(entry)}
       </div>
-      <b class="cash-amount">${entry.kind === "entree" ? "+" : "−"}\u00a0${formatDhNbsp(entry.amount)}</b>
-      ${entry.cancelled || entry.reconciliation || withDay ? "" : `<button type="button" class="icon-button cash-cancel" data-cash-cancel="${entry.number}" title="Annuler ce mouvement">${icon("x")}<span class="visually-hidden">Annuler le mouvement n° ${entry.number}</span></button>`}
+      <b class="cash-amount">${entry.masked ? '<span class="muted">confidentiel</span>' : `${entry.kind === "entree" ? "+" : "−"}\u00a0${formatDhNbsp(entry.amount)}`}</b>
+      ${entry.cancelled || entry.reconciliation || withDay || entry.masked ? "" : `<button type="button" class="icon-button cash-cancel" data-cash-cancel="${entry.number}" title="Annuler ce mouvement">${icon("x")}<span class="visually-hidden">Annuler le mouvement n° ${entry.number}</span></button>`}
     </li>
   `;
 }
@@ -1017,6 +1022,11 @@ function fillCashChoices() {
     cashMethod.dataset.filled = "true";
   }
   cashSubmit.className = `primary mt-4 w-full justify-center ${kind === "sortie" ? "is-out" : ""}`;
+  // Only the direction records a confidential expense or a salary.
+  cashConfidentialField.hidden = kind !== "sortie" || data.confidential !== true;
+  if (data.confidential !== true) {
+    cashCategory.querySelector("option[value='salaire']")?.remove();
+  }
 }
 
 async function submitCashMovement(confirmDuplicate) {
@@ -1030,6 +1040,7 @@ async function submitCashMovement(confirmDuplicate) {
     party: cashParty.value,
     quoteNumber: cashQuote.value,
     orderNumber: cashOrder.value,
+    confidential: cashView.kind === "sortie" && cashConfidential.checked,
     confirmDuplicate
   };
   cashSubmit.disabled = true;

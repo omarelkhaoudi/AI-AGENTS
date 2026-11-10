@@ -6,7 +6,9 @@ export const API_CAPABILITIES = Object.freeze([
   "read_requests",
   "create_requests",
   "decide_approvals",
-  "manage_api_tokens"
+  "manage_api_tokens",
+  // Salaries and the expenses marked confidential (CDC recette scenario 7).
+  "view_confidential"
 ]);
 
 const ROLE_RANK = Object.freeze({
@@ -20,7 +22,8 @@ const MINIMUM_ROLE_BY_CAPABILITY = Object.freeze({
   read_requests: "viewer",
   create_requests: "operator",
   decide_approvals: "approver",
-  manage_api_tokens: "leader"
+  manage_api_tokens: "leader",
+  view_confidential: "leader"
 });
 
 export class AuthorizationError extends Error {

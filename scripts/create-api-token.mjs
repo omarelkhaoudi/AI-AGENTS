@@ -21,7 +21,7 @@ const role = normalizeUserRole(readOption("role", "leader"));
 const email = readOption("email");
 
 if (!userId) {
-  console.error("Usage: npm run auth:create-token -- --user-id=<id> [--name=<label>] [--role=<role>] [--email=<email>]");
+  console.error("Usage: npm run auth:create-token -- --user-id=<id> [--name=<label>] [--role=<role>] [--email=<email>] [--company=<company>]");
   console.error(`Supported roles: ${USER_ROLES.join(", ")}`);
   process.exit(1);
 }
@@ -29,18 +29,22 @@ if (!userId) {
 const repository = await createRepository();
 
 try {
+  // The account keeps its company; a new one belongs to this server's.
+  const existing = await repository.getUser(userId);
+  const companyId = (readOption("company") ?? existing?.metadata?.companyId ?? process.env.HKIDS_COMPANY_ID ?? "hkids").trim();
   const user = await repository.upsertUser({
     id: userId,
     name: readOption("display-name", userId),
     role,
     status: "active",
-    email
+    email,
+    metadata: { ...(existing?.metadata ?? {}), companyId }
   });
   const material = createApiTokenMaterial({ userId: user.id, name });
   await repository.createApiToken(material.record);
 
   // The secret is shown once and never stored: only its hash is persisted.
-  console.log(`user:  ${user.id} (role ${user.role})`);
+  console.log(`user:  ${user.id} (role ${user.role}, company ${companyId})`);
   console.log(`token: ${material.secret}`);
   console.log("Store it now. It cannot be recovered from the database.");
 } finally {

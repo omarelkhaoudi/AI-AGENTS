@@ -60,6 +60,9 @@ export function createPrincipal({ user, tokenId = null }) {
     name: user.name ?? null,
     email: user.email ?? null,
     role: normalizeUserRole(user.role),
+    // The company the person belongs to; null for an account made before
+    // companies were named, which belongs to the one company of its server.
+    companyId: typeof user.metadata?.companyId === "string" && user.metadata.companyId.trim() ? user.metadata.companyId.trim() : null,
     tokenId
   });
 }

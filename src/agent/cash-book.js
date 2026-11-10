@@ -47,6 +47,13 @@ export const CASH_CATEGORIES = Object.freeze({
 // the balance, not in the day's takings.
 export const OPENING_CATEGORY = "solde_depart";
 
+// An expense of these categories is confidential whoever records it; any other
+// expense may be marked so. Only the direction (the view_confidential right)
+// sees its amount, what it is and who was paid; the others see a masked line,
+// still counted in the balances, since the cash in hand must stay right.
+export const CONFIDENTIAL_CATEGORIES = Object.freeze(["salaire"]);
+export const CONFIDENTIAL_CATEGORY = "confidentiel";
+
 export const EXPENSE_STATUSES = Object.freeze({ declaree: "Déclarée", justifiee: "Justifiée", approuvee: "Approuvée", rapprochee: "Rapprochée" });
 
 // An expense of this amount or more is flagged and waits for the direction's
@@ -104,7 +111,7 @@ function createCashBook({ book, receipts, clock, expenseThreshold }) {
     // A line identical to one already in the book that day (same direction,
     // amount and party or sale) is refused unless confirmed: Hiba often tells
     // the same news twice.
-    async record({ kind, amount, label = "", category = "", method = "", party = "", quoteNumber = "", orderNumber = "", day = "", announcedBy = "direction", by = "direction", confirmDuplicate = false }) {
+    async record({ kind, amount, label = "", category = "", method = "", party = "", quoteNumber = "", orderNumber = "", day = "", announcedBy = "direction", by = "direction", confirmDuplicate = false, confidential = false }) {
       if (!Object.hasOwn(CASH_CATEGORIES, kind)) {
         throw new CashBookError("Dire s'il s'agit d'une entrée ou d'une sortie d'argent.", "CASH_KIND_UNKNOWN");
       }
@@ -141,6 +148,7 @@ function createCashBook({ book, receipts, clock, expenseThreshold }) {
         // Set when recorded, so a later change of threshold does not move
         // the expenses already in the book.
         needsApproval: kind === "sortie" && value >= threshold,
+        confidential: kind === "sortie" && (confidential === true || CONFIDENTIAL_CATEGORIES.includes(chosen)),
         receipts: []
       };
       return book.change((state) => {
@@ -246,8 +254,8 @@ function createCashBook({ book, receipts, clock, expenseThreshold }) {
 
     // The expenses still to put in order: without a proof, waiting for
     // approval, or not yet reconciled.
-    async pending() {
-      const open = (await book.load()).entries.filter((entry) => entry.kind === "sortie" && !entry.cancelled).map(describeEntry);
+    async pending({ confidential = true } = {}) {
+      const open = (await book.load()).entries.filter((entry) => entry.kind === "sortie" && !entry.cancelled).map((entry) => shown(describeEntry(entry), confidential));
       return Object.freeze({
         threshold,
         missingReceipt: Object.freeze(open.filter((entry) => entry.status === "declaree")),
@@ -261,18 +269,19 @@ function createCashBook({ book, receipts, clock, expenseThreshold }) {
     },
 
     // The balance of one day, as the cockpit shows it every morning.
-    async day(value = "") {
+    // confidential: false for a person without the right to see them.
+    async day(value = "", { confidential = true } = {}) {
       const date = value ? isoDay(value) : today();
       if (!date) {
         throw new CashBookError("Date illisible : écrire JJ/MM/AAAA.", "CASH_DATE_INVALID");
       }
-      return dayBalance((await book.load()).entries, date);
+      return dayBalance((await book.load()).entries, date, { confidential });
     },
 
     // A month in short: what came in and went out by kind, and the day by day.
-    async month(value = "") {
+    async month(value = "", { confidential = true } = {}) {
       const month = /^\d{4}-\d{2}$/.test(text(value)) ? text(value) : today().slice(0, 7);
-      return monthBalance((await book.load()).entries, month);
+      return monthBalance((await book.load()).entries, month, { confidential });
     },
 
     // What has been received for one sale, from the lines that name it.
@@ -284,7 +293,7 @@ function createCashBook({ book, receipts, clock, expenseThreshold }) {
   });
 }
 
-export function dayBalance(entries, date) {
+export function dayBalance(entries, date, { confidential = true } = {}) {
   const live = entries.filter((entry) => !entry.cancelled);
   const before = live.filter((entry) => entry.day < date);
   const ofDay = entries.filter((entry) => entry.day === date).sort((a, b) => a.at.localeCompare(b.at));
@@ -305,13 +314,13 @@ export function dayBalance(entries, date) {
     // bank is checked on the statement.
     closingCash: closing.cash,
     closingBank: closing.bank,
-    byCategory: Object.freeze(byCategory(counted.filter((entry) => entry.category !== OPENING_CATEGORY))),
-    entries: Object.freeze(ofDay.map(describeEntry)),
+    byCategory: Object.freeze(byCategory(grouped(counted.filter((entry) => entry.category !== OPENING_CATEGORY), confidential))),
+    entries: Object.freeze(ofDay.map((entry) => shown(describeEntry(entry), confidential))),
     currency: "MAD"
   });
 }
 
-export function monthBalance(entries, month) {
+export function monthBalance(entries, month, { confidential = true } = {}) {
   const live = entries.filter((entry) => !entry.cancelled);
   const ofMonth = live.filter((entry) => entry.day.startsWith(month));
   const takings = ofMonth.filter((entry) => entry.kind === "entree" && entry.category !== OPENING_CATEGORY);
@@ -324,7 +333,7 @@ export function monthBalance(entries, month) {
     totalOut: sum(spending),
     net: roundMoney(sum(takings) - sum(spending)),
     closing: balanceOf(live.filter((entry) => entry.day.slice(0, 7) <= month)).total,
-    byCategory: Object.freeze(byCategory(ofMonth.filter((entry) => entry.category !== OPENING_CATEGORY))),
+    byCategory: Object.freeze(byCategory(grouped(ofMonth.filter((entry) => entry.category !== OPENING_CATEGORY), confidential))),
     days: Object.freeze(days.map((day) => {
       const balance = dayBalance(entries, day);
       return Object.freeze({ day, totalIn: balance.totalIn, totalOut: balance.totalOut, closing: balance.closing });
@@ -357,9 +366,40 @@ export function describeEntry(entry) {
     status: entry.kind === "sortie" ? expenseStatus(entry) : null,
     statusLabel: entry.kind === "sortie" ? EXPENSE_STATUSES[expenseStatus(entry)] : null,
     needsApproval: entry.needsApproval === true,
+    confidential: entry.confidential === true,
     approval: entry.approval ? Object.freeze({ ...entry.approval }) : null,
     reconciliation: entry.reconciliation ? Object.freeze({ ...entry.reconciliation }) : null
   });
+}
+
+// A confidential line as a person without the right sees it: that money went
+// out, its number, day and state, nothing of what it is or for whom.
+export function maskEntry(entry) {
+  if (!entry.confidential) {
+    return entry;
+  }
+  return Object.freeze({
+    ...entry,
+    amount: null,
+    category: CONFIDENTIAL_CATEGORY,
+    categoryLabel: categoryLabel(entry.kind, CONFIDENTIAL_CATEGORY),
+    label: "Dépense confidentielle",
+    party: "",
+    quoteNumber: "",
+    orderNumber: "",
+    cancelled: entry.cancelled ? Object.freeze({ at: entry.cancelled.at, by: entry.cancelled.by, reason: "réservé à la direction" }) : null,
+    receipts: Object.freeze([]),
+    masked: true
+  });
+}
+
+function shown(entry, confidential) {
+  return confidential ? entry : maskEntry(entry);
+}
+
+// The confidential lines in one total, so no category tells a salary apart.
+function grouped(entries, confidential) {
+  return confidential ? entries : entries.map((entry) => (entry.confidential ? { ...entry, category: CONFIDENTIAL_CATEGORY } : entry));
 }
 
 function expenseStatus(entry) {
@@ -373,6 +413,9 @@ function expenseStatus(entry) {
 }
 
 export function categoryLabel(kind, category) {
+  if (category === CONFIDENTIAL_CATEGORY) {
+    return "Dépenses confidentielles";
+  }
   return category === OPENING_CATEGORY ? "Solde de départ" : CASH_CATEGORIES[kind]?.[category] ?? category;
 }
 

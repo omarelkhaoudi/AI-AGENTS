@@ -27,7 +27,9 @@ import { createMvpToolRegistry } from "../tools/mvp-tools.js";
 import { CONSISTENCY_DOMAINS, checkConsistency } from "../agent/consistency.js";
 import { PlanStoreError, createMemoryPlanStore } from "../agent/plan-store.js";
 import { ORDER_ROLE_IDS, WorkshopError, createMemoryWorkshopStore, createWorkshop } from "../agent/workshop-book.js";
-import { CASH_CATEGORIES, CASH_METHODS, CashBookError, EXPENSE_STATUSES, OPENING_CATEGORY, createMemoryCashBook } from "../agent/cash-book.js";
+import { CASH_CATEGORIES, CASH_METHODS, CONFIDENTIAL_CATEGORIES, CashBookError, EXPENSE_STATUSES, OPENING_CATEGORY, createMemoryCashBook } from "../agent/cash-book.js";
+
+export const DEFAULT_COMPANY_ID = "hkids";
 import { ANOMALY_STATUSES, ImprovementError, RULE_STATUSES, SEVERITIES, TASK_STATUSES, createMemoryImprovementBook, taskBoard } from "../agent/improvement-book.js";
 import { TeamBookError, createMemoryTeamBook } from "../agent/team-book.js";
 import { SPECIALISTS, SPECIALIST_IDS } from "../agent/agent-team.js";
@@ -38,8 +40,8 @@ import { assignTask, recordFollowUp, updateTask } from "../agent/company-tools.j
 import { createOpenAiTranscriberFromEnv } from "../agent/transcriber.js";
 import { WhatsAppCloudError, createWhatsAppCloudClient, loadWhatsAppCloudConfig, verifyWebhookSignature } from "../integrations/whatsapp-cloud.js";
 import { timingSafeEqual } from "node:crypto";
-import { authenticatePrincipal, extractBearerToken } from "../security/authentication.js";
-import { assertCapability } from "../security/authorization.js";
+import { AuthenticationError, authenticatePrincipal, extractBearerToken } from "../security/authentication.js";
+import { assertCapability, roleSatisfiesCapability } from "../security/authorization.js";
 import { DEFAULT_RATE_LIMITS, createSecurityConfig } from "../security/security-config.js";
 import { createApiTokenMaterial, hashApiTokenSecret } from "../security/api-token.js";
 import { burnPasswordCheck, verifyPassword } from "../security/password.js";
@@ -65,6 +67,9 @@ const FRONTEND_ASSETS = Object.freeze({
 
 export function buildApi({
   repository = new InMemoryRepository(),
+  // The company this server holds the data of. An account of another company
+  // is refused, whatever its role (CDC recette scenario 7).
+  companyId = DEFAULT_COMPANY_ID,
   logger = false,
   seedAgents = true,
   planner = null,
@@ -228,6 +233,24 @@ export function buildApi({
     }
   });
   const taskContext = () => ({ books: { improvement, team: teamFeed } });
+
+  // Salaries and confidential expenses: the direction only.
+  const seesConfidential = (request) => roleSatisfiesCapability(request.principal?.role, "view_confidential");
+  async function refusedConfidential(request, number) {
+    await auditSecurityEvent(repository, { type: "authorization_denied", actorUserId: request.principal.userId, resourceType: "cash_entry", resourceId: String(number), metadata: { method: request.method, code: "CONFIDENTIAL" } });
+  }
+  async function confidentialRefused(request, reply) {
+    if (seesConfidential(request)) {
+      return false;
+    }
+    const entry = (await cash.entries()).find((other) => String(other.number) === String(request.params.number) || other.id === request.params.number);
+    if (!entry?.confidential) {
+      return false;
+    }
+    await refusedConfidential(request, entry.number);
+    reply.code(403).send({ error: "Réservé à la direction : cette dépense est confidentielle." });
+    return true;
+  }
   const teamFeed = teamBook ?? createMemoryTeamBook({ clock, agents: SPECIALIST_IDS });
   const agent = directorAgent ?? createDirectorAgentFromEnv({
     documentService: hkidsDocuments,
@@ -366,6 +389,9 @@ export function buildApi({
           repository,
           authorizationHeader: request.headers.authorization
         });
+        if (request.principal.companyId && request.principal.companyId !== companyId) {
+          throw new AuthenticationError("Invalid API token.", "OTHER_COMPANY");
+        }
       } catch (error) {
         await auditSecurityEvent(repository, {
           type: "authentication_failed",
@@ -448,12 +474,13 @@ export function buildApi({
         ? await repository.findUserCredentialByEmail(email)
         : null;
       const valid = found ? await verifyPassword(password, found.passwordHash) : await burnPasswordCheck(password);
-      if (!valid || (found.user.status ?? "active") !== "active") {
+      const otherCompany = valid && typeof found.user.metadata?.companyId === "string" && found.user.metadata.companyId.trim() !== "" && found.user.metadata.companyId.trim() !== companyId;
+      if (!valid || otherCompany || (found.user.status ?? "active") !== "active") {
         await auditSecurityEvent(repository, {
           type: "authentication_failed",
           resourceType: "endpoint",
           resourceId: "/api/auth/login",
-          metadata: { method: "POST", code: "INVALID_LOGIN" }
+          metadata: { method: "POST", code: otherCompany ? "OTHER_COMPANY" : "INVALID_LOGIN" }
         });
         return reply.code(401).send({ error: "Email ou mot de passe incorrect.", details: { code: "INVALID_LOGIN" } });
       }
@@ -806,15 +833,19 @@ export function buildApi({
     });
 
     // --- Cash book: the balance of a day, the month, and the lines ---------
+    // Salaries and confidential expenses are masked for whoever has not the
+    // right to see them, and refused to them line by line.
     app.get("/api/cash", readRouteOptions(), async (request, reply) => {
+      const confidential = seesConfidential(request);
       try {
-        const day = await cash.day(typeof request.query?.day === "string" ? request.query.day : "");
+        const day = await cash.day(typeof request.query?.day === "string" ? request.query.day : "", { confidential });
         return {
           today: cash.today(),
           day,
-          month: await cash.month(day.day.slice(0, 7)),
+          month: await cash.month(day.day.slice(0, 7), { confidential }),
           // The expenses still to put in order, whatever their day.
-          pending: await cash.pending(),
+          pending: await cash.pending({ confidential }),
+          confidential,
           statuses: EXPENSE_STATUSES,
           categories: { ...CASH_CATEGORIES, opening: OPENING_CATEGORY },
           methods: CASH_METHODS
@@ -829,6 +860,10 @@ export function buildApi({
       const body = request.body ?? {};
       const field = (name) => (typeof body[name] === "string" ? body[name] : "");
       const by = request.principal.userId ?? "direction";
+      if (!seesConfidential(request) && field("kind") === "sortie" && (body.confidential === true || CONFIDENTIAL_CATEGORIES.includes(field("category")))) {
+        await refusedConfidential(request, "new");
+        return reply.code(403).send({ error: "Les salaires et les dépenses confidentielles sont saisis par la direction." });
+      }
       try {
         const entry = await cash.record({
           kind: field("kind"),
@@ -842,10 +877,11 @@ export function buildApi({
           day: field("day"),
           announcedBy: "cockpit",
           by,
-          confirmDuplicate: body.confirmDuplicate === true
+          confirmDuplicate: body.confirmDuplicate === true,
+          confidential: body.confidential === true
         });
-        await teamFeed.log({ agent: "finance", kind: "caisse", text: `${entry.kind === "entree" ? "Entrée" : "Sortie"} n° ${entry.number} saisie au cockpit : ${entry.amount} DH — ${entry.label}${entry.party ? ` (${entry.party})` : ""}.`, ref: `caisse:${entry.number}`, by });
-        return reply.code(201).send({ entry, day: await cash.day(entry.day) });
+        await teamFeed.log({ agent: "finance", kind: "caisse", text: entry.confidential ? `Sortie confidentielle n° ${entry.number} saisie au cockpit (détail réservé à la direction).` : `${entry.kind === "entree" ? "Entrée" : "Sortie"} n° ${entry.number} saisie au cockpit : ${entry.amount} DH — ${entry.label}${entry.party ? ` (${entry.party})` : ""}.`, ref: `caisse:${entry.number}`, by });
+        return reply.code(201).send({ entry, day: await cash.day(entry.day, { confidential: seesConfidential(request) }) });
       } catch (error) {
         return sendBookError(reply, error, "Cash movement failed.");
       }
@@ -853,10 +889,13 @@ export function buildApi({
 
     app.post("/api/cash/:number/cancel", writeRouteOptions(), async (request, reply) => {
       const by = request.principal.userId ?? "direction";
+      if (await confidentialRefused(request, reply)) {
+        return reply;
+      }
       try {
         const entry = await cash.cancel(request.params.number, { reason: typeof request.body?.reason === "string" ? request.body.reason : "", by });
-        await teamFeed.log({ agent: "finance", kind: "caisse", text: `Mouvement n° ${entry.number} annulé au cockpit : ${entry.cancelled.reason}.`, ref: `caisse:${entry.number}`, by });
-        return reply.code(200).send({ entry, day: await cash.day(entry.day) });
+        await teamFeed.log({ agent: "finance", kind: "caisse", text: entry.confidential ? `Mouvement confidentiel n° ${entry.number} annulé au cockpit.` : `Mouvement n° ${entry.number} annulé au cockpit : ${entry.cancelled.reason}.`, ref: `caisse:${entry.number}`, by });
+        return reply.code(200).send({ entry, day: await cash.day(entry.day, { confidential: seesConfidential(request) }) });
       } catch (error) {
         return sendBookError(reply, error, "Cash cancellation failed.");
       }
@@ -867,6 +906,9 @@ export function buildApi({
     app.post("/api/cash/:number/receipts", { ...writeRouteOptions(), bodyLimit: Math.max(securityConfig.bodyLimitBytes, RECEIPT_BODY_LIMIT_BYTES) }, async (request, reply) => {
       const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/.exec(typeof request.body?.data === "string" ? request.body.data.trim() : "");
       const by = request.principal.userId ?? "direction";
+      if (await confidentialRefused(request, reply)) {
+        return reply;
+      }
       try {
         const entry = await cash.attachReceipt(request.params.number, {
           bytes: match ? Buffer.from(match[2], "base64") : Buffer.alloc(0),
@@ -874,7 +916,7 @@ export function buildApi({
           name: typeof request.body?.name === "string" ? request.body.name.slice(0, 160) : "",
           by
         });
-        await teamFeed.log({ agent: "finance", kind: "caisse", text: `Justificatif joint au cockpit à la dépense n° ${entry.number} (${entry.label}).`, ref: `caisse:${entry.number}`, by });
+        await teamFeed.log({ agent: "finance", kind: "caisse", text: `Justificatif joint au cockpit à la dépense n° ${entry.number}${entry.confidential ? " (confidentielle)" : ` (${entry.label})`}.`, ref: `caisse:${entry.number}`, by });
         return reply.code(201).send({ entry });
       } catch (error) {
         return sendBookError(reply, error, "Receipt upload failed.");
@@ -882,6 +924,9 @@ export function buildApi({
     });
 
     app.get("/api/cash/:number/receipts/:id", readRouteOptions(), async (request, reply) => {
+      if (await confidentialRefused(request, reply)) {
+        return reply;
+      }
       try {
         const receipt = await cash.receipt(request.params.number, request.params.id);
         return reply
@@ -900,9 +945,12 @@ export function buildApi({
     // takes them, never an agent, with the right to decide approvals.
     app.post("/api/cash/:number/approve", decisionRouteOptions(), async (request, reply) => {
       const by = request.principal.name ?? request.principal.userId ?? "direction";
+      if (await confidentialRefused(request, reply)) {
+        return reply;
+      }
       try {
         const entry = await cash.approve(request.params.number, { by });
-        await teamFeed.log({ agent: "finance", kind: "caisse", text: `Dépense n° ${entry.number} approuvée par ${by} (${entry.label}, ${entry.amount} DH).`, ref: `caisse:${entry.number}`, by });
+        await teamFeed.log({ agent: "finance", kind: "caisse", text: `Dépense n° ${entry.number} approuvée par ${by}${entry.confidential ? " (confidentielle)" : ` (${entry.label}, ${entry.amount} DH)`}.`, ref: `caisse:${entry.number}`, by });
         return reply.code(200).send({ entry });
       } catch (error) {
         return sendBookError(reply, error, "Expense approval failed.");
@@ -911,6 +959,9 @@ export function buildApi({
 
     app.post("/api/cash/:number/reconcile", decisionRouteOptions(), async (request, reply) => {
       const by = request.principal.name ?? request.principal.userId ?? "direction";
+      if (await confidentialRefused(request, reply)) {
+        return reply;
+      }
       try {
         const entry = await cash.reconcile(request.params.number, { by, note: typeof request.body?.note === "string" ? request.body.note : "" });
         await teamFeed.log({ agent: "finance", kind: "caisse", text: `Dépense n° ${entry.number} rapprochée par ${by}.`, ref: `caisse:${entry.number}`, by });
@@ -1173,7 +1224,8 @@ export function buildApi({
           photos: request.body?.photos,
           files: request.body?.files,
           conversationId: typeof request.body?.conversationId === "string" ? request.body.conversationId : null,
-          userId: request.principal.userId
+          userId: request.principal.userId,
+          confidential: seesConfidential(request)
         }));
       } catch (error) {
         if (error instanceof DirectorAgentError) {

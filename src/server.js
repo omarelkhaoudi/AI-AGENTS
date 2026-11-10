@@ -68,7 +68,7 @@ const autoAnalyseAnomalies = process.env.HKIDS_AUTO_ANALYSIS !== "off";
 // The number itself is configured by the WHATSAPP_* keys of .env.
 const whatsAppStore = createFileWhatsAppInbox();
 
-const app = buildApi({ repository, config, toolRegistry, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, autoAnalyseAnomalies, whatsAppStore });
+const app = buildApi({ repository, companyId: process.env.HKIDS_COMPANY_ID?.trim() || "hkids", config, toolRegistry, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, autoAnalyseAnomalies, whatsAppStore });
 
 // Every half hour, the workshop book is read for steps that became late, and
 // the quotes for follow-ups that became due.

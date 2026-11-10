@@ -540,7 +540,8 @@ export function createDirectorAgent({
   });
   const configured = () => Boolean(client) || apiKey !== "";
   // The context every tool runs in; a turn adds its own outcome and user.
-  const baseContext = (outcome, userId = null) => ({
+  const baseContext = (outcome, userId = null, confidential = true) => ({
+    confidential,
     documentService,
     runDirectorRequest,
     loadCatalogue,
@@ -618,7 +619,9 @@ export function createDirectorAgent({
       return analyses;
     },
 
-    async chat({ message, photos = [], files = [], conversationId = null, userId = null } = {}) {
+    // confidential: false when the person asking may not see salaries and
+    // confidential expenses; the direction on WhatsApp may.
+    async chat({ message, photos = [], files = [], conversationId = null, userId = null, confidential = true } = {}) {
       const stored = conversationId ? await conversationStore.get(conversationId) : null;
       const previous = stored && stored.userId === (userId ?? null) ? stored : null;
       const id = previous ? conversationId : randomUUID();
@@ -650,7 +653,7 @@ export function createDirectorAgent({
       items.push(userItem);
 
       const outcome = freshOutcome(conversationPhotos);
-      const context = baseContext(outcome, userId);
+      const context = baseContext(outcome, userId, confidential !== false);
       const briefing = await directorBriefing(context);
       let reply = "";
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {

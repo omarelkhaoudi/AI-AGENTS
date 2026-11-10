@@ -624,8 +624,26 @@ npm run auth:create-token -- --user-id=hiba --role=leader
 Le secret est affiché **une seule fois**, à la création. Notez-le.
 
 Options : `--user-id` (obligatoire), `--name`, `--role`, `--email`,
-`--display-name`. Rôles disponibles : `viewer`, `operator`, `approver`,
-`leader`. Approuver une action demande au moins `approver`.
+`--display-name`, `--company`. Rôles disponibles : `viewer`, `operator`,
+`approver`, `leader`. Approuver une action demande au moins `approver`.
+
+Cloisonnement (recette, scénario 7) :
+
+- chaque compte appartient à une société (`--company`, sinon
+  `HKIDS_COMPANY_ID`, `hkids` par défaut). Le serveur refuse tout compte d'une
+  autre société, à la connexion comme à chaque appel, avec la même réponse
+  qu'un mauvais jeton. Un compte créé avant ce réglage appartient à la
+  société du serveur ;
+- les salaires et les dépenses marquées « confidentielles » ne sont visibles
+  en détail que du rôle `leader` (droit `view_confidential`). Pour les autres
+  rôles, la ligne apparaît masquée : son numéro, son jour et son état, sans
+  montant, libellé ni bénéficiaire. Son justificatif, son approbation, son
+  rapprochement et son annulation leur sont refusés (403, tracé au journal
+  d'audit), comme la saisie d'un salaire. Le fil de l'équipe, les réponses
+  du Director et le résumé qui lui est donné les masquent de même. Les
+  totaux de caisse les comptent toujours, pour que la caisse reste juste.
+  Ces lignes sont regroupées sous « Dépenses confidentielles », sans détail
+  par catégorie.
 
 Utiliser le jeton :
 

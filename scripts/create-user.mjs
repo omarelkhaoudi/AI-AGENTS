@@ -9,6 +9,10 @@ import { createRepository } from "../src/persistence/repository-factory.js";
 // line, so it does not end up in the shell history.
 //
 //   npm run auth:create-user -- --id=hiba --name="Hiba" --email=hiba@exemple.ma --role=leader
+//
+// The account belongs to the company of this server (HKIDS_COMPANY_ID, hkids
+// by default) unless --company says otherwise; a server refuses the accounts
+// of another company. Only a leader sees salaries and confidential expenses.
 loadDotEnvIfPresent();
 
 function readOption(name, fallback = null) {
@@ -43,9 +47,10 @@ const id = readOption("id");
 const email = readOption("email");
 const name = readOption("name", id);
 const role = normalizeUserRole(readOption("role", "leader"));
+const companyId = (readOption("company", process.env.HKIDS_COMPANY_ID?.trim() || "hkids") ?? "").trim();
 
-if (!id || !email) {
-  console.error("Usage: npm run auth:create-user -- --id=<id> --email=<email> [--name=<nom affiché>] [--role=<rôle>]");
+if (!id || !email || !/^[a-z0-9][a-z0-9_-]{0,40}$/i.test(companyId)) {
+  console.error("Usage: npm run auth:create-user -- --id=<id> --email=<email> [--name=<nom affiché>] [--role=<rôle>] [--company=<société>]");
   console.error(`Rôles : ${USER_ROLES.join(", ")}`);
   process.exit(1);
 }
@@ -62,9 +67,10 @@ const passwordHash = await hashPassword(password).catch((error) => {
 
 const repository = await createRepository();
 try {
-  const user = await repository.upsertUser({ id, name, email: email.trim().toLowerCase(), role, status: "active" });
+  const existing = await repository.getUser(id);
+  const user = await repository.upsertUser({ id, name, email: email.trim().toLowerCase(), role, status: "active", metadata: { ...(existing?.metadata ?? {}), companyId } });
   await repository.setUserPassword(user.id, passwordHash);
-  console.log(`Compte prêt : ${user.name} <${user.email}> (rôle ${user.role}).`);
+  console.log(`Compte prêt : ${user.name} <${user.email}> (rôle ${user.role}, société ${companyId}).`);
 } finally {
   await repository.disconnect();
 }

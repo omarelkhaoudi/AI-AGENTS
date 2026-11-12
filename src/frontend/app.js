@@ -277,8 +277,15 @@ function forgetSession() {
 }
 
 function showSession({ user, demo }) {
-  document.querySelector("#session-name").textContent = user?.name ?? "";
+  const name = user?.name ?? "";
+  document.querySelector("#session-name").textContent = name;
+  document.querySelector("#session-avatar").textContent = initials(name);
   document.querySelector("#session-box").hidden = demo === true;
+}
+
+// "Hiba Benali" → "HB", "Omar" → "O": the avatar of the person signed in.
+function initials(name) {
+  return name.trim().split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0].toUpperCase()).join("");
 }
 
 // One sign-in at a time: every request waiting for a token waits for this one.
@@ -3019,12 +3026,12 @@ function formatAgent(agentId) {
 
 function formatStatus(status) {
   const labels = {
-    completed: "Demo mock",
-    partial: "Reponse partielle",
+    completed: "Connecté",
+    partial: "Réponse partielle",
     requires_approval: "Validation requise",
     failed: "Erreur"
   };
-  return labels[status] ?? status ?? "Demo mock";
+  return labels[status] ?? status ?? "Connecté";
 }
 
 function renderError(message) {
@@ -3604,6 +3611,10 @@ function showView(name) {
     refreshRegister();
   }
   document.querySelector("#director-title").textContent = COCKPIT_VIEWS[view];
+  // A view opens at its top, not where the previous one was left scrolled.
+  if (document.querySelector(`[data-view-panel="${view}"]`)?.hidden === true) {
+    globalThis.scrollTo?.({ top: 0, behavior: "instant" });
+  }
   document.querySelectorAll("[data-view-panel]").forEach((panel) => {
     panel.hidden = panel.dataset.viewPanel !== view;
   });

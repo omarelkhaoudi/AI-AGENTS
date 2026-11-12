@@ -338,6 +338,83 @@
     @apply flex-1 max-md:flex-none;
   }
 
+  /* The page header. On a phone it becomes an app bar: it stays at the top,
+     frosted over what scrolls under it, with the H-KIDS mark and who is
+     signed in. */
+  .topbar {
+    @apply flex items-center gap-3 md:items-end md:gap-4;
+  }
+
+  @media (width < 48rem) {
+    .topbar {
+      @apply sticky top-0 z-20 -mx-4 -mt-5 border-b border-line px-4 pb-2.5;
+      padding-top: calc(10px + env(safe-area-inset-top));
+      background: color-mix(in oklab, var(--bg) 84%, transparent);
+      backdrop-filter: blur(18px) saturate(1.4);
+    }
+  }
+
+  .topbar-mark {
+    @apply grid size-9 shrink-0 place-items-center rounded-xl bg-linear-140 from-[#9cc1b2] via-sage to-sand font-display text-[18px] font-semibold text-white;
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.35);
+  }
+
+  .session-box {
+    @apply flex shrink-0 items-center gap-2 rounded-full border border-line bg-surface/80 p-1 backdrop-blur md:pl-1 md:pr-1;
+  }
+
+  .session-avatar {
+    @apply grid size-8 place-items-center rounded-full bg-brand text-[12.5px] font-semibold tracking-[0.02em] text-brand-ink;
+  }
+
+  .session-name {
+    @apply max-w-[160px] truncate pr-1 text-[13px] font-medium text-ink-2;
+  }
+
+  .session-logout {
+    @apply min-h-8 w-8 rounded-full border-0 bg-transparent p-0 text-muted shadow-none hover:bg-surface-3 hover:text-danger;
+  }
+
+  .status-dot {
+    @apply size-2 shrink-0 rounded-full bg-[#5fd39b];
+    box-shadow: 0 0 0 3px rgb(95 211 155 / 0.18);
+  }
+
+  /* Sign-in: the H-KIDS promise on the left, the form on the right. */
+  .login-hero {
+    @apply relative isolate m-3 flex flex-col justify-between overflow-hidden rounded-[32px] bg-linear-to-br from-sidebar-2 to-sidebar p-10 text-sidebar-ink lg:p-14;
+  }
+
+  .login-hero::before,
+  .login-hero::after {
+    content: "";
+    @apply pointer-events-none absolute -z-10 rounded-full blur-3xl;
+  }
+
+  .login-hero::before {
+    @apply -top-32 -right-24 size-96 bg-sage/30;
+  }
+
+  .login-hero::after {
+    @apply -bottom-40 -left-24 size-[420px] bg-sand/20;
+  }
+
+  .login-hero-title {
+    @apply max-w-[480px] font-display text-[38px] leading-[1.1] font-semibold tracking-[-0.02em] lg:text-[46px];
+  }
+
+  .login-hero-points {
+    @apply mt-8 flex flex-col gap-3.5 text-[14.5px] text-sidebar-ink/85;
+  }
+
+  .login-hero-points li {
+    @apply flex items-center gap-3;
+  }
+
+  .login-hero-points .i {
+    @apply size-9 rounded-xl bg-white/8 p-2 text-sage;
+  }
+
   /* « Plus » stays lit while one of the views it opens is shown. */
   .nav-item[data-active="true"] {
     @apply bg-white/10 text-white;
@@ -349,7 +426,7 @@
 
   /* The views a phone's tab bar has no room for, in a sheet above it. */
   .more-sheet {
-    @apply fixed inset-x-3 bottom-[calc(70px+env(safe-area-inset-bottom))] z-40 flex flex-col gap-0.5 rounded-3xl border border-white/10 bg-sidebar-2 p-2 shadow-float;
+    @apply fixed inset-x-3 bottom-[calc(84px+env(safe-area-inset-bottom))] z-40 flex flex-col gap-0.5 rounded-3xl border border-white/10 bg-sidebar-2 p-2 shadow-float;
     animation: toast-in 0.2s var(--ease-out-soft) both;
   }
 
@@ -381,7 +458,12 @@
   /* On a phone the sidebar becomes a bottom tab bar. */
   @media (width < 48rem) {
     .nav-item {
-      @apply min-h-[54px] min-w-[64px] flex-1 shrink-0 flex-col justify-center gap-0.5 px-1 text-center text-[10.5px];
+      @apply min-h-[54px] min-w-[60px] flex-1 shrink-0 flex-col justify-center gap-1 rounded-[18px] px-1 text-center text-[10.5px] tracking-[0.01em];
+    }
+
+    .nav-item[aria-current="page"],
+    .nav-item[data-active="true"] {
+      @apply bg-white/12;
     }
   }
 
@@ -536,24 +618,32 @@
   }
 
   .view-head p {
-    @apply max-w-[72ch] min-w-0 flex-1 basis-80 text-[14px] leading-relaxed text-ink-2;
+    @apply max-w-[72ch] min-w-0 flex-1 basis-80 text-[13.5px] leading-relaxed text-muted md:text-[14px];
   }
 
   /* ---------- The day at a glance ---------- */
 
   .overview-grid {
-    @apply grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6;
+    @apply grid grid-cols-2 gap-2.5 md:gap-3 lg:grid-cols-3 2xl:grid-cols-6;
   }
 
   /* An amount is longer than a count: smaller, so it fits a phone's tile. */
   .overview-value.is-money {
-    @apply text-[24px] md:text-[29px];
+    @apply text-[22px] md:text-[27px];
   }
 
+  /* A tile: its icon and name on one line, the figure, then what it means.
+     One that needs attention carries its colour down its left edge. */
   .overview-tile {
     --tone: var(--brand);
     --tone-soft: var(--brand-soft);
-    @apply relative block min-h-0 overflow-hidden rounded-3xl border border-line bg-surface p-4 text-left font-normal text-ink shadow-card transition duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface md:p-5;
+    @apply relative grid min-h-0 grid-cols-[auto_minmax(0,1fr)] content-start items-center gap-x-2.5 overflow-hidden rounded-[20px] border border-line bg-surface p-3.5 text-left font-normal text-ink shadow-card transition duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface md:rounded-3xl md:p-5;
+  }
+
+  .overview-tile:is([data-tone="warn"], [data-tone="danger"])::before {
+    content: "";
+    @apply absolute inset-y-0 left-0 w-[3px];
+    background: var(--tone);
   }
 
   .overview-tile:hover {
@@ -566,21 +656,25 @@
   .overview-tile[data-tone="info"] { --tone: var(--info); --tone-soft: var(--info-soft); }
 
   .overview-icon {
-    @apply mb-3.5 grid size-9 place-items-center rounded-xl;
+    @apply grid size-8 place-items-center rounded-[10px] md:size-9 md:rounded-xl;
     background: var(--tone-soft);
     color: var(--tone);
   }
 
+  .overview-icon .i {
+    @apply size-4 md:size-[18px];
+  }
+
   .overview-label {
-    @apply block text-[11.5px] font-semibold tracking-[0.08em] text-muted uppercase;
+    @apply block truncate text-[12.5px] leading-tight font-semibold text-ink-2 md:pr-5 md:text-[13px];
   }
 
   .overview-value {
-    @apply mt-1 block font-display text-[34px] leading-none font-semibold tracking-[-0.02em] text-ink tabular-nums md:text-[38px];
+    @apply col-span-2 mt-3 block font-display text-[28px] leading-none font-semibold tracking-[-0.02em] text-ink tabular-nums md:mt-4 md:text-[34px];
   }
 
   .overview-tile small {
-    @apply mt-2 block text-[12.5px] leading-snug text-ink-2;
+    @apply col-span-2 mt-1.5 block text-[12px] leading-snug text-ink-2 md:mt-2 md:text-[12.5px];
   }
 
   .overview-tile:is([data-tone="warn"], [data-tone="danger"]) small {
@@ -589,7 +683,11 @@
   }
 
   .overview-go {
-    @apply absolute top-4 right-4 text-muted opacity-0 transition duration-200 md:top-5 md:right-5;
+    @apply absolute top-3.5 right-3.5 text-muted opacity-0 transition duration-200 md:top-5 md:right-5;
+  }
+
+  .overview-go .i {
+    @apply size-4;
   }
 
   .overview-tile:hover .overview-go,
@@ -681,10 +779,10 @@
     @apply max-w-[300px] text-[12px] text-muted max-sm:max-w-none max-sm:basis-full;
   }
 
-  /* The seven steps as a route: a dot per step, joined by a line that turns
-     green once the step before is finished. */
+  /* The steps as a route on one line, however many there are: a dot per step,
+     joined by a line that turns green once the step before is finished. */
   .order-route {
-    @apply relative mt-5 grid list-none grid-cols-7 p-0;
+    @apply relative mt-5 grid list-none auto-cols-fr grid-flow-col p-0;
   }
 
   .route-step {

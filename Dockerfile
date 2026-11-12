@@ -17,7 +17,9 @@ COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
 COPY . .
-RUN npx prisma generate \
+# prisma.config.js reads DATABASE_URL, which only exists at run time; generating
+# the client never connects, so a placeholder is enough here.
+RUN DATABASE_URL="postgresql://build:build@localhost:5432/build" npx prisma generate \
   && mkdir -p data assets/documents/generated archive \
   && chown -R node:node /app
 

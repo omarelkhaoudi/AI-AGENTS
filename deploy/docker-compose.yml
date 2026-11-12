@@ -39,11 +39,14 @@ services:
       DATABASE_URL: postgresql://hkids:${POSTGRES_PASSWORD}@db:5432/hkids?schema=public
       # The address of the client follow-up links the agents put in messages.
       PUBLIC_BASE_URL: https://${DOMAIN:?set DOMAIN in deploy/.env}
+      # The client folders of the Administratif and the Excel exports.
+      HKIDS_ARCHIVE_DIR: /app/archive
     volumes:
       # The documents issued, their numbering, the catalogue, the plans and the
       # conversations: everything that must outlive a new version of the app.
       - documents:/app/assets/documents/generated
       - appdata:/app/data
+      - archive:/app/archive
 
   caddy:
     image: caddy:2-alpine
@@ -64,5 +67,6 @@ volumes:
   pgdata:
   documents:
   appdata:
+  archive:
   caddy_data:
   caddy_config:

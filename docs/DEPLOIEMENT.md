@@ -4,6 +4,10 @@ Ce guide met le cockpit sur un serveur, accessible depuis Internet en HTTPS, ave
 un identifiant et un mot de passe pour chaque personne. Comptez une heure la
 première fois.
 
+> **Gratuitement** : un serveur Oracle Cloud « Always Free » convient. Le pas à
+> pas complet, de la création du compte à la sauvegarde, est dans
+> [DEPLOIEMENT-ORACLE.md](DEPLOIEMENT-ORACLE.md).
+
 ## Ce qu'il faut avant de commencer
 
 - **Un serveur Linux** (VPS) avec 2 Go de mémoire au moins et Docker installé.

@@ -18,7 +18,7 @@ RUN npm ci --no-audit --no-fund
 
 COPY . .
 RUN npx prisma generate \
-  && mkdir -p data assets/documents/generated \
+  && mkdir -p data assets/documents/generated archive \
   && chown -R node:node /app
 
 USER node

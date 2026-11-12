@@ -84,6 +84,18 @@ chaîne de connexion dans `.env.example`, le code ou la documentation.
 
 ### Démarrer
 
+**Sur le PC de Hiba : le raccourci « H-KIDS Cockpit » du Bureau.** Un
+double-clic récupère la dernière version sur GitHub, installe ce qui manque,
+démarre le cockpit et l'ouvre dans le navigateur. Fermer la fenêtre noire
+arrête le cockpit. Les raccourcis se créent une fois, après l'installation :
+
+```powershell
+npm.cmd run archive:shortcut
+```
+
+Ils sont deux : « H-KIDS Cockpit » et « H-KIDS Administratif » (les dossiers
+clients). À la main, sans raccourci :
+
 ```powershell
 npm.cmd start
 ```

@@ -7,6 +7,10 @@
 # CRLF breaks a shebang, so these keep LF everywhere.
 *.sh text eol=lf
 
+# cmd.exe misreads a batch file with bare LF (labels, if blocks): CRLF always.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
 # Never converted, never diffed. An end-of-line conversion inside a binary file
 # corrupts it silently, and nothing in a diff would say so.
 *.pdf binary

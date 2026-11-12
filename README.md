@@ -223,6 +223,46 @@ selon la pièce un bloc « Bon pour accord » ou « Réception de la livraison �
 **Aucun gabarit n'est à fournir.** Les fichiers générés vont dans
 `assets/documents/generated/`, ignoré par Git.
 
+### Dossiers clients et registre (l'Administratif)
+
+Chaque devis, bon de commande, bon de livraison et facture est aussi **classé
+en PDF dans le dossier de son client**, la date au début du nom :
+
+```
+Documents\H-KIDS Administratif\
+  BARADA\Devis\2026-11-10_devis_171.pdf
+  BENCHAKROUN\Factures\2026-09-05_facture_165.pdf
+  Registre des documents.csv        ← s'ouvre dans Excel
+```
+
+- Le classement se fait **à chaque document validé**, au démarrage et toutes
+  les demi-heures. Il **copie** sans rien déplacer et sans doublon : relancé, il
+  ne recopie que ce qui est nouveau. Les numéros restent ceux des documents.
+- **Importer l'existant** : déposez les anciens devis et factures dans
+  `assets/documents/generated/` (avec leur `.json` ou leur `.docx`), puis
+  cliquez « Classer maintenant » dans **Documents**. Le cockpit dit combien sont
+  classés, déjà en place, et quels PDF manquent.
+- **Retrouver un document** : le panneau « Registre des documents » (vue
+  Documents) cherche par client, numéro, type ou dates, avec un bouton
+  « Ouvrir le PDF ». Au Director : « Ressors-moi le devis de Mme Barada » — il
+  répond avec le document et son bouton ; s'il y en a plusieurs, il liste les
+  dates et les numéros pour que vous choisissiez. L'agent **Administratif** fait
+  la même recherche quand le Director lui confie une mission.
+- **Tableaux et Excel** : le Director répond en tableau quand on le lui
+  demande (« fais-moi un tableau des devis du mois »). « Exporte-le en Excel »
+  donne un fichier `.xlsx` avec un bouton « Télécharger » sous la réponse,
+  rangé aussi dans `H-KIDS Administratif\Exports`. Montants, dates et
+  pourcentages y sont de vrais nombres ; la ligne Total est une formule. Le
+  registre a aussi son bouton « Exporter en Excel ».
+- **Raccourci sur le Bureau** (une fois, sur le PC de Hiba) :
+
+  ```powershell
+  npm run archive:shortcut
+  ```
+
+  Le dossier est `Documents\H-KIDS Administratif` ; `HKIDS_ARCHIVE_DIR` dans
+  `.env` en choisit un autre (un dossier OneDrive ou partagé, par exemple).
+
 ---
 
 ## 1. Présentation

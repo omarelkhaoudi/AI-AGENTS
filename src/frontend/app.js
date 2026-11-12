@@ -67,6 +67,7 @@ const AGENT_ROSTER = Object.freeze([
   { id: "marketing", initials: "Ma", color: "#c2852b", role: "Campagnes, offres et positionnement." },
   { id: "community_manager", initials: "CM", color: "#d0688a", role: "Réseaux sociaux et contenus.", parent: "Marketing" },
   { id: "legal", initials: "Ju", color: "#4f5d75", role: "Contrats, clauses, risques et échéances juridiques." },
+  { id: "administration", initials: "Ad", color: "#6b6f2a", role: "Registre des documents et dossiers clients." },
   { id: "after_sales", initials: "SA", color: "#2f8a87", role: "Réclamations, garanties et qualité après livraison." }
 ]);
 
@@ -434,7 +435,7 @@ async function sendToAgent(message) {
     const response = await postJson("/api/agent/chat", { message: text, photos, files, conversationId: agentState.conversationId });
     agentState.conversationId = response.conversationId;
     pending.remove?.();
-    appendBubble("agent", formatAgentText(response.reply), response.documents ?? [], response.agentRuns ?? [], response.messages ?? [], { plan: response.plan, alerts: response.alerts });
+    appendBubble("agent", formatAgentText(response.reply), response.documents ?? [], response.agentRuns ?? [], response.messages ?? [], { plan: response.plan, alerts: response.alerts, found: response.foundDocuments ?? [], exports: response.exports ?? [] });
     uiState.textContent = "Réponse reçue.";
     if (response.plan) {
       refreshPlans();
@@ -467,7 +468,7 @@ async function sendToAgent(message) {
   }
 }
 
-function appendBubble(kind, html, documents = [], runs = [], messages = [], { plan = null, alerts = null, photos = [], files = [] } = {}) {
+function appendBubble(kind, html, documents = [], runs = [], messages = [], { plan = null, alerts = null, photos = [], files = [], found = [], exports = [] } = {}) {
   const bubble = document.createElement("div");
   bubble.className = `bubble ${kind}`;
   bubble.innerHTML = `
@@ -477,8 +478,10 @@ function appendBubble(kind, html, documents = [], runs = [], messages = [], { pl
       ${runs.length > 0 ? teamStrip(runs) : ""}
       ${photos.length > 0 ? `<div class="bubble-photos">${photos.map((url, index) => `<span><img src="${url}" alt="Photo jointe ${index + 1}"></span>`).join("")}</div>` : ""}
       ${files.length > 0 ? `<div class="bubble-files">${files.map((file) => `<span class="file-chip">${fileChip(file.name)}</span>`).join("")}</div>` : ""}
-      ${html ? `<div class="bubble-text">${html}</div>` : ""}
+      ${html ? `<div class="bubble-text answer-text">${html}</div>` : ""}
       ${documents.map((entry, index) => documentCard(entry, index)).join("")}
+      ${found.length > 0 ? foundCard(found) : ""}
+      ${exports.map((file, index) => exportCard(file, index)).join("")}
       ${Array.isArray(alerts) ? alertsCard(alerts) : ""}
       ${messages.map((draft) => messageCard(draft)).join("")}
     </div>
@@ -489,6 +492,12 @@ function appendBubble(kind, html, documents = [], runs = [], messages = [], { pl
   });
   bubble.querySelectorAll("[data-whatsapp-api]").forEach((button) => {
     button.addEventListener("click", () => sendDraftFromNumber(button));
+  });
+  bubble.querySelectorAll("[data-open-pdf]").forEach((button) => {
+    button.addEventListener("click", () => openRegisterPdf(button.dataset.openPdf));
+  });
+  bubble.querySelectorAll("[data-export]").forEach((button) => {
+    button.addEventListener("click", () => saveExport(exports[Number(button.dataset.export)]));
   });
   bubble.querySelectorAll("[data-validate]").forEach((button) => {
     const entry = documents[Number(button.dataset.validate)];
@@ -690,7 +699,7 @@ function renderPlans(plans) {
             <div>
               <strong>${escapeHtml(step.task)}</strong>
               <small>${escapeHtml(formatAgent(step.agent))}${step.dueDate ? ` · avant le <span class="${step.overdue ? "late" : ""}">${escapeHtml(formatIsoDay(step.dueDate))}</span>` : ""}</small>
-              ${step.result ? `<details><summary>Résultat</summary><p>${formatAgentText(step.result)}</p></details>` : ""}
+              ${step.result ? `<details><summary>Résultat</summary><div class="answer-text">${formatAgentText(step.result)}</div></details>` : ""}
             </div>
             <select data-step="${step.index}" aria-label="Statut de l'étape ${step.index}" ${plan.status !== "active" ? "disabled" : ""}>
               ${Object.entries(STEP_STATUS_LABELS).map(([value, label]) => `<option value="${value}" ${value === step.status ? "selected" : ""}>${label}</option>`).join("")}
@@ -1489,7 +1498,7 @@ function feedLine(entry) {
       <div class="min-w-0 flex-1">
         <small>${escapeHtml(formatAgent(entry.agent))} · ${escapeHtml(ACTIVITY_LABELS[entry.kind] ?? entry.kind)} · ${escapeHtml(formatStamp(entry.at))}</small>
         <p>${escapeHtml(entry.text)}</p>
-        ${entry.detail ? `<details><summary>Réponse</summary><div>${formatAgentText(entry.detail)}</div></details>` : ""}
+        ${entry.detail ? `<details><summary>Réponse</summary><div class="answer-text">${formatAgentText(entry.detail)}</div></details>` : ""}
       </div>
     </li>
   `;
@@ -1958,6 +1967,176 @@ async function decideCncFile(number, id, decision, reason) {
   await refreshOrders();
 }
 
+// A document of the register: one row, with its PDF to open.
+function registerRow(entry) {
+  return `
+    <li class="register-row">
+      <span class="register-date">${escapeHtml(entry.date || entry.frenchDate || "")}</span>
+      <span class="register-what"><b>${escapeHtml(entry.typeLabel)} n° ${escapeHtml(entry.number)}</b> · ${escapeHtml(entry.client || "client non précisé")}${entry.object ? `<small>${escapeHtml(entry.object)}</small>` : ""}</span>
+      <span class="register-amount">${entry.totalTtc === null || entry.totalTtc === undefined ? "" : escapeHtml(formatDh(entry.totalTtc))}</span>
+      <span class="tag ${entry.status === "commandé" ? "ok" : ""}">${escapeHtml(entry.status)}</span>
+      <button type="button" class="secondary" data-open-pdf="${escapeHtml(entry.stem)}">${icon("file")}Ouvrir le PDF</button>
+    </li>
+  `;
+}
+
+// What the Director found in the register, under its answer.
+function foundCard(found) {
+  return `
+    <article class="doc-card register-card">
+      <header>
+        <span class="doc-icon">${icon("file")}</span>
+        <div><strong>${found.length === 1 ? "Document trouvé" : `${found.length} documents trouvés`}</strong><span>Registre des documents</span></div>
+      </header>
+      <ul class="register-list">${found.map((entry) => registerRow(entry)).join("")}</ul>
+    </article>
+  `;
+}
+
+// An Excel file the Director made: it came with the answer, saved on a click.
+function exportCard(file, index) {
+  return `
+    <article class="doc-card register-card">
+      <header>
+        <span class="doc-icon">${icon("file")}</span>
+        <div><strong>${escapeHtml(file.title)}</strong><span>Fichier Excel · ${escapeHtml(String(file.rows))} ligne${file.rows > 1 ? "s" : ""}${file.file ? ` · aussi rangé dans ${escapeHtml(file.file)}` : ""}</span></div>
+        <button type="button" class="primary" data-export="${index}">${icon("arrow")}Télécharger</button>
+      </header>
+    </article>
+  `;
+}
+
+function saveBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+function saveExport(file) {
+  if (!file) {
+    return;
+  }
+  const bytes = Uint8Array.from(atob(file.data), (char) => char.charCodeAt(0));
+  saveBlob(new Blob([bytes], { type: file.mimeType }), file.name);
+}
+
+// The register as searched, in Excel.
+async function exportRegister(button) {
+  button.disabled = true;
+  try {
+    const response = await fetch(`/api/documents/register.xlsx?${registerQuery()}`, { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("L'export Excel a échoué.");
+    }
+    const name = /filename="([^"]+)"/.exec(response.headers.get("content-disposition") ?? "")?.[1] ?? "registre-des-documents.xlsx";
+    saveBlob(await response.blob(), name);
+  } catch (error) {
+    showToast(error.message, "warn");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// The PDF needs the session token: fetched, then shown in a new tab. The tab
+// is opened at the click, before the fetch, so it is not blocked as a popup.
+async function openRegisterPdf(stem) {
+  const tab = window.open("", "_blank");
+  try {
+    const response = await fetch(`/api/documents/register/${encodeURIComponent(stem)}/pdf`, { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error((await response.json().catch(() => ({}))).error ?? "PDF introuvable.");
+    }
+    const url = URL.createObjectURL(await response.blob());
+    if (tab) {
+      tab.location.href = url;
+    } else {
+      window.location.assign(url);
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000);
+  } catch (error) {
+    tab?.close();
+    showToast(error.message, "warn");
+  }
+}
+
+// What the register form asks: by client, number, type or dates. Read field
+// by field: a page without FormData (the tests' stand-in) still loads.
+function registerQuery() {
+  const form = document.querySelector("#register-form");
+  const field = (name) => String(form?.querySelector?.(`[name="${name}"]`)?.value ?? "").trim();
+  const query = new URLSearchParams();
+  const words = field("q");
+  if (/^\d+$/.test(words)) {
+    query.set("number", words);
+  } else if (words) {
+    query.set("client", words);
+  }
+  for (const key of ["type", "from", "to"]) {
+    if (field(key)) {
+      query.set(key, field(key));
+    }
+  }
+  return query;
+}
+
+// The register in the Documents view: searched by client, number or date.
+async function refreshRegister() {
+  const form = document.querySelector("#register-form");
+  const list = document.querySelector("#register-list");
+  if (!form || !list) {
+    return;
+  }
+  const query = registerQuery();
+  try {
+    const response = await fetch(`/api/documents/register?${query}`, { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("Impossible de lire le registre.");
+    }
+    const register = await response.json();
+    document.querySelector("#register-dir").textContent = register.dir ? `Dossiers clients : ${register.dir}` : "Classement sur le PC non activé.";
+    list.innerHTML = register.documents.length > 0
+      ? register.documents.map((entry) => registerRow({ ...entry, date: entry.frenchDate })).join("")
+      : `<li class="muted">Aucun document ne correspond.</li>`;
+    list.querySelectorAll("[data-open-pdf]").forEach((button) => {
+      button.addEventListener("click", () => openRegisterPdf(button.dataset.openPdf));
+    });
+  } catch (error) {
+    list.innerHTML = `<li class="muted">${escapeHtml(error.message)}</li>`;
+  }
+}
+
+// Files every document now, and says what was copied, already there or missing.
+async function syncRegister(button) {
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/documents/register/sync", { method: "POST", headers: { ...(await authHeaders()), "content-type": "application/json" }, body: "{}" });
+    if (!response.ok) {
+      throw new Error("Le classement a échoué.");
+    }
+    const report = await response.json();
+    const missing = report.missing.length > 0 ? ` · PDF manquant : ${report.missing.map((entry) => `${entry.type} ${entry.number}`).join(", ")}` : "";
+    showToast(report.disabled ? "Classement sur le PC non activé." : `${report.copied.length} classé(s), ${report.already} déjà en place${missing}.`, report.missing.length > 0 ? "warn" : "ok");
+    await refreshRegister();
+  } catch (error) {
+    showToast(error.message, "warn");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+document.querySelector("#register-form")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  refreshRegister();
+});
+document.querySelector("#register-form")?.addEventListener("change", () => refreshRegister());
+document.querySelector("#register-sync")?.addEventListener("click", (event) => syncRegister(event.currentTarget));
+document.querySelector("#register-export")?.addEventListener("click", (event) => exportRegister(event.currentTarget));
+
 // The file needs the session token, so it is fetched, then saved from memory.
 async function downloadCncFile(number, id, name) {
   try {
@@ -2241,18 +2420,79 @@ function teamStrip(runs) {
             ${avatar(run.agent)}
             <span><strong>${escapeHtml(formatAgent(run.agent))}</strong><small>${escapeHtml(run.tools.length > 0 ? `a lu : ${run.tools.join(", ")}` : "a répondu")}</small></span>
           </summary>
-          <div class="team-answer">${formatAgentText(run.answer)}</div>
+          <div class="team-answer answer-text">${formatAgentText(run.answer)}</div>
         </details>
       `).join("")}
     </div>
   `;
 }
 
-// The model may answer with **bold** and line breaks; nothing else is rendered.
+// The model writes Markdown: **bold**, titles, lists and tables (Hiba asks
+// for « un tableau des devis du mois »). Everything is escaped first, then only
+// these few forms become HTML; anything else stays text.
 function formatAgentText(reply) {
-  return escapeHtml(reply)
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\n/g, "<br>");
+  const inline = (text) => escapeHtml(text).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  const cells = (line) => line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+  const isRow = (line) => /^\s*\|.*\|\s*$/.test(line ?? "");
+  const isRule = (line) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line ?? "");
+  // A figure (« 3 200,00 DH », « 60 % », « -12 ») is right-aligned, to compare.
+  const numeric = (cell) => /^[-+]?[\d\s.,]+(\s?(DH|MAD|%|€))?$/i.test(cell.replace(/\*\*/g, "")) && /\d/.test(cell);
+  const lines = String(reply ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const blocks = [];
+  let text = [];
+  const flush = () => {
+    if (text.length > 0) {
+      blocks.push(`<p>${text.map(inline).join("<br>")}</p>`);
+      text = [];
+    }
+  };
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (isRow(line) && isRule(lines[index + 1])) {
+      flush();
+      const head = cells(line);
+      const rows = [];
+      index += 2;
+      while (index < lines.length && isRow(lines[index])) {
+        rows.push(cells(lines[index]));
+        index += 1;
+      }
+      index -= 1;
+      const cell = (tag, value) => `<${tag}${numeric(value) ? ` class="num"` : ""}>${inline(value)}</${tag}>`;
+      blocks.push(`<div class="answer-table"><table><thead><tr>${head.map((value) => cell("th", value)).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${head.map((_, column) => cell("td", row[column] ?? "")).join("")}</tr>`).join("")}</tbody></table></div>`);
+      continue;
+    }
+    const title = /^\s*#{1,4}\s+(.+)$/.exec(line);
+    if (title) {
+      flush();
+      blocks.push(`<h4>${inline(title[1].replace(/\*\*/g, ""))}</h4>`);
+      continue;
+    }
+    const item = /^\s*(?:[-*•]|(\d+)[.)])\s+(.+)$/.exec(line);
+    if (item) {
+      flush();
+      const ordered = Boolean(item[1]);
+      const entries = [];
+      while (index < lines.length) {
+        const next = /^\s*(?:[-*•]|(\d+)[.)])\s+(.+)$/.exec(lines[index]);
+        if (!next || Boolean(next[1]) !== ordered) {
+          break;
+        }
+        entries.push(`<li>${inline(next[2])}</li>`);
+        index += 1;
+      }
+      index -= 1;
+      blocks.push(ordered ? `<ol>${entries.join("")}</ol>` : `<ul>${entries.join("")}</ul>`);
+      continue;
+    }
+    if (line.trim() === "" || /^\s*-{3,}\s*$/.test(line)) {
+      flush();
+      continue;
+    }
+    text.push(line);
+  }
+  flush();
+  return blocks.join("");
 }
 
 function documentCard(entry, index) {
@@ -2771,7 +3011,8 @@ function formatAgent(agentId) {
     marketing: "Marketing",
     community_manager: "Community Manager",
     hr: "RH",
-    legal: "Juridique"
+    legal: "Juridique",
+    administration: "Administratif"
   };
   return names[agentId] ?? agentId ?? "Agent";
 }
@@ -3359,6 +3600,9 @@ function showView(name) {
   if (view === "team") {
     refreshTeam();
   }
+  if (view === "documents") {
+    refreshRegister();
+  }
   document.querySelector("#director-title").textContent = COCKPIT_VIEWS[view];
   document.querySelectorAll("[data-view-panel]").forEach((panel) => {
     panel.hidden = panel.dataset.viewPanel !== view;
@@ -3652,6 +3896,7 @@ async function loadPanels() {
   refreshCash();
   refreshImprovement();
   refreshWhatsApp();
+  refreshRegister();
   renderHistory();
   await refreshApprovals();
 }

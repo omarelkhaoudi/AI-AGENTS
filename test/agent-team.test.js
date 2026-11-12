@@ -40,12 +40,14 @@ test("every specialised agent is offered exactly the read tools its role is gran
   const registry = createMvpToolRegistry({});
   const ids = (agent) => readToolsFor(agent, registry).map((tool) => tool.id).sort();
 
-  assert.deepEqual(SPECIALIST_IDS, ["commercial", "finance", "production", "purchasing", "hr", "marketing", "community_manager", "after_sales", "legal"]);
+  assert.deepEqual(SPECIALIST_IDS, ["commercial", "finance", "production", "purchasing", "hr", "marketing", "community_manager", "after_sales", "administration", "legal"]);
   assert.ok(ids("finance").includes("get_pending_payments"));
   assert.ok(!ids("finance").includes("execute_invoice_payment"), "a payment is never a research step");
   assert.ok(!ids("commercial").includes("get_pending_payments"), "finance data stays with finance");
   assert.ok(ids("purchasing").includes("get_material_requirements"));
-  for (const agent of SPECIALIST_IDS) {
+  // The Administratif reads the register of documents, not these tools.
+  assert.deepEqual(ids("administration"), []);
+  for (const agent of SPECIALIST_IDS.filter((id) => id !== "administration")) {
     assert.ok(ids(agent).length > 0, agent);
   }
 });

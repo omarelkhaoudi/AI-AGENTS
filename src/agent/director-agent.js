@@ -40,6 +40,10 @@ import {
   salesReportFor,
   salesTools
 } from "./company-tools.js";
+import { createDocumentArchive, frenchDate, searchDocuments } from "./document-register.js";
+import { renderXlsx, xlsxFileName } from "../documents/xlsx-writer.js";
+import { mkdir as makeDirectory, writeFile as writeFileTo } from "node:fs/promises";
+import { join as joinPath } from "node:path";
 
 // The Director as a conversational agent, and as a director: it carries the
 // strategy, not the execution. Hiba gives it an objective — "je veux 100 000 DH
@@ -57,6 +61,16 @@ import {
 export const DEFAULT_AGENT_MODEL = "gpt-5";
 const MAX_TOOL_ROUNDS = 6;
 const MAX_CONVERSATION_ITEMS = 60;
+
+// The last items of a conversation, cut where the direction spoke. Cut
+// anywhere else, a tool call can be kept without the reasoning that led to it,
+// and OpenAI refuses the whole conversation (400) at every message after.
+// Conversations saved before this rule are mended when read.
+export function recentTurns(items) {
+  const kept = items.slice(-MAX_CONVERSATION_ITEMS);
+  const start = kept.findIndex((item) => item?.role === "user");
+  return start === -1 ? [] : kept.slice(start);
+}
 const MAX_PHOTOS_PER_MESSAGE = 4;
 const TVA_RATE = 0.2;
 
@@ -252,6 +266,44 @@ const CONSULT_DOCUMENT_TOOL = Object.freeze({
     }
 });
 
+// The register the Administratif keeps: every document issued, found by its
+// client's name, its number, its type or its dates.
+export const SEARCH_DOCUMENT_TOOL = Object.freeze({
+    type: "function",
+    name: "chercher_document",
+    description: "Cherche dans le registre des documents H-KIDS (devis, bons de commande, bons de livraison, factures) par nom de client, numéro, type ou période, et renvoie chaque document trouvé avec sa date, son numéro, son client, son montant TTC, son statut et son PDF classé dans le dossier du client. À appeler pour « ressors-moi le devis de Mme Barada », « la facture 165 », « les devis de novembre ». Chaque document trouvé s'affiche à la direction avec un bouton pour ouvrir son PDF.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        client: { type: "string", description: "Le nom du client, même partiel, sans civilité (« Barada »), ou vide." },
+        numero: { type: "string", description: "Le numéro du document, ou vide." },
+        type: { type: "string", enum: ["", ...Object.keys(DOCUMENT_TYPES)], description: "Le type du document, ou vide pour tous." },
+        du: { type: "string", description: "Date de début JJ/MM/AAAA, ou vide." },
+        au: { type: "string", description: "Date de fin JJ/MM/AAAA, ou vide." }
+      },
+      required: ["client", "numero", "type", "du", "au"]
+    }
+});
+
+// A table handed to the direction as an Excel file, with a button to save it.
+export const EXCEL_TOOL = Object.freeze({
+    type: "function",
+    name: "exporter_excel",
+    description: "Crée un fichier Excel (.xlsx) à partir d'un tableau et l'affiche à la direction avec un bouton « Télécharger ». À appeler quand la direction demande un fichier Excel, un export, ou « mets-le dans Excel ». Les lignes viennent des données lues par tes outils (chercher_document, bilan_commercial, caisse, carnet_atelier…), jamais inventées. Montants « 3 200,00 DH », dates JJ/MM/AAAA, pourcentages « 60 % » : le fichier les reçoit comme de vrais nombres et de vraies dates.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        titre: { type: "string", description: "Le titre du tableau, par exemple « Devis de novembre 2026 »." },
+        colonnes: { type: "array", items: { type: "string" }, description: "Les en-têtes des colonnes." },
+        lignes: { type: "array", items: { type: "array", items: { type: "string" } }, description: "Une liste par ligne, une valeur par colonne, dans l'ordre des colonnes. Pas de ligne Total : elle est ajoutée par le fichier." },
+        total: { type: "boolean", description: "true pour ajouter une ligne Total (somme des colonnes de montants)." }
+      },
+      required: ["titre", "colonnes", "lignes", "total"]
+    }
+});
+
 const FOLLOW_DOSSIER_TOOL = Object.freeze({
     type: "function",
     name: "suivre_dossier",
@@ -397,6 +449,8 @@ const TOOLS = Object.freeze([
   ADJUST_PLAN_TOOL,
   COHERENCE_TOOL,
   FOLLOW_DOSSIER_TOOL,
+  SEARCH_DOCUMENT_TOOL,
+  EXCEL_TOOL,
   WORKSHOP_BOOK_TOOL,
   ADVANCE_ORDER_TOOL,
   CLIENT_LINK_TOOL,
@@ -446,6 +500,10 @@ function instructions(today, briefing = []) {
     "",
     "Correction d'un document déjà généré (« refais le devis 170 », « corrige le BC 165, la date est fausse », « enlève la ligne des chevets du devis 170 ») : confie-la tout de suite au responsable du document (devis, bon de commande, bon de livraison → commercial ; facture → finance) avec son type, son numéro et TOUTES les corrections demandées, en écrivant « correction du document existant n° X, même numéro ». Ne demande pas le contenu du document : le responsable le relit lui-même. Annonce ensuite ce qui a changé et que l'ancienne version sera archivée quand la direction validera.",
     "",
+    "Retrouver un document (« ressors-moi le devis de Mme Barada », « la facture de M. Alami », « les devis de novembre ») → chercher_document toi-même. Un seul document : donne sa date, son numéro, son montant, et dis que son PDF s'ouvre avec le bouton sous ta réponse et qu'il est aussi dans le dossier du client (chemin « dossier »). Plusieurs : liste-les (date, numéro, objet, montant) et demande lequel ; tous ont leur bouton. Aucun : dis-le, avec ce que tu as cherché. Ne dis jamais que tu n'as pas accès aux documents ou aux fichiers : le registre est le tien, l'Administratif le tient à jour.",
+    "",
+    "Excel (« exporte-moi les devis du mois en Excel », « fais-moi un fichier Excel de la caisse ») : lis d'abord les données avec tes outils, puis exporter_excel avec ces lignes telles quelles. Le fichier s'affiche sous ta réponse avec un bouton « Télécharger » : dis-le, avec le nombre de lignes et le dossier où il est aussi rangé s'il est donné. Ne dis jamais que tu ne peux pas faire de fichier Excel.",
+    "",
     "Chaîne d'une vente : devis → bon de commande (le client accepte) → bon de livraison → factures (acompte, solde). Chaque document cite le devis : écris toujours son numéro dans la mission. « Le client a accepté le devis 170 », « fais le BC du devis 170 » → commercial : « bon de commande à partir du devis n° 170 », avec les conditions et l'acompte s'ils sont donnés ; il reprend le devis lui-même, rien n'est à ressaisir. « Facture l'acompte du devis 170 », « facture le solde » → finance avec le numéro du devis. « Où en est le devis 170 », « qu'est-ce qui reste à facturer » → suivre_dossier toi-même, puis réponds avec l'étape, le déjà facturé, le reste à facturer et les anomalies. Une facture refusée parce qu'elle facturerait la vente deux fois ne se contourne pas : dis-le à la direction avec les factures déjà faites.",
     "",
     `Atelier, après le bon de commande : chaque bon de commande validé suit ${WORKSHOP_STEPS.length} étapes (${WORKSHOP_STEPS.map((step) => step.label).join(", ")}). « Le BC 166 est en découpe », « l'assemblage du 166 est fini », « la peinture est bloquée, il manque la laque », « Youssef s'occupe de l'étude, prévue pour le 12/11 » → c'est un fait que la direction t'annonce : avancer_commande toi-même, un appel par étape (une étape commencée = en_cours ; les étapes d'avant qu'elle dit finies = terminee), puis confirme en une ligne avec l'avancement. « Où en est la commande de Mme X / le BC 166 », « quelles commandes sont en retard » → carnet_atelier, puis l'étape en cours, l'avancement (calculé sur les étapes terminées, jamais estimé), les dates prévues et les alertes. Planning, priorités ou charge de l'atelier → production. Suite de la chaîne, tout de suite après l'avoir enregistrée : contrôle qualité terminé → commercial : préparer le message au client pour convenir de la date de livraison et d'installation ; livraison et installation terminée → finance : facture du solde du devis (si le dossier n'est pas soldé). Pour tout point de situation ou toute question d'urgences, regarde aussi carnet_atelier et signale les commandes bloquées ou en retard.`,
@@ -475,13 +533,14 @@ function instructions(today, briefing = []) {
     "- N'écris jamais qu'une chose « est lancée », « est faite » ou « a eu lieu » si ni la direction ni une donnée ne l'a confirmé : c'est « prêt à lancer » ou « proposé ».",
     "- Donne une échéance réaliste aux étapes qui ne se font pas tout de suite. Marque toi-même tes étapes « director » avec ajuster_plan quand elles sont faites.",
     "- Signale toujours les incohérences renvoyées par verifier_coherence, avec les responsables concernés et l'action proposée ; ne les invente jamais.",
-    "- Tes responsables : Commercial (Directeur commercial), Finance, Production, Achats, Marketing, Community Manager (sous le Marketing), et aussi RH, SAV, Juridique.",
+    "- Tes responsables : Commercial (Directeur commercial), Finance, Production, Achats, Marketing, Community Manager (sous le Marketing), et aussi RH, SAV, Juridique, Administratif (registre et dossiers clients).",
     "- Pour le point complet de l'entreprise (« fais-moi le point »), après le plan, appelle point_entreprise puis résume l'essentiel en 5 lignes maximum, les urgences d'abord.",
     "- Pour une simple salutation ou une question générale, réponds directement sans outil.",
     "- Les messages aux clients ou fournisseurs sont rédigés par les responsables et s'affichent avec un bouton « Envoyer via WhatsApp » : c'est Hiba qui les envoie. Ne recopie pas leur texte : dis pour qui ils sont prêts.",
     "- N'annonce jamais « je lance », « j'appelle », « j'envoie » ou « je commande », et ne propose jamais de le faire. Ce qui reste à faire est une décision pour la direction ou une action d'un responsable.",
     "- Vouvoie toujours la direction. H KIDS est au Maroc : dirhams, droit et organismes marocains uniquement.",
     "- Réponse : d'abord l'essentiel en quelques lignes (chiffres, noms, décisions), ensuite le détail par responsable, chacun sous un titre court.",
+    "- Tableaux : quand la direction demande un tableau, une liste à comparer ou un récapitulatif (devis, factures, commandes, caisse, échéances), réponds avec un tableau Markdown : une ligne d'en-tête | Colonne | Colonne |, puis | --- | --- |, puis une ligne par élément ; montants en DH, dates JJ/MM/AAAA, et une ligne Total quand des montants s'additionnent. Le cockpit l'affiche comme un vrai tableau. Ne dis jamais que tu ne peux pas faire de tableau.",
     "",
     `Informations société : ${HKIDS_FIXED_IDENTITY.companyName}, ${HKIDS_FIXED_IDENTITY.addressLines.join(" ").replace(/^Adresse : /, "")}, tél. ${HKIDS_FIXED_IDENTITY.phone}, ${HKIDS_FIXED_IDENTITY.email}. TVA 20 %.`,
     ...(briefing.length > 0 ? ["", ...briefing] : [])
@@ -497,12 +556,12 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, documentArchive = undefined, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
   const loadCatalogue = createCatalogueLoader(cataloguePath ? { path: cataloguePath } : {});
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, autoAnalyse, publicBaseUrl, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, documentArchive, autoAnalyse, publicBaseUrl, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -523,6 +582,9 @@ export function createDirectorAgent({
   improvementBook = null,
   teamBook = null,
   followUpBook = null,
+  // The register of the documents issued; read only from documentService
+  // when not given.
+  documentArchive = null,
   // A new anomaly found in the workshop book is handed to its agent at once,
   // in the background, for its cause and a rule. Off unless the server asks.
   autoAnalyse = false,
@@ -543,6 +605,7 @@ export function createDirectorAgent({
   const baseContext = (outcome, userId = null, confidential = true) => ({
     confidential,
     documentService,
+    archive: documentArchive ?? createDocumentArchive({ documentService }),
     runDirectorRequest,
     loadCatalogue,
     clock,
@@ -556,7 +619,7 @@ export function createDirectorAgent({
     books,
     onNewAnomalies: (found) => queueAnalyses(found)
   });
-  const freshOutcome = (photos = []) => ({ documents: [], directorResponse: null, agentRuns: [], messages: [], plan: null, planId: null, alerts: null, photos });
+  const freshOutcome = (photos = []) => ({ documents: [], found: [], exports: [], directorResponse: null, agentRuns: [], messages: [], plan: null, planId: null, alerts: null, photos });
 
   // One analysis at a time, in the background; a failure is written to the
   // team feed and never reaches whoever read the book.
@@ -636,7 +699,7 @@ export function createDirectorAgent({
       }
       resolvedClient ??= await clientFactory({ apiKey });
 
-      const items = previous?.items ?? [];
+      const items = recentTurns(previous?.items ?? []);
       // Photos are numbered across the conversation, so "la photo n° 2" keeps
       // meaning the same picture from one message to the next.
       const conversationPhotos = [...(previous?.photos ?? []), ...newPhotos];
@@ -691,7 +754,7 @@ export function createDirectorAgent({
       await conversationStore.save(id, {
         userId: userId ?? null,
         updatedAt: clock().toISOString(),
-        items: items.slice(-MAX_CONVERSATION_ITEMS),
+        items: recentTurns(items),
         photos: conversationPhotos,
         fileCount: (previous?.fileCount ?? 0) + newFiles.length
       });
@@ -702,6 +765,10 @@ export function createDirectorAgent({
         directorResponse: outcome.directorResponse,
         agentRuns: Object.freeze(outcome.agentRuns),
         messages: Object.freeze(outcome.messages),
+        // The documents found in the register, each with its PDF to open.
+        foundDocuments: Object.freeze(outcome.found),
+        // The Excel files made in this turn, to download from the answer.
+        exports: Object.freeze(outcome.exports),
         plan: outcome.planId ? await withObjectiveMeasure(await planStore.get(outcome.planId), { loadObjectiveRecords, clock }) : null,
         alerts: outcome.alerts
       });
@@ -771,7 +838,14 @@ async function callModel(client, payload) {
         ? "Le compte OpenAI n'a plus de crédit ou est limité pour le moment."
         : unreachable
           ? "Impossible de joindre OpenAI : la connexion internet semble coupée. Vérifiez le Wi-Fi ou la box, puis réessayez."
-          : "Le service OpenAI n'a pas répondu. Réessayez dans un instant.";
+          : status === 400
+            ? "OpenAI a refusé cette conversation. Ouvrez une nouvelle conversation et reposez la question."
+            : "Le service OpenAI n'a pas répondu. Réessayez dans un instant.";
+    // What OpenAI said, in the server's terminal: never the key, only the
+    // status and its message, so the next refusal is not a guess.
+    if (!unreachable && status !== 401 && status !== 429) {
+      console.error(`[Director IA] OpenAI ${status ?? "sans statut"} : ${String(cause?.message ?? cause).slice(0, 300)}`);
+    }
     throw new DirectorAgentError(message, "AGENT_MODEL_UNAVAILABLE", { status, unreachable });
   }
 }
@@ -813,6 +887,12 @@ async function runTool(call, context) {
     }
     if (call.name === FOLLOW_DOSSIER_TOOL.name) {
       return await followDossier(args, context);
+    }
+    if (call.name === SEARCH_DOCUMENT_TOOL.name) {
+      return await searchDocument(args, context);
+    }
+    if (call.name === EXCEL_TOOL.name) {
+      return await exportExcel(args, context);
     }
     if (call.name === WORKSHOP_BOOK_TOOL.name) {
       return await readWorkshopBook(args, context);
@@ -977,6 +1057,67 @@ async function prepareDocument(args, { documentService, clock, outcome, books },
 
 // Where a sale stands, from any one of its documents, in the words the agents
 // and the direction use.
+const MAX_FOUND = 12;
+const MAX_EXPORT_ROWS = 2000;
+const MAX_EXPORT_COLUMNS = 30;
+
+// The file goes with the answer (a button saves it) and, when the PC files the
+// documents, into « Exports » beside the client folders, to find it again.
+export async function exportExcel(args, { archive, outcome, clock = () => new Date() }) {
+  const columns = (Array.isArray(args.colonnes) ? args.colonnes : []).map((name) => text(name)).slice(0, MAX_EXPORT_COLUMNS);
+  const rows = (Array.isArray(args.lignes) ? args.lignes : []).slice(0, MAX_EXPORT_ROWS).map((row) => (Array.isArray(row) ? row.map((cell) => String(cell ?? "")) : []));
+  if (columns.length === 0) {
+    return { ok: false, erreur: "Donner au moins une colonne." };
+  }
+  const title = text(args.titre) || "Tableau H-KIDS";
+  const bytes = await renderXlsx({ title, columns, rows, total: args.total === true, sheetName: title });
+  const name = xlsxFileName(title, clock());
+  let saved = null;
+  if (archive?.dir) {
+    const folder = joinPath(archive.dir, "Exports");
+    await makeDirectory(folder, { recursive: true });
+    saved = joinPath(folder, name);
+    await writeFileTo(saved, bytes);
+  }
+  outcome?.exports.push(Object.freeze({ name, title, rows: rows.length, mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data: bytes.toString("base64"), file: saved }));
+  return { ok: true, fichier: name, lignes: rows.length, colonnes: columns.length, ...(saved ? { dossier: saved } : {}), note: "Le bouton « Télécharger » est sous ta réponse." };
+}
+
+// The register searched; what is found is also shown under the answer, with a
+// button to open each PDF, so the direction never has to look for it.
+export async function searchDocument(args, { archive, outcome }) {
+  const query = { client: text(args.client), number: text(args.numero), type: text(args.type), from: text(args.du), to: text(args.au) };
+  if (!Object.values(query).some(Boolean)) {
+    return { ok: false, erreur: "Donner au moins un nom de client, un numéro, un type ou une date." };
+  }
+  const found = searchDocuments(await archive.entries(), query);
+  if (found.length === 0) {
+    return { ok: true, trouves: 0, documents: [], note: "Aucun document du registre ne correspond." };
+  }
+  const shown = found.slice(0, MAX_FOUND);
+  for (const entry of shown) {
+    if (outcome && !outcome.found.some((other) => other.stem === entry.stem)) {
+      outcome.found.push(Object.freeze({ stem: entry.stem, type: entry.type, typeLabel: entry.typeLabel, number: entry.number, date: frenchDate(entry.date), client: entry.client, object: entry.object, totalTtc: entry.totalTtc, status: entry.status, file: entry.file }));
+    }
+  }
+  return {
+    ok: true,
+    trouves: found.length,
+    ...(found.length > MAX_FOUND ? { note: `Seuls les ${MAX_FOUND} plus récents sont montrés : préciser le type ou la période.` } : {}),
+    ...(found.length > 1 ? { a_faire: "Plusieurs documents : liste-les avec leur date et leur numéro et demande à la direction lequel elle veut." } : {}),
+    documents: shown.map((entry) => ({
+      type: entry.typeLabel,
+      numero: entry.number,
+      date: frenchDate(entry.date),
+      client: entry.client,
+      objet: entry.object,
+      montant_ttc: entry.totalTtc,
+      statut: entry.status,
+      dossier: entry.file ?? "classement non activé sur ce poste"
+    }))
+  };
+}
+
 async function followDossier(args, { documentService }) {
   const documentType = DOCUMENT_TYPES[args.type];
   const number = text(args.numero);
@@ -1257,6 +1398,7 @@ async function runAgent(agentId, mission, context) {
     mission,
     extraTools: [
       ...(books ? [...(agentId === "finance" ? cashTools(context, agentId) : []), ...(agentId === "commercial" ? salesTools(context, agentId) : []), ...improvementTools(context, agentId)] : []),
+      ...(SPECIALISTS[agentId].keepsRegister ? [{ tool: SEARCH_DOCUMENT_TOOL, run: (searchArgs) => searchDocument(searchArgs, context) }] : []),
       ...(SPECIALISTS[agentId].workshop === "write" ? [{ tool: ORDER_TEAM_TOOL, run: (teamArgs, by) => setOrderTeam(teamArgs, context, by) }] : [])
     ],
     briefing: books ? await agentBriefing(agentId, context) : [],

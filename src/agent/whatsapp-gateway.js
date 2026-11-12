@@ -159,7 +159,7 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
         userId: `whatsapp:${message.from}`
       });
       await inbox.setConversation(message.from, outcome.conversationId);
-      answer = [outcome.reply, ...waiting(outcome)].join("\n\n");
+      answer = [forWhatsApp(outcome.reply), ...waiting(outcome)].join("\n\n");
     } catch (error) {
       log(error);
       answer = TOLD_AS_IS.includes(error.code)
@@ -476,6 +476,17 @@ function waiting(outcome) {
 // « BC 171 », « bon de commande n° 171 », « BC171_panneaux.nc ».
 function orderNumberIn(text) {
   return /(?<![a-z])(?:bc|bon de commande|commande)[\s_-]*(?:n\s*[°o.]?\s*)?(\d{2,6})(?!\d)/i.exec(String(text ?? ""))?.[1] ?? null;
+}
+
+// WhatsApp shows no table: each row of a Markdown table becomes a line of its
+// own, its cells joined by dashes, and **bold** becomes WhatsApp's *bold*.
+export function forWhatsApp(text) {
+  return String(text ?? "")
+    .split("\n")
+    .filter((line) => !/^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line))
+    .map((line) => (/^\s*\|.*\|\s*$/.test(line) ? `• ${line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim()).filter(Boolean).join(" — ")}` : line))
+    .join("\n")
+    .replace(/\*\*(.+?)\*\*/g, "*$1*");
 }
 
 function isoDate(date) {

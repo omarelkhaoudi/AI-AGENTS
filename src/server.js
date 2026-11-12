@@ -13,6 +13,7 @@ import { createFileFollowUpBook } from "./agent/sales-book.js";
 import { createFileTeamBook } from "./agent/team-book.js";
 import { SPECIALIST_IDS } from "./agent/agent-team.js";
 import { createFileWhatsAppInbox } from "./agent/whatsapp-inbox.js";
+import { DEFAULT_ARCHIVE_DIR } from "./agent/document-register.js";
 
 // The first statement, because everything below reads process.env: the port, the
 // configuration, the repository factory and the workflow client. Without this the
@@ -68,7 +69,11 @@ const autoAnalyseAnomalies = process.env.HKIDS_AUTO_ANALYSIS !== "off";
 // The number itself is configured by the WHATSAPP_* keys of .env.
 const whatsAppStore = createFileWhatsAppInbox();
 
-const app = buildApi({ repository, companyId: process.env.HKIDS_COMPANY_ID?.trim() || "hkids", config, toolRegistry, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, autoAnalyseAnomalies, whatsAppStore });
+// The Administratif files each devis, bon and facture in a folder per client:
+// DocumentsH-KIDS Administratif unless HKIDS_ARCHIVE_DIR says where.
+const archiveDir = process.env.HKIDS_ARCHIVE_DIR?.trim() || DEFAULT_ARCHIVE_DIR;
+
+const app = buildApi({ repository, companyId: process.env.HKIDS_COMPANY_ID?.trim() || "hkids", config, toolRegistry, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, autoAnalyseAnomalies, whatsAppStore, archiveDir });
 
 // Every half hour, the workshop book is read for steps that became late, and
 // the quotes for follow-ups that became due.
@@ -76,6 +81,7 @@ const sweep = setInterval(() => {
   app.sweepAnomalies().catch((error) => app.log.error(error));
   app.sweepFollowUps().catch((error) => app.log.error(error));
   app.sweepTasks().catch((error) => app.log.error(error));
+  app.syncArchive();
 }, 30 * 60 * 1000);
 sweep.unref();
 
@@ -89,6 +95,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 
 try {
   await app.listen({ port, host });
+  app.syncArchive();
 } catch (error) {
   app.log.error(error);
   process.exit(1);

@@ -204,3 +204,25 @@ test("a lost internet connection is reported as such", async (t) => {
   const other = await inject({ method: "POST", url: "/api/agent/chat", payload: { message: "bonjour" } });
   assert.match(JSON.parse(other.body).error, /n'a pas répondu/, "any other failure keeps its own message");
 });
+
+test("a long conversation is cut where the direction spoke, never between a reasoning and its tool call", async () => {
+  const { recentTurns } = await import("../src/agent/director-agent.js");
+  const turn = (n) => [
+    { role: "user", content: `question ${n}` },
+    { type: "reasoning", id: `rs_${n}`, summary: [] },
+    { type: "function_call", id: `fc_${n}`, call_id: `c${n}`, name: "point_entreprise", arguments: "{}" },
+    { type: "function_call_output", call_id: `c${n}`, output: "{}" },
+    { type: "message", role: "assistant", content: [{ type: "output_text", text: `réponse ${n}` }] }
+  ];
+  const items = Array.from({ length: 15 }, (_, n) => turn(n)).flat();
+  const kept = recentTurns(items);
+  assert.equal(kept[0].role, "user", "the history starts with a message of the direction");
+  assert.ok(kept.length <= 60);
+  for (const [index, item] of kept.entries()) {
+    if (item.type === "function_call") {
+      assert.equal(kept[index - 1].type, "reasoning", "each tool call keeps the reasoning before it");
+    }
+  }
+  // A conversation saved before the rule, starting on a tool call, is mended.
+  assert.equal(recentTurns(items.slice(2, 20))[0].content, "question 1");
+});

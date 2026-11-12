@@ -1395,6 +1395,38 @@
     @apply rounded-2xl border border-line bg-surface-2 px-4 py-3 text-[14.5px] leading-[1.6] text-ink;
   }
 
+  .answer-text > * + * {
+    @apply mt-2;
+  }
+  .answer-text h4 {
+    @apply mt-3 font-semibold text-ink;
+  }
+  .answer-text ul {
+    @apply list-disc pl-5;
+  }
+  .answer-text ol {
+    @apply list-decimal pl-5;
+  }
+  /* A wide table scrolls inside the answer, never the page. */
+  .answer-table {
+    @apply max-w-full overflow-x-auto rounded-lg border border-line;
+  }
+  .answer-table table {
+    @apply w-full border-collapse text-[13.5px];
+  }
+  .answer-table th {
+    @apply bg-surface px-3 py-1.5 text-left font-semibold whitespace-nowrap;
+  }
+  .answer-table td {
+    @apply border-t border-line px-3 py-1.5 align-top;
+  }
+  .answer-table .num {
+    @apply text-right whitespace-nowrap tabular-nums;
+  }
+  .answer-table tbody tr:nth-child(even) td {
+    @apply bg-surface/50;
+  }
+
   .bubble.user .bubble-text {
     @apply rounded-br-md border-transparent bg-linear-140 from-brand-2 to-brand text-brand-ink;
     box-shadow: var(--shadow-brand);
@@ -1494,6 +1526,36 @@
     @apply rounded-2xl border border-line bg-surface shadow-card;
   }
 
+  .register-actions {
+    @apply flex flex-wrap gap-2;
+  }
+  .register-card header button {
+    @apply ml-auto shrink-0;
+  }
+  .register-form {
+    @apply mt-4 flex flex-wrap items-end gap-3;
+  }
+  .register-form label {
+    @apply flex min-w-36 flex-1 flex-col gap-1 text-sm;
+  }
+  .register-form label:first-child {
+    @apply min-w-52 flex-[2];
+  }
+  .register-list {
+    @apply mt-4 flex flex-col divide-y divide-black/5;
+  }
+  .register-row {
+    @apply grid items-center gap-2 py-2 text-sm sm:grid-cols-[6rem_1fr_auto_auto_auto];
+  }
+  .register-what small {
+    @apply block opacity-70;
+  }
+  .register-amount {
+    @apply whitespace-nowrap font-semibold;
+  }
+  .register-row button {
+    @apply whitespace-nowrap;
+  }
   .doc-card {
     @apply mt-2.5 px-[18px] py-4;
   }

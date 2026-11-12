@@ -1,4 +1,6 @@
 import { DirectorAgentError, createDirectorAgentFromEnv, withObjectiveMeasure } from "../agent/director-agent.js";
+import { createDocumentArchive, frenchDate } from "../agent/document-register.js";
+import { renderXlsx, xlsxFileName } from "../documents/xlsx-writer.js";
 import { OBJECTIVE_DOMAINS } from "../agent/sales-objective.js";
 import Fastify from "fastify";
 import rateLimit from "@fastify/rate-limit";
@@ -111,6 +113,9 @@ export function buildApi({
   // made from the cockpit takes the address the cockpit was opened at.
   publicBaseUrl = process.env.PUBLIC_BASE_URL ?? "",
   documentOutputDir = null,
+  // Where the Administratif files the PDFs, one folder per client. Null (a
+  // test): the register is read and searched, nothing is copied on the PC.
+  archiveDir = null,
   // A seam, not a feature: the derived idempotency key names a day, and a test
   // cannot cross a day boundary by waiting for one.
   clock = () => new Date()
@@ -123,6 +128,7 @@ export function buildApi({
   const directoryMemory = businessMemory ?? createBusinessMemoryRepository();
   const securityConfig = security ?? foundationConfig.security ?? createSecurityConfig();
   const hkidsDocuments = documentService ?? new HkidsDocumentService({ repository, outputDir: documentOutputDir });
+  const archive = createDocumentArchive({ documentService: hkidsDocuments, dir: archiveDir });
   // The conversational Director. Its "point entreprise" tool runs the same
   // orchestration as POST /api/director/requests, so both answer alike.
   const runDirectorRequest = async ({ message, userId }) => {
@@ -266,6 +272,7 @@ export function buildApi({
     improvementBook: improvement,
     teamBook: teamFeed,
     followUpBook: followUps,
+    documentArchive: archive,
     autoAnalyse: autoAnalyseAnomalies,
     publicBaseUrl,
     client: agentClient
@@ -306,6 +313,12 @@ export function buildApi({
   // server process calls this on a timer, so the anomaly is found anyway.
   app.decorate("sweepAnomalies", async () => syncAnomalies(await workshop.book()));
   app.decorate("whatsApp", whatsApp);
+  // Files every document in its client's folder; run after each document,
+  // at start and on the timer. A failure is logged, never in the way.
+  app.decorate("syncArchive", () => archive.sync().catch((error) => {
+    app.log.error(error);
+    return null;
+  }));
   // The quotes with no news for too long, told on WhatsApp during working
   // hours (Casablanca), each once; the server process calls it on a timer.
   // Each working day: the summary of the anomalies to the direction, and a
@@ -1368,10 +1381,12 @@ export function buildApi({
 
     app.post("/api/documents/generate", documentRouteOptions(securityConfig), async (request, reply) => {
       try {
-        return reply.code(201).send(await hkidsDocuments.generate(request.body, {
+        const generated = await hkidsDocuments.generate(request.body, {
           createdById: request.principal.userId,
           replaceExisting: request.body?.replaceExisting === true
-        }));
+        });
+        await app.syncArchive();
+        return reply.code(201).send(generated);
       } catch (error) {
         const normalized = normalizeDocumentError(error);
         if (normalized) {
@@ -1410,6 +1425,48 @@ export function buildApi({
         }
         return sendDomainError(reply, "Commercial file rendering failed.", error);
       }
+    });
+
+    // The register of the documents issued, searched by client, number, type
+    // or dates; each with the file of its client's folder.
+    app.get("/api/documents/register", readRouteOptions(), async (request, reply) => {
+      const query = request.query ?? {};
+      const documents = await archive.search({ client: query.client ?? "", number: query.number ?? "", type: query.type ?? "", from: query.from ?? "", to: query.to ?? "" });
+      return reply.send({ dir: archive.dir, documents: documents.map((entry) => ({ ...entry, frenchDate: frenchDate(entry.date) })) });
+    });
+
+    // The register as searched, in Excel: the figures are those of the documents.
+    app.get("/api/documents/register.xlsx", readRouteOptions(), async (request, reply) => {
+      const query = request.query ?? {};
+      const documents = await archive.search({ client: query.client ?? "", number: query.number ?? "", type: query.type ?? "", from: query.from ?? "", to: query.to ?? "" });
+      const bytes = await renderXlsx({
+        title: "Registre des documents H-KIDS",
+        sheetName: "Registre",
+        columns: ["Date", "Type", "N°", "Client", "Objet", "Montant TTC", "Statut", "Fichier"],
+        rows: documents.map((entry) => [frenchDate(entry.date), entry.typeLabel, entry.number, entry.client, entry.object, entry.totalTtc === null ? "" : `${entry.totalTtc.toFixed(2).replace(".", ",")} DH`, entry.status, entry.file ?? ""]),
+        total: true
+      });
+      return reply
+        .type("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        .header("Content-Disposition", `attachment; filename="${xlsxFileName("registre des documents", clock())}"`)
+        .send(bytes);
+    });
+
+    // Files now: the import of what exists, and again without duplicates.
+    app.post("/api/documents/register/sync", writeRouteOptions(), async (_request, reply) => {
+      const report = await archive.sync();
+      return reply.send(report);
+    });
+
+    app.get("/api/documents/register/:stem/pdf", readRouteOptions(), async (request, reply) => {
+      const found = await archive.pdf(String(request.params.stem));
+      if (!found) {
+        return reply.code(404).send({ error: "Ce document n'est pas dans le registre, ou son PDF manque." });
+      }
+      return reply
+        .type("application/pdf")
+        .header("Content-Disposition", `inline; filename="${basenameForHeader(`${found.entry.date}_${found.entry.typeLabel}_${found.entry.number}.pdf`)}"`)
+        .send(found.bytes);
     });
 
     app.get("/api/documents/:id/download", readRouteOptions(), async (request, reply) => {
@@ -1662,7 +1719,9 @@ async function serveFrontendAsset(reply, route) {
 
   try {
     const content = await readFile(join(FRONTEND_DIR, asset.file), "utf8");
-    return reply.type(asset.type).send(content);
+    // Asked again each time: after an update (git pull), the browser must not
+    // keep running the old cockpit with the new server.
+    return reply.type(asset.type).header("Cache-Control", "no-cache").send(content);
   } catch (error) {
     return reply.code(500).send(createErrorResponse("Frontend asset loading failed.", error));
   }

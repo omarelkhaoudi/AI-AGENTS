@@ -406,6 +406,26 @@
 
         <!-- Documents -->
         <section class="view flex animate-rise flex-col gap-6" data-view-panel="documents" hidden aria-labelledby="documents-title">
+          <section class="panel" aria-labelledby="register-title">
+            <div class="panel-heading">
+              <div>
+                <h2 id="register-title"><svg class="i" aria-hidden="true"><use href="#i-database"/></svg>Registre des documents</h2>
+                <p id="register-dir">Devis, bons et factures, classés par client.</p>
+              </div>
+              <div class="register-actions">
+                <button type="button" class="secondary" id="register-export"><svg class="i" aria-hidden="true"><use href="#i-file"/></svg>Exporter en Excel</button>
+                <button type="button" class="secondary" id="register-sync"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Classer maintenant</button>
+              </div>
+            </div>
+            <form id="register-form" class="register-form" role="search">
+              <label>Client ou numéro<input name="q" type="search" placeholder="Barada, 171…" autocomplete="off"></label>
+              <label>Type<select name="type"><option value="">Tous</option><option value="devis">Devis</option><option value="bon_de_commande">Bons de commande</option><option value="bon_de_livraison">Bons de livraison</option><option value="facture">Factures</option></select></label>
+              <label>Du<input name="from" type="date"></label>
+              <label>Au<input name="to" type="date"></label>
+              <button type="submit">Chercher</button>
+            </form>
+            <ul id="register-list" class="register-list"></ul>
+          </section>
           <ol class="stepper" aria-label="Étapes">
             <li class="is-active"><span>1</span>Remplir</li>
             <li><span>2</span>Vérifier l'aperçu</li>

@@ -9,10 +9,13 @@ import {
   RepositoryContractError
 } from "./repository-contract.js";
 
+const EMPTY_TWO_FACTOR = Object.freeze({ secret: null, pendingSecret: null, lastStep: null, enabledAt: null, recoveryCodeHashes: [] });
+
 export class InMemoryRepository extends AgentPlatformRepository {
   #users = new Map();
   #apiTokens = new Map();
   #passwords = new Map();
+  #twoFactor = new Map();
   #agents = new Map();
   #requests = new Map();
   // The index PostgreSQL gets from a unique constraint. Checking it and writing
@@ -120,7 +123,24 @@ export class InMemoryRepository extends AgentPlatformRepository {
     const wanted = normalizeEmail(email);
     const user = wanted ? [...this.#users.values()].find((entry) => normalizeEmail(entry.email) === wanted) : null;
     const passwordHash = user ? this.#passwords.get(user.id) : null;
-    return user && passwordHash ? { user, passwordHash } : null;
+    return user && passwordHash ? { user, passwordHash, twoFactor: this.getTwoFactor(user.id) } : null;
+  }
+
+  // Two-step sign-in, kept beside the password and never on the user record.
+  getTwoFactor(userId) {
+    if (!this.#passwords.has(userId)) {
+      return null;
+    }
+    return freezeRecord({ ...EMPTY_TWO_FACTOR, ...cloneValue(this.#twoFactor.get(userId) ?? {}) });
+  }
+
+  updateTwoFactor(userId, patch) {
+    if (!this.#passwords.has(userId)) {
+      throw new RepositoryContractError(`Two-step sign-in requires a password: ${userId}`);
+    }
+    const next = { ...EMPTY_TWO_FACTOR, ...(this.#twoFactor.get(userId) ?? {}), ...cloneValue(patch) };
+    this.#twoFactor.set(userId, next);
+    return freezeRecord({ ...next });
   }
 
   upsertAgent(agent) {

@@ -247,6 +247,7 @@ const nativeFetch = globalThis.fetch.bind(globalThis);
 const loginScreen = document.querySelector("#login-screen");
 const loginForm = document.querySelector("#login-form");
 const loginError = document.querySelector("#login-error");
+const loginCodeField = document.querySelector("#login-code-field");
 let apiToken = null;
 let pendingLogin = null;
 
@@ -302,9 +303,20 @@ function askLogin() {
         const response = await nativeFetch("/api/auth/login", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ email: loginForm.email.value, password: loginForm.password.value })
+          body: JSON.stringify({
+            email: loginForm.email.value,
+            password: loginForm.password.value,
+            ...(loginCodeField.hidden ? {} : { code: loginForm.code.value })
+          })
         });
         const payload = await response.json().catch(() => ({}));
+        // Two-step sign-in: the right password, then the code of the app.
+        if (response.status === 401 && payload.details?.code === "TWO_FACTOR_REQUIRED") {
+          loginCodeField.hidden = false;
+          loginError.hidden = true;
+          loginForm.code.focus();
+          return;
+        }
         if (!response.ok) {
           loginError.textContent = response.status === 429
             ? "Trop d'essais. Patientez une minute avant de réessayer."
@@ -314,6 +326,8 @@ function askLogin() {
         }
         keepSession(payload.token);
         loginForm.password.value = "";
+        loginForm.code.value = "";
+        loginCodeField.hidden = true;
         loginScreen.hidden = true;
         pendingLogin = null;
         resolve({ user: payload.user, demo: false });
@@ -369,6 +383,133 @@ document.querySelector("#logout-button").addEventListener("click", async () => {
   forgetSession();
   showSession(await askLogin());
 });
+
+// Two-step sign-in, set up by each person for their own account: a QR code to
+// scan with an authenticator app, a code typed back, and ten recovery codes
+// shown that once.
+const securityDialog = document.querySelector("#security-dialog");
+const securityBody = document.querySelector("#security-body");
+
+document.querySelector("#security-button").addEventListener("click", () => {
+  securityDialog.showModal();
+  showSecurityState();
+});
+document.querySelector("#security-close").addEventListener("click", () => securityDialog.close());
+
+async function securityCall(method, url, body) {
+  const response = await fetch(url, {
+    method,
+    headers: { ...(body ? { "content-type": "application/json" } : {}), ...(await authHeaders()) },
+    ...(body ? { body: JSON.stringify(body) } : {})
+  });
+  const payload = await response.json().catch(() => ({}));
+  return { ok: response.ok, status: response.status, payload };
+}
+
+async function showSecurityState() {
+  securityBody.innerHTML = `<p class="text-muted">Chargement…</p>`;
+  const { ok, payload } = await securityCall("GET", "/api/auth/two-factor");
+  if (!ok) {
+    securityBody.innerHTML = `<p class="text-muted">${escapeHtml(payload.error ?? "Indisponible pour ce compte.")}</p>`;
+    return;
+  }
+  if (!payload.enabled) {
+    securityBody.innerHTML = `
+      <p>À la connexion, en plus du mot de passe, le cockpit demandera un code à 6 chiffres affiché par une application sur votre téléphone. Un mot de passe volé ne suffira plus.</p>
+      <p class="mt-3 text-muted">Il vous faut une application d'authentification : Google Authenticator ou Microsoft Authenticator (gratuites).</p>
+      <button type="button" class="primary mt-5 w-full justify-center" id="security-start">${icon("shield")}Activer</button>`;
+    securityBody.querySelector("#security-start").addEventListener("click", startTwoFactorSetup);
+    return;
+  }
+  securityBody.innerHTML = `
+    <p class="flex items-center gap-2 font-semibold text-brand">${icon("check-circle")}Active${payload.enabledAt ? ` depuis le ${escapeHtml(new Date(payload.enabledAt).toLocaleDateString("fr-FR"))}` : ""}</p>
+    <p class="mt-2 text-muted">Codes de secours restants : ${escapeHtml(String(payload.recoveryCodesLeft))} sur 10.${payload.recoveryCodesLeft <= 3 ? " Pensez à désactiver puis réactiver pour en avoir de nouveaux." : ""}</p>
+    <form id="security-disable" class="mt-5 border-t border-line pt-4">
+      <p class="font-semibold">Désactiver</p>
+      <div class="field mt-3"><label for="security-password">Mot de passe</label><input id="security-password" type="password" autocomplete="current-password" required></div>
+      <div class="field mt-3"><label for="security-disable-code">Code de l'application</label><input id="security-disable-code" inputmode="numeric" autocomplete="one-time-code" required></div>
+      <p class="mt-3 text-[14px] text-danger" id="security-error" role="alert" hidden></p>
+      <button type="submit" class="mt-4 w-full justify-center">Désactiver la double authentification</button>
+    </form>`;
+  securityBody.querySelector("#security-disable").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const { ok: done, payload: answer } = await securityCall("POST", "/api/auth/two-factor/disable", {
+      password: securityBody.querySelector("#security-password").value,
+      code: securityBody.querySelector("#security-disable-code").value
+    });
+    if (!done) {
+      showSecurityError(answer.error ?? "Désactivation impossible.");
+      return;
+    }
+    showToast("Double authentification désactivée.");
+    showSecurityState();
+  });
+}
+
+function showSecurityError(message) {
+  const error = securityBody.querySelector("#security-error");
+  error.textContent = message;
+  error.hidden = false;
+}
+
+async function startTwoFactorSetup() {
+  const { ok, payload } = await securityCall("POST", "/api/auth/two-factor/setup");
+  if (!ok) {
+    securityBody.innerHTML = `<p class="text-danger">${escapeHtml(payload.error ?? "Impossible de préparer le QR code.")}</p>`;
+    return;
+  }
+  // The QR code is drawn by the server from the secret it just made.
+  securityBody.innerHTML = `
+    <p><strong>1.</strong> Dans l'application, touchez « + » puis « Scanner un QR code ».</p>
+    <div class="security-qr mx-auto mt-3 size-48 rounded-xl border border-line bg-white p-2">${payload.qrSvg}</div>
+    <p class="mt-2 text-center text-[12.5px] text-muted">Pas de caméra ? Clé à saisir : <code class="select-all font-semibold text-ink">${escapeHtml(payload.secret)}</code></p>
+    <form id="security-confirm" class="mt-4">
+      <div class="field"><label for="security-code"><strong>2.</strong> Tapez le code à 6 chiffres affiché</label><input id="security-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required></div>
+      <p class="mt-3 text-[14px] text-danger" id="security-error" role="alert" hidden></p>
+      <button type="submit" class="primary mt-4 w-full justify-center">${icon("check")}Confirmer</button>
+    </form>`;
+  securityBody.querySelector("#security-code").focus();
+  securityBody.querySelector("#security-confirm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const { ok: done, payload: answer } = await securityCall("POST", "/api/auth/two-factor/enable", {
+      code: securityBody.querySelector("#security-code").value.replace(/\s+/g, "")
+    });
+    if (!done) {
+      showSecurityError(answer.error ?? "Activation impossible.");
+      return;
+    }
+    showRecoveryCodes(answer.recoveryCodes);
+  });
+}
+
+function showRecoveryCodes(codes) {
+  const text = `Codes de secours H-KIDS Cockpit\nChaque code fonctionne une seule fois, si le téléphone est perdu.\n\n${codes.join("\n")}\n`;
+  securityBody.innerHTML = `
+    <p class="flex items-center gap-2 font-semibold text-brand">${icon("check-circle")}Double authentification activée</p>
+    <p class="mt-3">Gardez ces <strong>codes de secours</strong> en lieu sûr (papier, coffre). Ils remplacent le code de l'application si le téléphone est perdu, une fois chacun. Ils ne seront plus affichés.</p>
+    <ul class="mt-3 grid list-none grid-cols-2 gap-2 p-0 font-mono text-[14px]">${codes.map((code) => `<li class="rounded-lg border border-line bg-surface-2 px-3 py-1.5 text-center">${escapeHtml(code)}</li>`).join("")}</ul>
+    <div class="mt-4 flex gap-2">
+      <button type="button" class="flex-1 justify-center" id="security-download">Télécharger</button>
+      <button type="button" class="flex-1 justify-center" id="security-copy">Copier</button>
+    </div>
+    <button type="button" class="primary mt-3 w-full justify-center" id="security-done">J'ai gardé mes codes</button>`;
+  securityBody.querySelector("#security-download").addEventListener("click", () => {
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+    link.download = "codes-de-secours-hkids.txt";
+    link.click();
+    URL.revokeObjectURL(link.href);
+  });
+  securityBody.querySelector("#security-copy").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast("Codes copiés.");
+    } catch {
+      showToast("Copie impossible : notez-les à la main.");
+    }
+  });
+  securityBody.querySelector("#security-done").addEventListener("click", () => securityDialog.close());
+}
 
 async function resolveApiToken() {
   if (!apiToken && pendingLogin) {

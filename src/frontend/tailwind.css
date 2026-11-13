@@ -375,6 +375,22 @@
     @apply min-h-8 w-8 rounded-full border-0 bg-transparent p-0 text-muted shadow-none hover:bg-surface-3 hover:text-danger;
   }
 
+  .session-security {
+    @apply min-h-8 w-8 rounded-full border-0 bg-transparent p-0 text-muted shadow-none hover:bg-surface-3 hover:text-brand;
+  }
+
+  .security-dialog {
+    @apply m-auto w-[min(440px,calc(100vw-32px))] rounded-[24px] border border-line bg-surface p-6 text-ink shadow-card;
+  }
+
+  .security-dialog::backdrop {
+    background: rgb(15 23 20 / 0.45);
+  }
+
+  .security-qr svg {
+    @apply block size-full;
+  }
+
   .status-dot {
     @apply size-2 shrink-0 rounded-full bg-[#5fd39b];
     box-shadow: 0 0 0 3px rgb(95 211 155 / 0.18);

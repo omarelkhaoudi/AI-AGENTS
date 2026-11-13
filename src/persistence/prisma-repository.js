@@ -4,6 +4,16 @@ import { ApprovalStateError } from "../security/approval.js";
 import { assertPublicationRecord } from "../social/publication.js";
 import { AgentPlatformRepository, IdempotencyConflictError, RecordConflictError } from "./repository-contract.js";
 
+function twoFactorOf(credential) {
+  return Object.freeze({
+    secret: credential.totpSecret ?? null,
+    pendingSecret: credential.totpPendingSecret ?? null,
+    lastStep: credential.totpLastStep ?? null,
+    enabledAt: credential.totpEnabledAt ? new Date(credential.totpEnabledAt).toISOString() : null,
+    recoveryCodeHashes: Array.isArray(credential.recoveryCodeHashes) ? credential.recoveryCodeHashes : []
+  });
+}
+
 export class PrismaRepository extends AgentPlatformRepository {
   constructor({ prisma, transactional = false }) {
     super();
@@ -66,7 +76,23 @@ export class PrismaRepository extends AgentPlatformRepository {
       return null;
     }
     const { credential, ...record } = user;
-    return { user: record, passwordHash: credential.passwordHash };
+    return { user: record, passwordHash: credential.passwordHash, twoFactor: twoFactorOf(credential) };
+  }
+
+  // Two-step sign-in, kept beside the password and never on the user record.
+  async getTwoFactor(userId) {
+    const credential = await this.prisma.userCredential.findUnique({ where: { userId } });
+    return credential ? twoFactorOf(credential) : null;
+  }
+
+  async updateTwoFactor(userId, patch) {
+    const data = {};
+    if ("secret" in patch) data.totpSecret = patch.secret;
+    if ("pendingSecret" in patch) data.totpPendingSecret = patch.pendingSecret;
+    if ("lastStep" in patch) data.totpLastStep = patch.lastStep;
+    if ("enabledAt" in patch) data.totpEnabledAt = patch.enabledAt ? new Date(patch.enabledAt) : null;
+    if ("recoveryCodeHashes" in patch) data.recoveryCodeHashes = patch.recoveryCodeHashes ?? [];
+    return twoFactorOf(await this.prisma.userCredential.update({ where: { userId }, data }));
   }
 
   async createApiToken({ id, userId, name = "api-token", tokenHash, expiresAt = null } = {}) {

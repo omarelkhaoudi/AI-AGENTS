@@ -26,6 +26,9 @@ export const AUDIT_EVENT_TYPES = Object.freeze([
   "authentication_failed",
   "login_succeeded",
   "logout",
+  "two_factor_enabled",
+  "two_factor_disabled",
+  "recovery_code_used",
   "authorization_denied",
   "rate_limit_exceeded"
 ]);

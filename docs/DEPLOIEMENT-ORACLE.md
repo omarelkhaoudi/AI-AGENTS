@@ -132,6 +132,22 @@ docker compose exec app npm run auth:create-user -- --id=omar --name="Omar" --em
 
 Les rôles et la suite : [DEPLOIEMENT.md, section 2](DEPLOIEMENT.md#2-créer-les-comptes).
 
+### Double authentification
+
+Chaque personne l'active elle-même, une fois connectée : bouton bouclier à côté
+de son nom → **Activer** → scanner le QR code avec Google Authenticator ou
+Microsoft Authenticator → taper le code affiché. Dix **codes de secours** sont
+montrés une seule fois : à garder sur papier. Ensuite, la connexion demande le
+mot de passe puis le code à 6 chiffres de l'application (ou un code de secours,
+valable une fois). La désactiver demande le mot de passe et un code.
+
+Téléphone **et** codes de secours perdus : sur le serveur, l'administrateur la
+coupe pour ce compte, puis la personne la réactive depuis le cockpit.
+
+```bash
+docker compose exec app npm run auth:reset-2fa -- --id=hiba
+```
+
 ## 7. Reprendre les données du PC de Hiba
 
 Sans cette étape, la numérotation des devis et des bons repartirait de zéro.

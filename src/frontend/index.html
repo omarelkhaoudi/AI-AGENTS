@@ -151,6 +151,9 @@
           <div class="session-box" id="session-box" hidden>
             <span class="session-avatar" id="session-avatar" aria-hidden="true"></span>
             <span id="session-name" class="session-name max-md:hidden"></span>
+            <button type="button" class="session-security" id="security-button" title="Sécurité du compte">
+              <svg class="i" aria-hidden="true"><use href="#i-shield"/></svg><span class="visually-hidden">Sécurité du compte</span>
+            </button>
             <button type="button" class="session-logout" id="logout-button" title="Se déconnecter">
               <svg class="i" aria-hidden="true"><use href="#i-logout"/></svg><span class="visually-hidden">Déconnexion</span>
             </button>
@@ -720,12 +723,28 @@
           <label for="login-password">Mot de passe</label>
           <input id="login-password" name="password" type="password" autocomplete="current-password" required>
         </div>
+        <div class="field mt-4" id="login-code-field" hidden>
+          <label for="login-code">Code de vérification</label>
+          <input id="login-code" name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456">
+          <p class="mt-1.5 text-[12.5px] text-muted">Le code à 6 chiffres de votre application d'authentification. Téléphone perdu : tapez un de vos codes de secours.</p>
+        </div>
         <p id="login-error" class="mt-4 text-[14px] text-danger" role="alert" hidden></p>
         <button type="submit" class="primary mt-7 min-h-12 w-full justify-center text-[15px]" id="login-submit">Se connecter<svg class="i" aria-hidden="true"><use href="#i-arrow"/></svg></button>
         <p class="mt-6 text-center text-[12.5px] text-muted">Mot de passe oublié ? Demandez à Omar de le réinitialiser.</p>
       </form>
       </div>
     </div>
+
+    <dialog id="security-dialog" class="security-dialog" aria-labelledby="security-title">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <p class="eyebrow">Mon compte</p>
+          <h2 id="security-title" class="text-[22px]">Double authentification</h2>
+        </div>
+        <button type="button" class="session-logout" id="security-close" title="Fermer"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg><span class="visually-hidden">Fermer</span></button>
+      </div>
+      <div id="security-body" class="mt-4 text-[14.5px]"></div>
+    </dialog>
 
     <div id="toast-region" class="toast-region pointer-events-none fixed inset-x-4 bottom-24 z-50 flex flex-col gap-2.5 md:inset-x-auto md:right-6 md:bottom-6" role="status" aria-live="polite"></div>
     <script type="module" src="/app/app.js"></script>

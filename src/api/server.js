@@ -47,6 +47,17 @@ import { assertCapability, roleSatisfiesCapability } from "../security/authoriza
 import { DEFAULT_RATE_LIMITS, createSecurityConfig } from "../security/security-config.js";
 import { createApiTokenMaterial, hashApiTokenSecret } from "../security/api-token.js";
 import { burnPasswordCheck, verifyPassword } from "../security/password.js";
+import QRCode from "qrcode";
+import {
+  createRecoveryCodes,
+  createTotpSecret,
+
+  hashRecoveryCode,
+  looksLikeRecoveryCode,
+  otpauthUri,
+  useRecoveryCode,
+  verifyTotp
+} from "../security/two-factor.js";
 import { HkidsDocumentService, normalizeDocumentError } from "../documents/document-service.js";
 import { createCommercialFileService, normalizeCommercialFileError } from "../documents/commercial-file-service.js";
 
@@ -496,6 +507,28 @@ export function buildApi({
           metadata: { method: "POST", code: otherCompany ? "OTHER_COMPANY" : "INVALID_LOGIN" }
         });
         return reply.code(401).send({ error: "Email ou mot de passe incorrect.", details: { code: "INVALID_LOGIN" } });
+      }
+      // Two-step sign-in: with the right password, an account that turned it
+      // on also needs the code of its authenticator app, or a recovery code.
+      if (found.twoFactor?.secret) {
+        const code = typeof request.body?.code === "string" ? request.body.code.trim() : "";
+        if (code === "") {
+          return reply.code(401).send({ error: "Entrez le code à 6 chiffres de votre application d'authentification.", details: { code: "TWO_FACTOR_REQUIRED" } });
+        }
+        const accepted = await acceptSecondFactor(repository, found.user.id, found.twoFactor, code, clock());
+        if (!accepted) {
+          await auditSecurityEvent(repository, {
+            type: "authentication_failed",
+            actorUserId: found.user.id,
+            resourceType: "endpoint",
+            resourceId: "/api/auth/login",
+            metadata: { method: "POST", code: "INVALID_TWO_FACTOR" }
+          });
+          return reply.code(401).send({ error: "Code incorrect ou déjà utilisé. Entrez le code affiché maintenant.", details: { code: "INVALID_TWO_FACTOR" } });
+        }
+        if (accepted === "recovery") {
+          await auditSecurityEvent(repository, { type: "recovery_code_used", actorUserId: found.user.id, resourceType: "endpoint", resourceId: "/api/auth/login" });
+        }
       }
       const expiresAt = new Date(clock().getTime() + (securityConfig.sessionDays ?? 30) * 24 * 60 * 60 * 1000).toISOString();
       const material = createApiTokenMaterial({ userId: found.user.id, name: "session", expiresAt });
@@ -1222,6 +1255,76 @@ export function buildApi({
       demo: securityConfig.demoModeEnabled
     }));
 
+    // Two-step sign-in, turned on and off by each person for their own account.
+    // Setting it up shows a QR code to scan; it is on only once a code from the
+    // app has been typed back, and the ten recovery codes are shown that once.
+    app.get("/api/auth/two-factor", readRouteOptions(), async (request, reply) => {
+      const state = await repository.getTwoFactor?.(request.principal.userId);
+      if (!state) {
+        return reply.code(404).send({ error: "Ce compte n'a pas de mot de passe : la double authentification ne s'applique pas." });
+      }
+      return { enabled: Boolean(state.secret), enabledAt: state.enabledAt, recoveryCodesLeft: state.recoveryCodeHashes.length };
+    });
+
+    app.post("/api/auth/two-factor/setup", twoFactorRouteOptions(), async (request, reply) => {
+      const userId = request.principal.userId;
+      const state = await repository.getTwoFactor?.(userId);
+      if (!state) {
+        return reply.code(404).send({ error: "Ce compte n'a pas de mot de passe : la double authentification ne s'applique pas." });
+      }
+      if (state.secret) {
+        return reply.code(409).send({ error: "La double authentification est déjà active sur ce compte." });
+      }
+      const secret = createTotpSecret();
+      await repository.updateTwoFactor(userId, { pendingSecret: secret });
+      const account = request.principal.email ?? request.principal.name ?? userId;
+      const uri = otpauthUri(secret, account);
+      const qrSvg = await QRCode.toString(uri, { type: "svg", margin: 1, errorCorrectionLevel: "M" });
+      return { secret: secret.match(/.{1,4}/g).join(" "), uri, qrSvg };
+    });
+
+    app.post("/api/auth/two-factor/enable", twoFactorRouteOptions(), async (request, reply) => {
+      const userId = request.principal.userId;
+      const state = await repository.getTwoFactor?.(userId);
+      if (!state?.pendingSecret) {
+        return reply.code(409).send({ error: "Commencez par afficher le QR code." });
+      }
+      const step = verifyTotp(state.pendingSecret, request.body?.code, { now: clock() });
+      if (step === null) {
+        return reply.code(400).send({ error: "Code incorrect. Entrez le code affiché maintenant dans l'application." });
+      }
+      const recoveryCodes = createRecoveryCodes();
+      await repository.updateTwoFactor(userId, {
+        secret: state.pendingSecret,
+        pendingSecret: null,
+        lastStep: step,
+        enabledAt: clock().toISOString(),
+        recoveryCodeHashes: recoveryCodes.map(hashRecoveryCode)
+      });
+      await auditSecurityEvent(repository, { type: "two_factor_enabled", actorUserId: userId, resourceType: "user", resourceId: userId });
+      return { enabled: true, recoveryCodes };
+    });
+
+    app.post("/api/auth/two-factor/disable", twoFactorRouteOptions(), async (request, reply) => {
+      const userId = request.principal.userId;
+      const user = await repository.getUser(userId);
+      const found = user?.email ? await repository.findUserCredentialByEmail?.(user.email) : null;
+      if (!found?.twoFactor?.secret) {
+        return reply.code(409).send({ error: "La double authentification n'est pas active sur ce compte." });
+      }
+      const password = typeof request.body?.password === "string" ? request.body.password : "";
+      const code = typeof request.body?.code === "string" ? request.body.code.trim() : "";
+      const passwordOk = await verifyPassword(password, found.passwordHash);
+      const codeOk = passwordOk && await acceptSecondFactor(repository, userId, found.twoFactor, code, clock());
+      if (!codeOk) {
+        await auditSecurityEvent(repository, { type: "authentication_failed", actorUserId: userId, resourceType: "endpoint", resourceId: "/api/auth/two-factor/disable", metadata: { method: "POST", code: passwordOk ? "INVALID_TWO_FACTOR" : "INVALID_PASSWORD" } });
+        return reply.code(400).send({ error: passwordOk ? "Code incorrect ou déjà utilisé." : "Mot de passe incorrect." });
+      }
+      await repository.updateTwoFactor(userId, { secret: null, pendingSecret: null, lastStep: null, enabledAt: null, recoveryCodeHashes: [] });
+      await auditSecurityEvent(repository, { type: "two_factor_disabled", actorUserId: userId, resourceType: "user", resourceId: userId });
+      return { enabled: false };
+    });
+
     app.post("/api/auth/logout", readRouteOptions(), async (request, reply) => {
       if (request.principal.tokenId) {
         await repository.revokeApiToken(request.principal.tokenId);
@@ -1634,6 +1737,36 @@ function readRouteOptions() {
       capability: "read_requests"
     }
   };
+}
+
+// Signed in, and held to the sign-in rate limit: a six-digit code is not
+// guessed by trying.
+function twoFactorRouteOptions() {
+  return {
+    config: {
+      capability: "read_requests",
+      login: true
+    }
+  };
+}
+
+// A code of the app (used once: its step is kept) or one of the recovery codes
+// (struck off). "totp", "recovery", or false.
+async function acceptSecondFactor(repository, userId, twoFactor, code, now) {
+  if (looksLikeRecoveryCode(code)) {
+    const left = useRecoveryCode(twoFactor.recoveryCodeHashes, code);
+    if (left === null) {
+      return false;
+    }
+    await repository.updateTwoFactor(userId, { recoveryCodeHashes: left });
+    return "recovery";
+  }
+  const step = verifyTotp(twoFactor.secret, code, { now, lastStep: twoFactor.lastStep });
+  if (step === null) {
+    return false;
+  }
+  await repository.updateTwoFactor(userId, { lastStep: step });
+  return "totp";
 }
 
 function writeRouteOptions() {

@@ -132,6 +132,7 @@ become a column.
 | `20260824000000_add_request_idempotency_key` | `Request.idempotencyKey` and its unique index |
 | `20260929000000_add_social_publications` | `social_publications`, the state of a social post |
 | `20261105000000_add_user_credentials` | `UserCredential`, sign-in passwords |
+| `20261114000000_add_two_factor` | `UserCredential` two-step sign-in: app secret, last code step, recovery code hashes |
 
 Apply them with `npm run db:migrate`. Never edit a committed migration: add a
 new one. See `docs/POSTGRESQL_SETUP.md` for the full install path and

@@ -19,6 +19,7 @@
     "db:seed:business": "node scripts/db-seed-business.mjs",
     "auth:create-token": "node scripts/create-api-token.mjs",
     "auth:create-user": "node scripts/create-user.mjs",
+    "auth:reset-2fa": "node scripts/reset-two-factor.mjs",
     "archive:shortcut": "node scripts/create-desktop-shortcut.mjs",
     "data:ingest": "node scripts/ingest-business-data.mjs",
     "data:import-hkids": "node scripts/import-hkids-workbook.mjs",
@@ -36,6 +37,7 @@
     "openai": "^6.10.0",
     "pdf-lib": "^1.17.1",
     "pg": "^8.23.0",
+    "qrcode": "1.5.4",
     "yazl": "^3.3.1"
   },
   "devDependencies": {

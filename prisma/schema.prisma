@@ -29,6 +29,14 @@ model UserCredential {
   userId       String   @id
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   passwordHash String
+  // Two-step sign-in: the secret of the authenticator app once confirmed, the
+  // one shown while it is being set up, the last time step accepted (a code is
+  // used once), and the hashes of the unused recovery codes.
+  totpSecret         String?
+  totpPendingSecret  String?
+  totpLastStep       Int?
+  totpEnabledAt      DateTime?
+  recoveryCodeHashes Json      @default("[]")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }

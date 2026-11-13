@@ -104,8 +104,8 @@ commande ? » Il doit donner le même numéro que sur ce PC.
 
 ## 4. Sauvegardes
 
-Le script `scripts/backup.sh` sauvegarde la base, les documents et les données
-dans `deploy/backups/<date>/` et garde les 30 dernières. Pour le lancer chaque
+Le script `scripts/backup.sh` sauvegarde la base, les documents, les données et
+les dossiers clients dans `deploy/backups/<date>/` et garde les 30 dernières. Pour le lancer chaque
 nuit à 3 h :
 
 ```bash
@@ -125,8 +125,11 @@ vers un ordinateur du bureau.
 **Restaurer** la base depuis une sauvegarde :
 
 ```bash
-docker compose exec -T db pg_restore -U hkids -d hkids --clean < backups/<date>/base.dump
+docker compose exec -T db pg_restore -U hkids -d hkids --clean --if-exists --no-owner < backups/<date>/base.dump
 ```
+
+Les documents, les données et les dossiers clients se restaurent de la même
+façon, voir [DEPLOIEMENT-ORACLE.md](DEPLOIEMENT-ORACLE.md), section 8.
 
 ## 5. Mettre à jour l'application
 

@@ -158,7 +158,9 @@ commande ? » : le même que sur le PC.
 
 ## 8. Sauvegardes automatiques
 
-Chaque nuit à 3 h, la base, les documents et les données :
+Chaque nuit à 3 h (heure du serveur, UTC), la base, les documents, les données
+et les dossiers clients, dans `deploy/backups/<date>/`. Les 30 dernières sont
+gardées :
 
 ```bash
 crontab -e
@@ -175,6 +177,19 @@ le même serveur ne protège pas d'une panne du serveur) :
 
 ```powershell
 scp -i "$env:USERPROFILE\.ssh\hkids-oracle.key" -r ubuntu@152.67.xx.xx:/opt/hkids/deploy/backups "$env:USERPROFILE\Documents\Sauvegardes H-KIDS"
+```
+
+**Restaurer** une sauvegarde, sur le serveur, depuis `/opt/hkids/deploy` (cela
+remplace les données actuelles : faites d'abord une sauvegarde de l'état
+présent avec `sh ../scripts/backup.sh`) :
+
+```bash
+b=backups/2026-11-13_0300   # le dossier à restaurer
+docker compose exec -T db pg_restore -U hkids -d hkids --clean --if-exists --no-owner < $b/base.dump
+docker compose exec -T app tar -xzf - -C /app/assets/documents < $b/documents.tar.gz
+docker compose exec -T app tar -xzf - -C /app < $b/data.tar.gz
+docker compose exec -T app tar -xzf - -C /app < $b/archive.tar.gz
+docker compose restart app
 ```
 
 ## 9. Mettre à jour

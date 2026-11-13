@@ -131,7 +131,9 @@ deliberate edit of the model.
 
 ## What is not covered
 
-- **No scheduled backup.** These are manual commands. Scheduling them is an
-  infrastructure decision that has not been made.
+- **No scheduled backup on a local install.** These are manual commands. The
+  hosted cockpit is different: `scripts/backup.sh` runs every night from cron
+  and also saves the documents, data and client folders. See
+  `docs/DEPLOIEMENT-ORACLE.md`, section 8.
 - **No off-site copy.** A dump beside the database is lost with the machine.
 - **No point-in-time recovery.** That needs WAL archiving, which is not set up.

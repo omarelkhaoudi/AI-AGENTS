@@ -172,12 +172,19 @@ Ajoutez la ligne :
 0 3 * * * cd /opt/hkids/deploy && mkdir -p backups && sh ../scripts/backup.sh >> backups/backup.log 2>&1
 ```
 
-Une fois par semaine, rapatriez les sauvegardes sur un PC (une sauvegarde sur
-le même serveur ne protège pas d'une panne du serveur) :
+Une sauvegarde sur le même serveur ne protège pas d'une panne du serveur : un PC
+qui a la clé SSH en garde une copie. Une seule fois, depuis le dossier du
+projet sur ce PC :
 
 ```powershell
-scp -i "$env:USERPROFILE\.ssh\hkids-oracle.key" -r ubuntu@152.67.xx.xx:/opt/hkids/deploy/backups "$env:USERPROFILE\Documents\Sauvegardes H-KIDS"
+powershell -ExecutionPolicy Bypass -File scripts\copier-sauvegardes.ps1 -Installer
 ```
+
+Une tâche planifiée Windows (« H-KIDS - copie des sauvegardes ») copie alors
+chaque jour à midi, ou dès que le PC est allumé, les sauvegardes qu'il n'a pas
+encore dans `Documents\Sauvegardes H-KIDS`, et y garde les 90 dernières. Chaque
+copie écrit une ligne dans `copie.log`, « OK » ou « ERREUR ». Si votre serveur a
+une autre adresse, ajoutez `-Serveur ubuntu@votre-adresse`.
 
 **Restaurer** une sauvegarde, sur le serveur, depuis `/opt/hkids/deploy` (cela
 remplace les données actuelles : faites d'abord une sauvegarde de l'état

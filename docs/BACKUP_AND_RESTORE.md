@@ -135,5 +135,7 @@ deliberate edit of the model.
   hosted cockpit is different: `scripts/backup.sh` runs every night from cron
   and also saves the documents, data and client folders. See
   `docs/DEPLOIEMENT-ORACLE.md`, section 8.
-- **No off-site copy.** A dump beside the database is lost with the machine.
+- **No off-site copy on a local install.** A dump beside the database is lost
+  with the machine. The hosted cockpit's nightly backups are copied to a
+  Windows PC every day by `scripts/copier-sauvegardes.ps1`.
 - **No point-in-time recovery.** That needs WAL archiving, which is not set up.

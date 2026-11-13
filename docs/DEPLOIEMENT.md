@@ -119,8 +119,8 @@ et ajoutez la ligne :
 ```
 
 Une sauvegarde sur le même disque ne protège pas d'une panne du serveur :
-copiez régulièrement `deploy/backups/` ailleurs, par exemple avec `scp`
-vers un ordinateur du bureau.
+`scripts/copier-sauvegardes.ps1` en garde une copie sur un PC Windows, chaque
+jour (voir [DEPLOIEMENT-ORACLE.md](DEPLOIEMENT-ORACLE.md), section 8).
 
 **Restaurer** la base depuis une sauvegarde :
 

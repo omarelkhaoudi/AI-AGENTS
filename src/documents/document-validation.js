@@ -1,8 +1,11 @@
 import { calculateDocumentTotals, assertProvidedTotalsMatch, roundMoney } from "./document-calculations.js";
 import { assertNoPricing } from "./document-consistency.js";
 import {
+  CREDIT_NOTE_SETTLEMENTS,
   DEFAULT_DELIVERY_NOTE_PROFILE,
   HKIDS_DOCUMENT_TYPES,
+  PAYMENT_RECEIPT_METHODS,
+  PAYMENT_RECEIPT_TVA_RATE,
   REQUIRED_PURCHASE_ORDER_FIELDS,
   HKIDS_REFERENCE_FIELDS,
   UPSTREAM_REFERENCE_FIELDS,
@@ -67,7 +70,11 @@ export function normalizeDocumentInput(input = {}) {
   const deliveryNoteProfile = isDeliveryNoteProfile(input.deliveryNoteProfile)
     ? input.deliveryNoteProfile
     : DEFAULT_DELIVERY_NOTE_PROFILE;
-  const tvaRate = input.tvaRate === undefined ? 0.2 : Number(input.tvaRate);
+  // A receipt states money received and carries no VAT of its own, whatever it
+  // is handed.
+  const tvaRate = documentType === HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT
+    ? PAYMENT_RECEIPT_TVA_RATE
+    : input.tvaRate === undefined ? 0.2 : Number(input.tvaRate);
   const normalizeLine = carriesPricing(documentType, deliveryNoteProfile)
     ? normalizePricedLine
     : normalizeDeliveredLine;
@@ -126,7 +133,7 @@ export function validateAndPrepareDocument(input = {}, { requireConfirmation = f
   const errors = [];
 
   if (!isControlledDocumentType(document.documentType)) {
-    errors.push(error("documentType", "INVALID_DOCUMENT_TYPE", "documentType must be quote, delivery_note, invoice or purchase_order."));
+    errors.push(error("documentType", "INVALID_DOCUMENT_TYPE", "documentType must be quote, delivery_note, invoice, purchase_order, credit_note or payment_receipt."));
   }
 
   // The types are validated differently, and the delivery note has two shapes
@@ -191,6 +198,8 @@ export function validateAndPrepareDocument(input = {}, { requireConfirmation = f
     if (imageError) {
       errors.push(error("referenceImage", imageError, "referenceImage must be a JPEG or PNG data URL of at most 3 MB."));
     }
+  } else if (SETTLEMENT_CHOICES[document.documentType]) {
+    validateSettlement(document, errors);
   } else {
     validatePayment(document.payment, errors);
   }
@@ -311,6 +320,20 @@ function assertNoCommercialTerms(input) {
 // Requiring one in particular would break one of the two flows; requiring
 // neither would let an invoice reference nothing at all.
 function validateUpstreamReferences(document, errors, relatedDocuments = {}) {
+  // A credit note corrects one invoice, which it must name.
+  if (document.documentType === HKIDS_DOCUMENT_TYPES.CREDIT_NOTE) {
+    if (isMissing(document[HKIDS_REFERENCE_FIELDS.INVOICE])) {
+      errors.push(error(HKIDS_REFERENCE_FIELDS.INVOICE, "UPSTREAM_REFERENCE_MISSING", "A credit note must reference the invoice it corrects: invoiceReference is required."));
+    }
+    return;
+  }
+  // A receipt is paid on a sale, named by its quote or by the invoice settled.
+  if (document.documentType === HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT) {
+    if (isMissing(document[HKIDS_REFERENCE_FIELDS.QUOTE]) && isMissing(document[HKIDS_REFERENCE_FIELDS.INVOICE])) {
+      errors.push(error(`${HKIDS_REFERENCE_FIELDS.QUOTE} | ${HKIDS_REFERENCE_FIELDS.INVOICE}`, "UPSTREAM_REFERENCE_MISSING", "A payment receipt must reference the quote or the invoice it is paid on."));
+    }
+    return;
+  }
   if (document.documentType !== HKIDS_DOCUMENT_TYPES.INVOICE) {
     return;
   }
@@ -413,6 +436,23 @@ function validatePayment(payment, errors) {
   }
 }
 
+// A credit note says what becomes of the amount it gives back, a receipt how the
+// money came in: each from its own short list, and neither carries a schedule.
+const SETTLEMENT_CHOICES = Object.freeze({
+  [HKIDS_DOCUMENT_TYPES.CREDIT_NOTE]: CREDIT_NOTE_SETTLEMENTS,
+  [HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT]: PAYMENT_RECEIPT_METHODS
+});
+
+function validateSettlement(document, errors) {
+  const choices = SETTLEMENT_CHOICES[document.documentType];
+  if (!choices.includes(document.payment.method)) {
+    errors.push(error("payment.method", "UNKNOWN_PAYMENT_METHOD", `payment.method must be one of: ${choices.join(", ")}.`, { allowed: [...choices] }));
+  }
+  if (document.payment.terms || document.payment.termsRule) {
+    errors.push(error("payment.terms", "TERMS_NOT_ALLOWED", `A ${document.documentType} carries no payment schedule.`));
+  }
+}
+
 function validateDocumentObject(document, errors) {
   if (document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE && document.object && document.object !== "Vente de mobilier") {
     errors.push(error("object", "INVALID_DOCUMENT_OBJECT", "invoice object must be Vente de mobilier when provided."));
@@ -433,7 +473,7 @@ function validateItems(document, errors) {
     if (isMissing(item.designation)) {
       errors.push(error(`items.${index}.designation`, "REQUIRED_FIELD_MISSING", "item designation is required."));
     }
-    if (document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE && isMissing(item.unit)) {
+    if ([HKIDS_DOCUMENT_TYPES.INVOICE, HKIDS_DOCUMENT_TYPES.CREDIT_NOTE].includes(document.documentType) && isMissing(item.unit)) {
       errors.push(error(`items.${index}.unit`, "REQUIRED_FIELD_MISSING", "item unit is required for invoices."));
     }
     if (!Number.isFinite(item.quantity) || item.quantity <= 0) {

@@ -473,7 +473,12 @@ export function createWorkshop({ store, documentService, clock = () => new Date(
       plannedDelivery: delivery.status === "terminee" ? null : delivery.plannedDate,
       schedule: await paymentSchedule(current.number),
       photos: Object.freeze((record?.photos ?? []).map((photo) => Object.freeze({ id: photo.id, caption: photo.caption, publishedAt: photo.publishedAt }))),
-      documents: Object.freeze(clientDocuments(dossier, current.number))
+      documents: Object.freeze(clientDocuments(dossier, current.number)),
+      // What the client has paid, from the receipts H-KIDS gave them, and what
+      // remains. Only when the amount of the sale is known.
+      payments: dossier && dossier.ceiling !== null
+        ? Object.freeze({ total: dossier.ceiling, received: dossier.received, remaining: dossier.remainingToPay })
+        : null
     });
   }
 
@@ -577,17 +582,21 @@ const CLIENT_DOCUMENT_LABELS = Object.freeze({
   [HKIDS_DOCUMENT_TYPES.QUOTE]: "Devis",
   [HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER]: "Bon de commande",
   [HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE]: "Bon de livraison",
-  [HKIDS_DOCUMENT_TYPES.INVOICE]: "Facture"
+  [HKIDS_DOCUMENT_TYPES.INVOICE]: "Facture",
+  [HKIDS_DOCUMENT_TYPES.CREDIT_NOTE]: "Avoir",
+  [HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT]: "Reçu de paiement"
 });
 
 // The documents of the client's own sale: its quote, this order, its delivery
-// notes and its invoices, once each.
+// notes, its invoices, its credit notes and its receipts, once each.
 function clientDocuments(dossier, orderNumber) {
   const entries = [
     ...(dossier?.quote ? [dossier.quote] : []),
     { type: HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER, number: orderNumber },
     ...(dossier?.deliveryNotes ?? []),
-    ...(dossier?.invoices ?? [])
+    ...(dossier?.invoices ?? []),
+    ...(dossier?.creditNotes ?? []),
+    ...(dossier?.receipts ?? [])
   ];
   const seen = new Set();
   return entries
@@ -665,6 +674,10 @@ function workshopOrder(order, record = { steps: {}, journal: [] }, issued, day) 
     invoices: (dossier?.invoices ?? []).map((entry) => entry.number),
     invoiced: dossier?.invoiced ?? 0,
     remaining: dossier?.remaining ?? null,
+    creditNotes: (dossier?.creditNotes ?? []).map((entry) => entry.number),
+    receipts: (dossier?.receipts ?? []).map((entry) => entry.number),
+    received: dossier?.received ?? 0,
+    remainingToPay: dossier?.remainingToPay ?? null,
     steps: Object.freeze(steps),
     progress: Object.freeze({ done, total: steps.length, percent: Math.round((done / steps.length) * 100) }),
     currentStep: current ? current.label : null,

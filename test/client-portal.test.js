@@ -322,3 +322,31 @@ test("only the Commercial, among the agents, is given the client link", async (t
   assert.ok(!production[0].tools.some((tool) => tool.name === "lien_suivi_client"));
   assert.equal(outputOf(production[1]).ok, false);
 });
+
+test("the client sees the receipts H-KIDS gave them, what is paid and what remains, and opens their PDF", async (t) => {
+  const receipt = {
+    documentType: "payment_receipt",
+    documentNumber: "1",
+    date: "04/11/2026",
+    object: "Acompte",
+    client,
+    quoteReference: "170",
+    items: [{ designation: "Acompte de 50 % sur le devis n° 170", quantity: 1, unitPriceHt: 2250, amountHt: 2250 }],
+    totals: { totalHt: 2250, tva: 0, totalTtc: 2250 },
+    payment: { method: "chèque" }
+  };
+  const otherReceipt = { ...receipt, documentNumber: "2", quoteReference: "180", client: { name: "Autre Client", address: "Rabat" } };
+  const documents = await documentsWith(t, quote, otherQuote, order, receipt, otherReceipt);
+  const workshop = createWorkshop({ store: createMemoryWorkshopStore({ clock }), documentService: documents, clock });
+  const token = tokenOf(await workshop.openPortal("171"));
+
+  const view = await workshop.clientView(token);
+  assert.deepEqual(view.payments, { total: 4500, received: 2250, remaining: 2250 });
+  assert.deepEqual(view.documents.map((entry) => entry.label), ["Devis n° 170", "Bon de commande n° 171", "Reçu de paiement n° 1"]);
+  assert.ok(await workshop.clientDocument(token, "payment_receipt", "1"), "the receipt of the sale opens");
+  assert.equal(await workshop.clientDocument(token, "payment_receipt", "2"), null, "another client's receipt does not");
+
+  const order171 = await workshop.order("171");
+  assert.deepEqual(order171.receipts, ["1"]);
+  assert.equal(order171.remainingToPay, 2250);
+});

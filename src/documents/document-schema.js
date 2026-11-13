@@ -2,15 +2,41 @@ export const HKIDS_DOCUMENT_TYPES = Object.freeze({
   QUOTE: "quote",
   DELIVERY_NOTE: "delivery_note",
   INVOICE: "invoice",
-  PURCHASE_ORDER: "purchase_order"
+  PURCHASE_ORDER: "purchase_order",
+  // Corrects or cancels an invoice already issued, in part or in full. It names
+  // that invoice and never comes to more than it.
+  CREDIT_NOTE: "credit_note",
+  // States a payment received from the client on a sale: an instalment of its
+  // quote, or the settlement of one of its invoices.
+  PAYMENT_RECEIPT: "payment_receipt"
 });
 
 export const HKIDS_DOCUMENT_TYPE_LABELS = Object.freeze({
   [HKIDS_DOCUMENT_TYPES.QUOTE]: "DEVIS",
   [HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE]: "BON DE LIVRAISON",
   [HKIDS_DOCUMENT_TYPES.INVOICE]: "FACTURE",
-  [HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER]: "BON DE COMMANDE"
+  [HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER]: "BON DE COMMANDE",
+  [HKIDS_DOCUMENT_TYPES.CREDIT_NOTE]: "AVOIR",
+  [HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT]: "REÇU DE PAIEMENT"
 });
+
+// How a client may pay, as a receipt states it. A receipt records money that
+// actually came in, so the way it came is one of these and nothing else.
+export const PAYMENT_RECEIPT_METHODS = Object.freeze([
+  "espèces",
+  "virement bancaire",
+  "chèque",
+  "carte bancaire",
+  "effet de commerce"
+]);
+
+// What becomes of the amount a credit note gives back.
+export const CREDIT_NOTE_SETTLEMENTS = Object.freeze([
+  "déduit du reste à payer",
+  "remboursement par virement bancaire",
+  "remboursement en espèces",
+  "remboursement par chèque"
+]);
 
 // The three documents of one commercial file, in the order they are issued. A
 // document may reference the ones before it and never the ones after.
@@ -128,6 +154,16 @@ export const HKIDS_EXPECTED_REFERENCES = Object.freeze({
   [HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE]: Object.freeze([
     HKIDS_REFERENCE_FIELDS.QUOTE,
     HKIDS_REFERENCE_FIELDS.INVOICE
+  ]),
+  // A credit note names the invoice it corrects; it may name its quote too.
+  [HKIDS_DOCUMENT_TYPES.CREDIT_NOTE]: Object.freeze([
+    HKIDS_REFERENCE_FIELDS.INVOICE,
+    HKIDS_REFERENCE_FIELDS.QUOTE
+  ]),
+  // A receipt names the sale it is paid on: its quote, or the invoice settled.
+  [HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT]: Object.freeze([
+    HKIDS_REFERENCE_FIELDS.QUOTE,
+    HKIDS_REFERENCE_FIELDS.INVOICE
   ])
 });
 
@@ -207,6 +243,16 @@ export const REQUIRED_PURCHASE_ORDER_FIELDS = Object.freeze(
   REQUIRED_DOCUMENT_FIELDS.filter((field) => field !== "payment.method")
 );
 
+// A credit note and a receipt settle no schedule: what they say about money is
+// the settlement of the credit, or the way the payment was made.
+export const REQUIRED_CREDIT_NOTE_FIELDS = Object.freeze(
+  REQUIRED_DOCUMENT_FIELDS.filter((field) => field !== "payment.terms")
+);
+export const REQUIRED_PAYMENT_RECEIPT_FIELDS = REQUIRED_CREDIT_NOTE_FIELDS;
+
+// A receipt states money received, not a sale: it carries no VAT of its own.
+export const PAYMENT_RECEIPT_TVA_RATE = 0;
+
 export function isControlledDocumentType(value) {
   return Object.values(HKIDS_DOCUMENT_TYPES).includes(value);
 }
@@ -235,6 +281,12 @@ export function requiredFieldsFor(documentType, { deliveryNoteProfile = DEFAULT_
   }
   if (documentType === HKIDS_DOCUMENT_TYPES.QUOTE) {
     return REQUIRED_QUOTE_FIELDS;
+  }
+  if (documentType === HKIDS_DOCUMENT_TYPES.CREDIT_NOTE) {
+    return REQUIRED_CREDIT_NOTE_FIELDS;
+  }
+  if (documentType === HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT) {
+    return REQUIRED_PAYMENT_RECEIPT_FIELDS;
   }
   if (
     documentType === HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE

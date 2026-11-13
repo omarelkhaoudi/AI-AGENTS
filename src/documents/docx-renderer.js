@@ -8,7 +8,7 @@ import {
   documentTitleFor,
   referenceLabelFor
 } from "./hkids-template.js";
-import { formatMoney, invoiceDiscountLabel, invoiceShowsLineTaxes } from "./pdf-renderer.js";
+import { SETTLEMENT_WORDING, amountInWordsSentence, formatMoney, invoiceDiscountLabel, invoiceShowsLineTaxes } from "./pdf-renderer.js";
 import { createQuotePresentation } from "./quote-presentation.js";
 
 export async function renderHkidsDocx(document) {
@@ -46,8 +46,12 @@ function createDocumentXml(document) {
   if (isGoodsOnlyDeliveryNote(document)) {
     return wrapDocument(createGoodsOnlyDeliveryNoteBody(document));
   }
+  if (document.documentType === HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT) {
+    return wrapDocument(createReceiptBody(document));
+  }
 
-  const invoice = document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE;
+  // A credit note is drawn as an invoice, as its PDF is.
+  const invoice = [HKIDS_DOCUMENT_TYPES.INVOICE, HKIDS_DOCUMENT_TYPES.CREDIT_NOTE].includes(document.documentType);
   // An invoice discounted by a fixed amount states its lines in HT only, as its
   // PDF does: invoiceShowsLineTaxes says why.
   const htOnly = invoice && !invoiceShowsLineTaxes(document);
@@ -108,6 +112,10 @@ function createDocumentXml(document) {
   if (document.documentType === HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER) {
     return wrapDocument(purchaseOrderBody(document, { headers, rows, totals, objectLine, noteLine }));
   }
+  const settlement = SETTLEMENT_WORDING[document.documentType];
+  const paymentLines = settlement
+    ? [p(`${amountInWordsSentence(document)}.`), p(settlement.title, { bold: true }), p(`${settlement.method} : ${document.payment.method}`), noteLine]
+    : [p("MENTIONS", { bold: true }), noteLine, p(`Moyen de paiement : ${document.payment.method}`), p(`Conditions de règlement : ${document.payment.terms}`)];
   const body = [
     p(HKIDS_FIXED_IDENTITY.legalLine, { align: "center", size: 15 }),
     logo(),
@@ -125,14 +133,44 @@ function createDocumentXml(document) {
     table(tr(headers, { bold: true, shade: "7FA696", white: true }) + rows),
     p(""),
     table(totals),
-    p("MENTIONS", { bold: true }),
-    noteLine,
-    p(`Moyen de paiement : ${document.payment.method}`),
-    p(`Conditions de règlement : ${document.payment.terms}`),
+    ...paymentLines,
     p(HKIDS_FIXED_IDENTITY.footerMention, { size: 17 })
   ].join("");
 
   return wrapDocument(body);
+}
+
+// The Word copy of a receipt carries the same text as its PDF: what was paid
+// for, the amount received, the sum written out and how it was paid.
+function createReceiptBody(document) {
+  const rows = document.items.map((item) => tr([item.designation, formatMoney(item.amountHt)])).join("");
+  const settlement = SETTLEMENT_WORDING[document.documentType];
+  return [
+    p(HKIDS_FIXED_IDENTITY.legalLine, { align: "center", size: 15 }),
+    logo(),
+    p(HKIDS_FIXED_IDENTITY.companyName, { bold: true, align: "right" }),
+    p(HKIDS_FIXED_IDENTITY.addressLines.join(" "), { align: "right" }),
+    p(`E-mail : ${HKIDS_FIXED_IDENTITY.email}`, { align: "right" }),
+    p(`Tél : ${HKIDS_FIXED_IDENTITY.phone}`, { align: "right" }),
+    p(`${documentTitleFor(document.documentType)} N° ${document.documentNumber}`, { bold: true, size: 34 }),
+    document.object ? p(`Objet : ${document.object}`) : "",
+    p(`Date : ${displayDate(document.date)}`),
+    referenceLabelFor(document) ? p(referenceLabelFor(document)) : "",
+    p("Adressé à :", { bold: true }),
+    p(document.client.name),
+    p(document.client.address),
+    table(tr(["Désignation", "Montant"], { bold: true, shade: "7FA696", white: true }) + rows),
+    p(""),
+    table(tr(["MONTANT REÇU", formatMoney(document.totals.totalTtc)], { bold: true })),
+    p(`${amountInWordsSentence(document)}.`),
+    p(settlement.title, { bold: true }),
+    p(`${settlement.method} : ${document.payment.method}`),
+    document.note ? p(`Note : ${document.note}`) : "",
+    p("POUR ACQUIT", { bold: true }),
+    p("Reçu par H KIDS — Nom, signature et cachet :"),
+    p(`Versé par le client — Nom : ${document.client.name} — Signature :`),
+    p(HKIDS_FIXED_IDENTITY.footerMention, { size: 17 })
+  ].join("");
 }
 
 // The Word copy of a purchase order carries the same text as the PDF. The

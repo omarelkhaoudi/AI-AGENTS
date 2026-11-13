@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { calculateDocumentTotals, roundMoney } from "../documents/document-calculations.js";
-import { HKIDS_DOCUMENT_TYPES } from "../documents/document-schema.js";
+import { CREDIT_NOTE_SETTLEMENTS, HKIDS_DOCUMENT_TYPES, PAYMENT_RECEIPT_METHODS } from "../documents/document-schema.js";
 import { DocumentValidationError } from "../documents/document-validation.js";
 import { HKIDS_FIXED_IDENTITY } from "../documents/hkids-template.js";
 import { parseReferenceImage } from "../documents/purchase-order.js";
@@ -78,7 +78,9 @@ const DOCUMENT_TYPES = Object.freeze({
   devis: HKIDS_DOCUMENT_TYPES.QUOTE,
   bon_de_commande: HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER,
   facture: HKIDS_DOCUMENT_TYPES.INVOICE,
-  bon_de_livraison: HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE
+  bon_de_livraison: HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE,
+  avoir: HKIDS_DOCUMENT_TYPES.CREDIT_NOTE,
+  recu_paiement: HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT
 });
 
 const PAYMENT_RULES = Object.freeze({
@@ -214,7 +216,7 @@ const COHERENCE_TOOL = Object.freeze({
 const DOCUMENT_TOOL = Object.freeze({
     type: "function",
     name: "preparer_document",
-    description: "Prépare un document commercial H-KIDS (devis, bon de commande, facture ou bon de livraison) et renvoie son aperçu. Le document n'est généré qu'après validation par l'utilisatrice dans le cockpit. N'appeler que lorsque le client (nom et adresse) et chaque ligne (désignation, quantité, prix) sont connus.",
+    description: "Prépare un document commercial H-KIDS (devis, bon de commande, facture, bon de livraison, avoir ou reçu de paiement) et renvoie son aperçu. Le document n'est généré qu'après validation par l'utilisatrice dans le cockpit. N'appeler que lorsque le client (nom et adresse) et chaque ligne (désignation, quantité, prix) sont connus.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -232,7 +234,7 @@ const DOCUMENT_TOOL = Object.freeze({
             properties: {
               designation: { type: "string" },
               quantite: { type: "number" },
-              prix_unitaire: { type: "number", description: "Prix unitaire en dirhams." },
+              prix_unitaire: { type: "number", description: "Prix unitaire en dirhams. Reçu de paiement : le montant reçu pour cette ligne (sans TVA)." },
               prix_ttc: { type: "boolean", description: "true si le prix donné est TTC (cas par défaut quand l'utilisatrice ne précise pas), false s'il est HT." }
             },
             required: ["designation", "quantite", "prix_unitaire", "prix_ttc"]
@@ -242,19 +244,21 @@ const DOCUMENT_TOOL = Object.freeze({
         conditions_paiement: { type: "string", enum: Object.keys(PAYMENT_RULES), description: "60/20/20 par défaut ; 50/50 seulement pour un bon de commande." },
         reference_devis: { type: "string", description: "Numéro du devis lié (bon de commande fait à partir d'un devis, facture, bon de livraison). Chaîne vide si aucun." },
         reference_bl: { type: "string", description: "Numéro du bon de livraison lié (facture). Chaîne vide si aucun." },
+        reference_facture: { type: "string", description: "Numéro de la facture liée : obligatoire pour un avoir (la facture qu'il corrige), possible pour un reçu de paiement. Chaîne vide sinon." },
+        mode_paiement: { type: "string", enum: ["", ...PAYMENT_RECEIPT_METHODS, ...CREDIT_NOTE_SETTLEMENTS], description: `Reçu de paiement : comment le client a payé (${PAYMENT_RECEIPT_METHODS.join(", ")}). Avoir : ce que devient le montant (${CREDIT_NOTE_SETTLEMENTS.join(", ")}). Chaîne vide pour les autres documents.` },
         numero: { type: "string", description: "Numéro imposé par l'utilisatrice. Chaîne vide pour prendre le prochain numéro libre." },
         photo: { type: "integer", description: "Bon de commande : numéro de la photo jointe par la direction à mettre comme visuel de référence (« visuel : photo n° 2 » → 2). 0 si aucune." },
         date: { type: "string", description: "Date imprimée sur le document, au format JJ/MM/AAAA, seulement si la direction en impose une (« date : 08/08/2026 »). Chaîne vide = date du jour." },
         remplace: { type: "boolean", description: "true pour corriger ou refaire un document DÉJÀ GÉNÉRÉ sous le même numéro (numero obligatoire) : l'ancienne version est archivée quand la direction valide, jamais effacée. false pour un nouveau document." }
       },
-      required: ["type", "client_nom", "client_adresse", "objet", "lignes", "caracteristiques", "conditions_paiement", "reference_devis", "reference_bl", "numero", "photo", "date", "remplace"]
+      required: ["type", "client_nom", "client_adresse", "objet", "lignes", "caracteristiques", "conditions_paiement", "reference_devis", "reference_bl", "reference_facture", "mode_paiement", "numero", "photo", "date", "remplace"]
     }
 });
 
 const CONSULT_DOCUMENT_TOOL = Object.freeze({
     type: "function",
     name: "consulter_document",
-    description: "Relit un document H-KIDS déjà généré (devis, bon de commande, facture ou bon de livraison) par son numéro : client, adresse, date, lignes avec leur prix unitaire HT, caractéristiques, conditions, visuel. À appeler avant de corriger ou de refaire un document existant.",
+    description: "Relit un document H-KIDS déjà généré (devis, bon de commande, facture, bon de livraison, avoir ou reçu de paiement) par son numéro : client, adresse, date, lignes avec leur prix unitaire HT, caractéristiques, conditions, visuel. À appeler avant de corriger ou de refaire un document existant.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -271,7 +275,7 @@ const CONSULT_DOCUMENT_TOOL = Object.freeze({
 export const SEARCH_DOCUMENT_TOOL = Object.freeze({
     type: "function",
     name: "chercher_document",
-    description: "Cherche dans le registre des documents H-KIDS (devis, bons de commande, bons de livraison, factures) par nom de client, numéro, type ou période, et renvoie chaque document trouvé avec sa date, son numéro, son client, son montant TTC, son statut et son PDF classé dans le dossier du client. À appeler pour « ressors-moi le devis de Mme Barada », « la facture 165 », « les devis de novembre ». Chaque document trouvé s'affiche à la direction avec un bouton pour ouvrir son PDF.",
+    description: "Cherche dans le registre des documents H-KIDS (devis, bons de commande, bons de livraison, factures, avoirs, reçus de paiement) par nom de client, numéro, type ou période, et renvoie chaque document trouvé avec sa date, son numéro, son client, son montant TTC, son statut et son PDF classé dans le dossier du client. À appeler pour « ressors-moi le devis de Mme Barada », « la facture 165 », « les devis de novembre ». Chaque document trouvé s'affiche à la direction avec un bouton pour ouvrir son PDF.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -307,7 +311,7 @@ export const EXCEL_TOOL = Object.freeze({
 const FOLLOW_DOSSIER_TOOL = Object.freeze({
     type: "function",
     name: "suivre_dossier",
-    description: "Où en est une vente, à partir d'un de ses documents (devis, bon de commande, bon de livraison ou facture) : le devis et son montant, le bon de commande qui l'a accepté, les bons de livraison, les factures déjà faites, le total facturé, le reste à facturer et les anomalies (facture en double…). À appeler pour « où en est le devis 170 », et AVANT toute facture.",
+    description: "Où en est une vente, à partir d'un de ses documents (devis, bon de commande, bon de livraison, facture, avoir ou reçu) : le devis et son montant, le bon de commande qui l'a accepté, les bons de livraison, les factures déjà faites, les avoirs, le total facturé (avoirs déduits), le reste à facturer, les reçus de paiement, le total reçu, le reste à payer et les anomalies (facture en double…). À appeler pour « où en est le devis 170 », et AVANT toute facture, tout avoir et tout reçu.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -428,7 +432,7 @@ const TOOLS = Object.freeze([
   {
     type: "function",
     name: "deleguer_a_un_agent",
-    description: "Confie une mission à un responsable de l'équipe, qui lit ses propres données, exécute et répond : sa part d'un objectif avec son plan chiffré, une analyse, un document (devis, bon de commande, bon de livraison → commercial ; facture → finance), des brouillons de messages ou de commandes. Appelle plusieurs responsables en même temps quand la demande touche plusieurs métiers.",
+    description: "Confie une mission à un responsable de l'équipe, qui lit ses propres données, exécute et répond : sa part d'un objectif avec son plan chiffré, une analyse, un document (devis, bon de commande, bon de livraison → commercial ; facture, avoir, reçu de paiement → finance), des brouillons de messages ou de commandes. Appelle plusieurs responsables en même temps quand la demande touche plusieurs métiers.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -484,7 +488,7 @@ function instructions(today, briefing = []) {
     "Tu es le Director IA de H KIDS, fabricant marocain de mobilier et d'aménagement sur mesure pour enfants (Marrakech).",
     `Tu parles à la direction (Hiba, Omar). Nous sommes le ${today}. Réponds toujours en français, de façon courte, claire et chaleureuse.`,
     "",
-    "Ton rôle est celui d'un directeur général : tu portes la stratégie et la responsabilité des résultats. Tu fixes la direction, tu répartis le travail entre les responsables, tu suis l'avancement et tu alertes. Tu n'exécutes pas toi-même : un devis, un bon de commande ou un bon de livraison est fait par le Directeur commercial (agent commercial), une facture par la Finance, un message par le responsable concerné.",
+    "Ton rôle est celui d'un directeur général : tu portes la stratégie et la responsabilité des résultats. Tu fixes la direction, tu répartis le travail entre les responsables, tu suis l'avancement et tu alertes. Tu n'exécutes pas toi-même : un devis, un bon de commande ou un bon de livraison est fait par le Directeur commercial (agent commercial), une facture, un avoir ou un reçu de paiement par la Finance, un message par le responsable concerné.",
     "",
     "Objectif chiffré (« je veux 100 000 DH de chiffre d'affaires ce mois », « il faut encaisser 50 000 DH avant le 15 ») — méthode OBLIGATOIRE :",
     "1) mesurer_objectif : réalisé, écart, rythme par jour, devis ouverts, encaissements. Chiffre d'affaires = ventes_signees, sauf si la direction parle d'argent reçu (encaissements). Période non précisée = mois en cours.",
@@ -498,13 +502,13 @@ function instructions(today, briefing = []) {
     "",
     "Tâche d'exécution demandée directement (un devis, un bon de commande, un bon de livraison, une facture, une relance) : pas de plan ; confie-la tout de suite au bon responsable avec deleguer_a_un_agent en recopiant TOUTES les informations données (client, adresse, téléphone, produits, quantités, prix, conditions, acompte déjà payé, numéros liés, et la date du document si la direction en impose une : écris « date du document : JJ/MM/AAAA »). Un prix donné sans précision est TTC : écris-le « 3000 DH TTC » dans la mission ; n'écris « HT » que si la direction l'a dit. Ne demande rien avant de confier : la ville suffit comme adresse, quantité non précisée = 1, conditions 60/20/20 par défaut (seuls échéanciers approuvés : 60/20/20 ; en exception 50/30/20, 40/40/20, 100 % ; 50/50 sur bon de commande), prix absent = prix catalogue cherché par le Commercial ; dimensions, coloris, livraison ou délai ne sont pas requis. S'il répond qu'il manque une information, pose UNE question courte à la direction qui demande tout ce qui manque, puis redonne la tâche complète au responsable. Annonce ensuite le document en 2 ou 3 lignes (qui l'a préparé, type, numéro, date, client, total TTC), avec les valeurs que le responsable rapporte du document préparé et jamais celles que tu as demandées : si une demande (date, visuel, condition) n'apparaît pas dans le document, dis-le clairement au lieu de l'annoncer comme faite et dis de vérifier l'aperçu et de cliquer « Valider et générer ».",
     "",
-    "Correction d'un document déjà généré (« refais le devis 170 », « corrige le BC 165, la date est fausse », « enlève la ligne des chevets du devis 170 ») : confie-la tout de suite au responsable du document (devis, bon de commande, bon de livraison → commercial ; facture → finance) avec son type, son numéro et TOUTES les corrections demandées, en écrivant « correction du document existant n° X, même numéro ». Ne demande pas le contenu du document : le responsable le relit lui-même. Annonce ensuite ce qui a changé et que l'ancienne version sera archivée quand la direction validera.",
+    "Correction d'un document déjà généré (« refais le devis 170 », « corrige le BC 165, la date est fausse », « enlève la ligne des chevets du devis 170 ») : confie-la tout de suite au responsable du document (devis, bon de commande, bon de livraison → commercial ; facture, avoir, reçu de paiement → finance) avec son type, son numéro et TOUTES les corrections demandées, en écrivant « correction du document existant n° X, même numéro ». Ne demande pas le contenu du document : le responsable le relit lui-même. Annonce ensuite ce qui a changé et que l'ancienne version sera archivée quand la direction validera.",
     "",
     "Retrouver un document (« ressors-moi le devis de Mme Barada », « la facture de M. Alami », « les devis de novembre ») → chercher_document toi-même. Un seul document : donne sa date, son numéro, son montant, et dis que son PDF s'ouvre avec le bouton sous ta réponse et qu'il est aussi dans le dossier du client (chemin « dossier »). Plusieurs : liste-les (date, numéro, objet, montant) et demande lequel ; tous ont leur bouton. Aucun : dis-le, avec ce que tu as cherché. Ne dis jamais que tu n'as pas accès aux documents ou aux fichiers : le registre est le tien, l'Administratif le tient à jour.",
     "",
     "Excel (« exporte-moi les devis du mois en Excel », « fais-moi un fichier Excel de la caisse ») : lis d'abord les données avec tes outils, puis exporter_excel avec ces lignes telles quelles. Le fichier s'affiche sous ta réponse avec un bouton « Télécharger » : dis-le, avec le nombre de lignes et le dossier où il est aussi rangé s'il est donné. Ne dis jamais que tu ne peux pas faire de fichier Excel.",
     "",
-    "Chaîne d'une vente : devis → bon de commande (le client accepte) → bon de livraison → factures (acompte, solde). Chaque document cite le devis : écris toujours son numéro dans la mission. « Le client a accepté le devis 170 », « fais le BC du devis 170 » → commercial : « bon de commande à partir du devis n° 170 », avec les conditions et l'acompte s'ils sont donnés ; il reprend le devis lui-même, rien n'est à ressaisir. « Facture l'acompte du devis 170 », « facture le solde » → finance avec le numéro du devis. « Où en est le devis 170 », « qu'est-ce qui reste à facturer » → suivre_dossier toi-même, puis réponds avec l'étape, le déjà facturé, le reste à facturer et les anomalies. Une facture refusée parce qu'elle facturerait la vente deux fois ne se contourne pas : dis-le à la direction avec les factures déjà faites.",
+    "Chaîne d'une vente : devis → bon de commande (le client accepte) → bon de livraison → factures (acompte, solde). Chaque document cite le devis : écris toujours son numéro dans la mission. « Le client a accepté le devis 170 », « fais le BC du devis 170 » → commercial : « bon de commande à partir du devis n° 170 », avec les conditions et l'acompte s'ils sont donnés ; il reprend le devis lui-même, rien n'est à ressaisir. « Facture l'acompte du devis 170 », « facture le solde » → finance avec le numéro du devis. « Où en est le devis 170 », « qu'est-ce qui reste à facturer » → suivre_dossier toi-même, puis réponds avec l'étape, le déjà facturé, le reste à facturer et les anomalies. Une facture refusée parce qu'elle facturerait la vente deux fois ne se contourne pas : dis-le à la direction avec les factures déjà faites. Avoir (« fais un avoir de 500 DH sur la facture 180 », remise accordée après coup, article retourné) → finance avec le numéro de la facture, le montant, la raison et ce que devient l'argent (déduit du reste à payer ou remboursé, et comment). Reçu de paiement (« fais le reçu de l'acompte de Mme X ») → finance avec le numéro du devis ou de la facture, le montant, le moyen de paiement et la date du paiement. « Qu'est-ce qui reste à payer » → suivre_dossier toi-même : déjà reçu et reste à payer.",
     "",
     `Atelier, après le bon de commande : chaque bon de commande validé suit ${WORKSHOP_STEPS.length} étapes (${WORKSHOP_STEPS.map((step) => step.label).join(", ")}). « Le BC 166 est en découpe », « l'assemblage du 166 est fini », « la peinture est bloquée, il manque la laque », « Youssef s'occupe de l'étude, prévue pour le 12/11 » → c'est un fait que la direction t'annonce : avancer_commande toi-même, un appel par étape (une étape commencée = en_cours ; les étapes d'avant qu'elle dit finies = terminee), puis confirme en une ligne avec l'avancement. « Où en est la commande de Mme X / le BC 166 », « quelles commandes sont en retard » → carnet_atelier, puis l'étape en cours, l'avancement (calculé sur les étapes terminées, jamais estimé), les dates prévues et les alertes. Planning, priorités ou charge de l'atelier → production. Suite de la chaîne, tout de suite après l'avoir enregistrée : contrôle qualité terminé → commercial : préparer le message au client pour convenir de la date de livraison et d'installation ; livraison et installation terminée → finance : facture du solde du devis (si le dossier n'est pas soldé). Pour tout point de situation ou toute question d'urgences, regarde aussi carnet_atelier et signale les commandes bloquées ou en retard.`,
     "",
@@ -514,7 +518,7 @@ function instructions(today, briefing = []) {
     "",
     "Bureau d'études, avant la découpe : chaque bon de commande a un chef de charge qui le contrôle de bout en bout ; avec son numéro, il reçoit sur WhatsApp chaque étape de sa commande qui se bloque ou prend du retard, et sa réponse arrive à la Production comme compte rendu ; quand le client a un architecte, une personne de l'équipe est en lien avec lui ; après la fiche technique (étude technique terminée), le dessinateur fait le fichier de la machine CNC (G-code ou DXF) et le dépose dans le cockpit, ou l'envoie au numéro WhatsApp de l'entreprise avec « BC n° » en légende (son numéro doit être enregistré sur la commande). « Samir est chef de charge du BC 166 », « l'architecte de Mme Alami est M. Bennani, c'est Hiba qui le suit », « Karim fait le G-code » → equipe_commande. Le fichier n'atteint la machine qu'une fois validé par la direction dans le cockpit (vue Atelier) : tu ne le valides jamais, et la découpe CNC ne peut pas commencer avant. Une commande lancée sans chef de charge, un fichier CNC qui attend sa validation : signale-le dans tout point de situation.",
     "",
-    "Caisse et bilan du jour : chaque entrée ou sortie d'argent que la direction t'annonce (« j'ai reçu 3 000 DH d'acompte de Mme Alami en espèces pour le devis 170 », « j'ai payé 1 200 DH de laque à Sodipeint par chèque », « j'ai versé les salaires, 18 000 DH par virement », « il y a 5 000 DH en caisse au départ ») → confie-la tout de suite au Directeur financier (finance) avec deleguer_a_un_agent, en recopiant tout : entrée ou sortie, montant, ce que c'est, moyen de paiement, qui a payé ou a été payé, numéro du devis ou du BC, la date si ce n'est pas aujourd'hui, et qui l'annonce. Plusieurs mouvements annoncés ensemble → une seule mission qui les liste tous. Finance l'enregistre au journal de caisse et te rend le bilan du jour : réponds en deux ou trois lignes (mouvement n°, montant, solde du jour, et pour un client ce qui reste à encaisser sur sa vente). « Où en est la caisse », « bilan du jour », « combien j'ai en caisse » → bilan_caisse toi-même. Pour tout point de situation, donne aussi le bilan de caisse du jour. Une erreur de saisie (« ce n'était pas 3 000 mais 2 000 ») → finance : annuler le mouvement et enregistrer le bon. Justificatifs : une dépense annoncée avec la photo d'un reçu, d'un ticket ou d'une facture → écris « justificatif : photo n° X » dans la mission ; une photo envoyée plus tard pour une dépense déjà enregistrée (« voici le reçu du MDF ») → mission à finance : joindre la photo n° X au mouvement n° N. Sans photo, rappelle à la direction d'envoyer le justificatif. Une dépense au-dessus du seuil d'alerte s'approuve dans la vue Caisse du cockpit, par une personne : tu ne l'approuves jamais.",
+    "Caisse et bilan du jour : chaque entrée ou sortie d'argent que la direction t'annonce (« j'ai reçu 3 000 DH d'acompte de Mme Alami en espèces pour le devis 170 », « j'ai payé 1 200 DH de laque à Sodipeint par chèque », « j'ai versé les salaires, 18 000 DH par virement », « il y a 5 000 DH en caisse au départ ») → confie-la tout de suite au Directeur financier (finance) avec deleguer_a_un_agent, en recopiant tout : entrée ou sortie, montant, ce que c'est, moyen de paiement, qui a payé ou a été payé, numéro du devis ou du BC, la date si ce n'est pas aujourd'hui, et qui l'annonce. Plusieurs mouvements annoncés ensemble → une seule mission qui les liste tous. Finance l'enregistre au journal de caisse (et, pour le paiement d'un client dont la vente est connue, prépare son reçu de paiement à valider) et te rend le bilan du jour : réponds en deux ou trois lignes (mouvement n°, montant, solde du jour, et pour un client ce qui reste à encaisser sur sa vente). « Où en est la caisse », « bilan du jour », « combien j'ai en caisse » → bilan_caisse toi-même. Pour tout point de situation, donne aussi le bilan de caisse du jour. Une erreur de saisie (« ce n'était pas 3 000 mais 2 000 ») → finance : annuler le mouvement et enregistrer le bon. Justificatifs : une dépense annoncée avec la photo d'un reçu, d'un ticket ou d'une facture → écris « justificatif : photo n° X » dans la mission ; une photo envoyée plus tard pour une dépense déjà enregistrée (« voici le reçu du MDF ») → mission à finance : joindre la photo n° X au mouvement n° N. Sans photo, rappelle à la direction d'envoyer le justificatif. Une dépense au-dessus du seuil d'alerte s'approuve dans la vue Caisse du cockpit, par une personne : tu ne l'approuves jamais.",
     "",
     "Amélioration continue : un retard ou un blocage au carnet d'atelier devient une anomalie, analysée automatiquement par son responsable (production pour l'atelier, achats pour l'approvisionnement) qui en trouve la cause et propose une règle pour qu'elle ne se reproduise pas. Un problème que la direction rapporte (client mécontent, fournisseur en retard, erreur de livraison, paiement oublié) → signaler_anomalie, puis deleguer_a_un_agent au responsable : « Analyse l'anomalie n° X : … Trouve la cause dans tes données et enregistre-la avec analyser_anomalie, avec la règle qui l'aurait évitée. » Une anomalie encore « à analyser » que la direction veut voir tout de suite → même délégation. Une règle ne s'applique qu'une fois validée par la direction dans le cockpit (vue Amélioration) : dis toujours qu'elle attend sa validation, jamais qu'elle est en place. Les règles actives sont données à leurs agents à chaque mission ; signale quand une situation en déclenche une.",
     "",
@@ -954,6 +958,20 @@ async function prepareDocument(args, { documentService, clock, outcome, books },
   }
 
   const purchaseOrder = documentType === HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER;
+  const creditNote = documentType === HKIDS_DOCUMENT_TYPES.CREDIT_NOTE;
+  const receipt = documentType === HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT;
+  // A credit note and a receipt say how the money moves, from their own list;
+  // neither carries a schedule.
+  const settlementChoices = creditNote ? CREDIT_NOTE_SETTLEMENTS : receipt ? PAYMENT_RECEIPT_METHODS : null;
+  if (settlementChoices && !settlementChoices.includes(text(args.mode_paiement))) {
+    return { ok: false, erreur: `Préciser mode_paiement parmi : ${settlementChoices.join(", ")}. S'il n'est pas dans la mission, demande-le à la direction.` };
+  }
+  if (creditNote && !text(args.reference_facture)) {
+    return { ok: false, erreur: "Un avoir corrige une facture : donner reference_facture (le numéro de la facture). S'il manque, demande-le à la direction." };
+  }
+  if (receipt && !text(args.reference_facture) && !text(args.reference_devis)) {
+    return { ok: false, erreur: "Un reçu dit ce qu'il règle : donner reference_devis (ou reference_facture). S'il manque, demande-le à la direction." };
+  }
   const termsRule = PAYMENT_RULES[args.conditions_paiement] ?? PAYMENT_RULES["60/20/20"];
   if (termsRule === PAYMENT_RULES["50/50"] && !purchaseOrder) {
     return { ok: false, erreur: "Le 50/50 n'est possible que sur un bon de commande. Utiliser 60/20/20." };
@@ -973,9 +991,11 @@ async function prepareDocument(args, { documentService, clock, outcome, books },
     return { ok: false, erreur: `Aucun ${args.type.replace(/_/g, " ")} n° ${number} n'a été généré : rien à corriger. Vérifier le numéro, ou préparer un nouveau document (remplace = false).` };
   }
 
+  // A receipt records money received: no tax, the amount is the amount.
+  const tvaRate = receipt ? 0 : TVA_RATE;
   const items = (Array.isArray(args.lignes) ? args.lignes : []).map((line) => {
     const price = Number(line.prix_unitaire);
-    const unitPriceHt = line.prix_ttc === false ? roundMoney(price) : roundMoney(price / (1 + TVA_RATE));
+    const unitPriceHt = receipt || line.prix_ttc === false ? roundMoney(price) : roundMoney(price / (1 + TVA_RATE));
     return {
       designation: text(line.designation),
       unit: "U",
@@ -983,7 +1003,7 @@ async function prepareDocument(args, { documentService, clock, outcome, books },
       unitPriceHt
     };
   });
-  const calculated = calculateDocumentTotals(items, TVA_RATE);
+  const calculated = calculateDocumentTotals(items, tvaRate);
 
   const photoNumber = Number(args.photo) || 0;
   const newImage = purchaseOrder && photoNumber > 0 ? outcome.photos?.[photoNumber - 1] : undefined;
@@ -1001,11 +1021,13 @@ async function prepareDocument(args, { documentService, clock, outcome, books },
     client: { name: text(args.client_nom), address: text(args.client_adresse) },
     items: calculated.items.map((item) => ({ designation: item.designation, unit: item.unit, quantity: item.quantity, unitPriceHt: item.unitPriceHt, amountHt: item.amountHt })),
     totals: { totalHt: calculated.totals.totalHt, tva: calculated.totals.tva, totalTtc: calculated.totals.totalTtc },
-    payment: purchaseOrder ? { termsRule } : { method: "virement bancaire", termsRule },
+    payment: purchaseOrder ? { termsRule } : settlementChoices ? { method: text(args.mode_paiement) } : { method: "virement bancaire", termsRule },
+    ...(receipt ? { tvaRate: 0 } : {}),
     ...(purchaseOrder ? { specifications: (args.caracteristiques ?? []).map(text).filter(Boolean) } : {}),
     ...(referenceImage ? { referenceImage } : {}),
     ...(text(args.reference_devis) ? { quoteReference: text(args.reference_devis) } : {}),
-    ...(text(args.reference_bl) ? { deliveryNoteReference: text(args.reference_bl) } : {})
+    ...(text(args.reference_bl) ? { deliveryNoteReference: text(args.reference_bl) } : {}),
+    ...(text(args.reference_facture) ? { invoiceReference: text(args.reference_facture) } : {})
   };
 
   let preview;
@@ -1023,6 +1045,23 @@ async function prepareDocument(args, { documentService, clock, outcome, books },
       return {
         ok: false,
         erreur: `Facture refusée : elle ferait facturer cette vente deux fois. Montant de la vente : ${ceiling} DH TTC (selon le ${ceilingFrom}) ; déjà facturé : ${invoicedBefore} DH (factures n° ${previousInvoices.map((entry) => entry.number).join(", ")}) ; reste à facturer : ${remainingBefore} DH. Ne prépare pas de facture au-delà de ce reste ; dis-le à la direction.`
+      };
+    }
+    if (error?.code === "CREDITED_INVOICE_NOT_FOUND") {
+      return { ok: false, erreur: `Avoir refusé : aucune facture n° ${error.details.invoiceReference} n'a été générée par le cockpit. Vérifie le numéro avec chercher_document, ou dis à la direction que la facture n'est pas dans le cockpit.` };
+    }
+    if (error?.code === "CREDIT_NOTE_EXCEEDS_INVOICE") {
+      const { invoiceNumber, invoiceTotal, creditedBefore, creditableBefore, previousCreditNotes } = error.details;
+      return {
+        ok: false,
+        erreur: `Avoir refusé : il rendrait plus que la facture n° ${invoiceNumber} (${invoiceTotal} DH TTC). Déjà en avoir : ${creditedBefore} DH${previousCreditNotes.length > 0 ? ` (avoirs n° ${previousCreditNotes.map((entry) => entry.number).join(", ")})` : ""} ; reste possible : ${creditableBefore} DH. Dis-le à la direction.`
+      };
+    }
+    if (error?.code === "RECEIPT_EXCEEDS_SALE") {
+      const { ceiling, ceilingFrom, receivedBefore, remainingToPayBefore, previousReceipts } = error.details;
+      return {
+        ok: false,
+        erreur: `Reçu refusé : il ferait encaisser plus que la vente. Montant de la vente : ${ceiling} DH TTC (selon le ${ceilingFrom}) ; déjà reçu : ${receivedBefore} DH${previousReceipts.length > 0 ? ` (reçus n° ${previousReceipts.map((entry) => entry.number).join(", ")})` : ""} ; reste à payer : ${remainingToPayBefore} DH. Ce paiement est peut-être déjà enregistré : dis-le à la direction.`
       };
     }
     throw error;
@@ -1048,6 +1087,7 @@ async function prepareDocument(args, { documentService, clock, outcome, books },
     total_ttc: document.totals.totalTtc,
     echeances: (document.payment?.instalments ?? []).map((part) => `${part.percent} % ${part.due} : ${part.amount} DH`),
     conditions: document.payment?.terms ?? null,
+    ...(settlementChoices ? { mode_paiement: document.payment.method } : {}),
     ...(newImage ? { visuel: `photo n° ${photoNumber}` } : keptImage ? { visuel: "celui du document d'origine, conservé" } : {}),
     ...(replaces ? { remplace: `l'ancienne version du n° ${document.documentNumber} sera archivée à la validation` } : {}),
     ...(preview.notices?.length > 0 ? { dossier: preview.notices } : {}),
@@ -1136,9 +1176,14 @@ async function followDossier(args, { documentService }) {
     bons_de_commande: dossier.orders.map(line),
     bons_de_livraison: dossier.deliveryNotes.map(line),
     factures: dossier.invoices.map(line),
+    avoirs: dossier.creditNotes.map(line),
+    recus_de_paiement: dossier.receipts.map(line),
     montant_de_la_vente: dossier.ceiling === null ? "inconnu" : `${dossier.ceiling} DH TTC (selon le ${dossier.ceilingFrom})`,
     deja_facture: dossier.invoiced,
+    ...(dossier.credited > 0 ? { dont_avoirs_deduits: dossier.credited } : {}),
     reste_a_facturer: dossier.remaining ?? "inconnu",
+    deja_recu: dossier.received,
+    reste_a_payer: dossier.remainingToPay ?? "inconnu",
     anomalies: dossier.anomalies
   };
 }
@@ -1180,8 +1225,12 @@ async function readWorkshopBook(args, context) {
       })),
       bons_de_livraison: order.deliveryNotes,
       factures: order.invoices,
+      avoirs: order.creditNotes,
+      recus_de_paiement: order.receipts,
       deja_facture: order.invoiced,
       reste_a_facturer: order.remaining ?? "inconnu",
+      deja_recu: order.received,
+      reste_a_payer: order.remainingToPay ?? "inconnu",
       journal: order.journal.slice(-10).map((entry) => `${frenchDay(entry.at.slice(0, 10))} ${entry.at.slice(11, 16)} (${entry.by}) ${entry.text}`),
       ...anomalyLines(anomalies.filter((anomaly) => anomaly.orderNumber === order.number))
     };
@@ -1372,6 +1421,8 @@ async function consultDocument(args, { documentService }) {
     conditions_paiement: conditions,
     reference_devis: input.quoteReference ?? "",
     reference_bl: input.deliveryNoteReference ?? "",
+    reference_facture: input.invoiceReference ?? "",
+    mode_paiement: [...PAYMENT_RECEIPT_METHODS, ...CREDIT_NOTE_SETTLEMENTS].includes(input.payment?.method) && !input.payment?.termsRule ? input.payment.method : "",
     visuel: input.referenceImage ? "oui, il sera conservé" : "non"
   };
 }

@@ -21,15 +21,17 @@ import { join } from "node:path";
 export const DEFAULT_ARCHIVE_DIR = join(homedir(), "Documents", "H-KIDS Administratif");
 export const REGISTER_FILE = "Registre des documents.csv";
 
-export const DOCUMENT_LABELS = Object.freeze({ quote: "Devis", purchase_order: "Bon de commande", delivery_note: "Bon de livraison", invoice: "Facture" });
-const FOLDERS = Object.freeze({ quote: "Devis", purchase_order: "Bons de commande", delivery_note: "Bons de livraison", invoice: "Factures" });
-const FILE_WORDS = Object.freeze({ quote: "devis", purchase_order: "bon-de-commande", delivery_note: "bon-de-livraison", invoice: "facture" });
+export const DOCUMENT_LABELS = Object.freeze({ quote: "Devis", purchase_order: "Bon de commande", delivery_note: "Bon de livraison", invoice: "Facture", credit_note: "Avoir", payment_receipt: "Reçu de paiement" });
+const FOLDERS = Object.freeze({ quote: "Devis", purchase_order: "Bons de commande", delivery_note: "Bons de livraison", invoice: "Factures", credit_note: "Avoirs", payment_receipt: "Reçus de paiement" });
+const FILE_WORDS = Object.freeze({ quote: "devis", purchase_order: "bon-de-commande", delivery_note: "bon-de-livraison", invoice: "facture", credit_note: "avoir", payment_receipt: "recu" });
 // What the agents and the cockpit may call a type.
 const TYPE_ALIASES = Object.freeze({
   devis: "quote", quote: "quote",
   bon_de_commande: "purchase_order", bc: "purchase_order", purchase_order: "purchase_order",
   bon_de_livraison: "delivery_note", bl: "delivery_note", delivery_note: "delivery_note",
-  facture: "invoice", invoice: "invoice"
+  facture: "invoice", invoice: "invoice",
+  avoir: "credit_note", credit_note: "credit_note",
+  recu: "payment_receipt", recu_paiement: "payment_receipt", "reçu": "payment_receipt", payment_receipt: "payment_receipt"
 });
 const CIVILITY = /^(mme|madame|mlle|mademoiselle|m|mr|monsieur|dr|docteur|ste|societe|famille)$/;
 

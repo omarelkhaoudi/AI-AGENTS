@@ -94,7 +94,29 @@ export function deliveryNoteReferences(document) {
   return Object.freeze(references);
 }
 
+// What a credit note or a receipt settles: the invoice first, then the quote,
+// as each document actually carries them. None is ever invented.
+export function settlementReferences(document) {
+  const references = [];
+  const invoice = typeof document?.invoiceReference === "string" ? document.invoiceReference.trim() : "";
+  if (invoice !== "") {
+    references.push(Object.freeze({ field: "invoiceReference", label: "Référence facture", value: invoice }));
+  }
+  const quote = typeof document?.quoteReference === "string" ? document.quoteReference.trim() : "";
+  if (quote !== "") {
+    references.push(Object.freeze({ field: "quoteReference", label: "Référence devis", value: quote }));
+  }
+  return Object.freeze(references);
+}
+
+export function isSettlementDocument(document) {
+  return [HKIDS_DOCUMENT_TYPES.CREDIT_NOTE, HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT].includes(document?.documentType);
+}
+
 export function referenceLabelFor(document) {
+  if (isSettlementDocument(document)) {
+    return settlementReferences(document).map((reference) => `${reference.label}: ${reference.value}`).join(" — ");
+  }
   if (document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE) {
     const upstream = invoiceUpstreamReference(document);
     return upstream ? `${upstream.label}: ${upstream.value}` : "";

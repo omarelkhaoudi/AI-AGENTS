@@ -9,7 +9,7 @@ import { logoPath, renderHkidsPdf } from "./pdf-renderer.js";
 import { isPurchaseOrderNumberUsed, nextPurchaseOrderNumber } from "./purchase-order.js";
 import { renderHkidsDocx } from "./docx-renderer.js";
 import { documentLayoutFor } from "./hkids-template.js";
-import { checkInvoice, dossierNotices, dossierOf, summarizeIssuedContent, summarizeIssuedWord } from "./document-ledger.js";
+import { checkCreditNote, checkInvoice, checkReceipt, dossierNotices, dossierOf, summarizeIssuedContent, summarizeIssuedWord } from "./document-ledger.js";
 
 export class DocumentGenerationError extends Error {
   constructor(message, code, details = {}) {
@@ -291,6 +291,12 @@ export class HkidsDocumentService {
   // refused: the same sale is never invoiced twice. Other documents only learn
   // which sale they belong to.
   async #checkChain(document, { replaceExisting }) {
+    if (document.documentType === HKIDS_DOCUMENT_TYPES.CREDIT_NOTE) {
+      return this.#checkCreditNote(document, { replaceExisting });
+    }
+    if (document.documentType === HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT) {
+      return this.#checkReceipt(document, { replaceExisting });
+    }
     if (document.documentType !== HKIDS_DOCUMENT_TYPES.INVOICE) {
       return {};
     }
@@ -303,6 +309,46 @@ export class HkidsDocumentService {
         invoicedBefore: check.invoicedBefore,
         remainingBefore: check.remainingBefore,
         previousInvoices: check.previous.map((entry) => ({ number: entry.number, date: entry.date, totalTtc: entry.totalTtc }))
+      });
+    }
+    return check;
+  }
+
+  // A credit note corrects an invoice the cockpit issued, and the credit notes on
+  // one invoice never come to more than the invoice.
+  async #checkCreditNote(document, { replaceExisting }) {
+    const check = checkCreditNote(await this.listIssued(), document, { replaceExisting });
+    if (check.reason === "invoice_not_issued") {
+      throw new DocumentGenerationError("The invoice this credit note corrects was not issued by the cockpit.", "CREDITED_INVOICE_NOT_FOUND", {
+        field: "invoiceReference",
+        invoiceReference: document.invoiceReference
+      });
+    }
+    if (!check.ok) {
+      throw new DocumentGenerationError("This credit note would give back more than the invoice it corrects.", "CREDIT_NOTE_EXCEEDS_INVOICE", {
+        totalTtc: document.totals.totalTtc,
+        invoiceNumber: check.invoice.number,
+        invoiceTotal: check.invoiceTotal,
+        creditedBefore: check.creditedBefore,
+        creditableBefore: check.creditableBefore,
+        previousCreditNotes: check.previous.map((entry) => ({ number: entry.number, date: entry.date, totalTtc: entry.totalTtc }))
+      });
+    }
+    return check;
+  }
+
+  // What the client paid on a sale never comes to more than the sale: the same
+  // payment is not recorded twice.
+  async #checkReceipt(document, { replaceExisting }) {
+    const check = checkReceipt(await this.listIssued(), document, { replaceExisting });
+    if (!check.ok) {
+      throw new DocumentGenerationError("This receipt would record more than the sale was worth.", "RECEIPT_EXCEEDS_SALE", {
+        totalTtc: document.totals.totalTtc,
+        ceiling: check.dossier.ceiling,
+        ceilingFrom: check.dossier.ceilingFrom,
+        receivedBefore: check.receivedBefore,
+        remainingToPayBefore: check.remainingToPayBefore,
+        previousReceipts: check.previous.map((entry) => ({ number: entry.number, date: entry.date, totalTtc: entry.totalTtc }))
       });
     }
     return check;
@@ -410,13 +456,15 @@ const FILE_PREFIXES = Object.freeze({
   [HKIDS_DOCUMENT_TYPES.QUOTE]: "devis",
   [HKIDS_DOCUMENT_TYPES.INVOICE]: "facture",
   [HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE]: "bon_livraison",
-  [HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER]: PURCHASE_ORDER_FILE_PREFIX
+  [HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER]: PURCHASE_ORDER_FILE_PREFIX,
+  [HKIDS_DOCUMENT_TYPES.CREDIT_NOTE]: "avoir",
+  [HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT]: "recu"
 });
 
 const TYPE_BY_PREFIX = Object.freeze(Object.fromEntries(Object.entries(FILE_PREFIXES).map(([type, prefix]) => [prefix, type])));
 // An issued file at the top of the output folder; archived ones live in a
 // subfolder and never match.
-const ISSUED_FILE = /^(devis|facture|bon_livraison|bon_commande)_HKIDS_(\d+)_(.+)\.(pdf|docx|json)$/;
+const ISSUED_FILE = /^(devis|facture|bon_livraison|bon_commande|avoir|recu)_HKIDS_(\d+)_(.+)\.(pdf|docx|json)$/;
 
 // The highest number issued by hand before the generator, per series. Quotes
 // 160 to 163 were written by hand; the purchase orders have their own register.

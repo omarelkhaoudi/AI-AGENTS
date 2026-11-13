@@ -9,8 +9,11 @@ import {
   deliveryNoteReferences,
   documentTitleFor,
   invoiceUpstreamReference,
-  purchaseOrderQuoteReference
+  isSettlementDocument,
+  purchaseOrderQuoteReference,
+  settlementReferences
 } from "./hkids-template.js";
+import { dirhamsInWords } from "./amount-in-words.js";
 import { computeInstalments, parseReferenceImage, purchaseOrderPaymentPlan } from "./purchase-order.js";
 
 // pdf-lib embeds a real font file, so rendering needs a .ttf that exists on the
@@ -166,6 +169,15 @@ const TABLE_LAYOUTS = Object.freeze({
       { label: "Total HT", key: "netAmountHt", right: R - 6 }
     ])
   }),
+  // A receipt states what was paid for and how much: no quantity, no tax.
+  receipt: Object.freeze({
+    size: 8.5,
+    headerSize: 7.8,
+    designation: { label: "Désignation", x: L + 6, width: 380 },
+    columns: Object.freeze([
+      { label: "Montant", key: "amountHt", right: R - 6 }
+    ])
+  }),
   // A delivery note that states only the goods: no price anywhere.
   goodsOnly: Object.freeze({
     size: 8.5,
@@ -224,8 +236,13 @@ async function drawDocument(document, files, { compact }) {
 
   drawFirstPageHeader(writer, document);
   drawItems(writer, document);
-  if (document.totals) {
+  if (document.documentType === HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT) {
+    drawReceivedAmount(writer, document);
+  } else if (document.totals) {
     drawTotals(writer, document);
+    if (document.documentType === HKIDS_DOCUMENT_TYPES.CREDIT_NOTE) {
+      drawAmountInWords(writer, document);
+    }
   } else {
     drawDeliveryNoteReferences(writer, document);
   }
@@ -326,6 +343,10 @@ function drawFirstPageHeader(w, document) {
 // The label follows the reference the invoice actually carries: a quote for the
 // commercial file, a delivery note for the historical flow.
 function referenceLine(document) {
+  if (isSettlementDocument(document)) {
+    const references = settlementReferences(document);
+    return references.length > 0 ? references.map((reference) => `${reference.label} : ${reference.value}`).join("   ·   ") : null;
+  }
   if (document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE) {
     const upstream = invoiceUpstreamReference(document);
     if (!upstream) {
@@ -348,7 +369,10 @@ function tableLayout(document) {
     && document.deliveryNoteProfile === DELIVERY_NOTE_PROFILES.GOODS_ONLY) {
     return TABLE_LAYOUTS.goodsOnly;
   }
-  if (document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE) {
+  if (document.documentType === HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT) {
+    return TABLE_LAYOUTS.receipt;
+  }
+  if (INVOICE_LIKE.includes(document.documentType)) {
     return invoiceShowsLineTaxes(document) ? TABLE_LAYOUTS.invoice : TABLE_LAYOUTS.invoiceHtOnly;
   }
   return TABLE_LAYOUTS.standard;
@@ -422,6 +446,33 @@ function drawTotals(w, document) {
   w.y += 46;
 }
 
+// A receipt carries no tax: what the client paid, on the green band, and the
+// sum written out, as a Moroccan receipt states it.
+function drawReceivedAmount(w, document) {
+  w.ensure(80);
+  const labelX = 340;
+  w.box(labelX - 10, w.y, R - labelX + 10, 30, { fill: COLORS.green });
+  w.text("MONTANT REÇU", labelX, w.y + 19, { size: 10.5, isBold: true, color: COLORS.white });
+  w.text(formatMoney(document.totals.totalTtc), R - 10, w.y + 20, { size: 12.5, isBold: true, color: COLORS.white, align: "right" });
+  w.y += 46;
+  drawAmountInWords(w, document);
+}
+
+function drawAmountInWords(w, document) {
+  const lines = w.wrap(`${amountInWordsSentence(document)}.`, R - L, 9);
+  w.ensure(lines.length * 14 + 10);
+  lines.forEach((line, index) => w.text(line, L, w.y + index * 14, { size: 9 }));
+  w.y += lines.length * 14 + 12;
+}
+
+// « Arrêté le présent reçu à la somme de : douze mille dirhams », shared with
+// the Word copy so both files say the same thing.
+export function amountInWordsSentence(document) {
+  const subject = document.documentType === HKIDS_DOCUMENT_TYPES.CREDIT_NOTE ? "le présent avoir" : "le présent reçu";
+  const words = dirhamsInWords(document.totals.totalTtc);
+  return `Arrêté ${subject} à la somme de : ${words.charAt(0).toUpperCase()}${words.slice(1)}${document.documentType === HKIDS_DOCUMENT_TYPES.CREDIT_NOTE ? " toutes taxes comprises" : ""}`;
+}
+
 // What a delivery note with no price says instead of amounts: the documents
 // it refers back to, and when the goods are due, exactly as the document says.
 function drawDeliveryNoteReferences(w, document) {
@@ -469,14 +520,15 @@ function drawPaymentTerms(w, document) {
   const extra = (document.payment.method ? 1 : 0) + (document.note ? 1 : 0);
   const step = w.compact ? 14 : 18;
   w.ensure(28 + (termLines.length + extra) * step);
-  w.text("CONDITIONS DE RÈGLEMENT", L, w.y + 10, { size: 9, isBold: true });
+  const settlement = SETTLEMENT_WORDING[document.documentType];
+  w.text(settlement?.title ?? "CONDITIONS DE RÈGLEMENT", L, w.y + 10, { size: 9, isBold: true });
   w.y += w.compact ? 24 : 28;
   for (const line of termLines) {
     w.text(line, L, w.y, { size: 9 });
     w.y += step;
   }
   if (document.payment.method) {
-    w.text(`Moyen de paiement : ${document.payment.method}`, L, w.y, { size: 9 });
+    w.text(`${settlement?.method ?? "Moyen de paiement"} : ${document.payment.method}`, L, w.y, { size: 9 });
     w.y += step;
   }
   if (document.note) {
@@ -488,6 +540,13 @@ function drawPaymentTerms(w, document) {
     w.y += 4;
   }
 }
+
+// What a credit note and a receipt call their settlement line. Shared with the
+// Word copy.
+export const SETTLEMENT_WORDING = Object.freeze({
+  [HKIDS_DOCUMENT_TYPES.CREDIT_NOTE]: Object.freeze({ title: "RÈGLEMENT DE L'AVOIR", method: "Règlement" }),
+  [HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT]: Object.freeze({ title: "MODE DE PAIEMENT", method: "Payé par" })
+});
 
 // A quote states what each instalment of its plan will be, as the quotes H-KIDS
 // sent by hand did; the figures come from the same plan and the same rounding as
@@ -506,7 +565,8 @@ function drawClosing(w, document) {
   const block = {
     [HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER]: { title: "BON POUR ACCORD", left: "Pour H KIDS", right: "Le client", leftSign: "Signature / Cachet :", rightSign: "Signature :" },
     [HKIDS_DOCUMENT_TYPES.QUOTE]: { title: "BON POUR ACCORD", left: "Pour H KIDS", right: "Le client", leftSign: "Signature / Cachet :", rightSign: "Date et signature :" },
-    [HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE]: { title: "RÉCEPTION DE LA LIVRAISON", left: "Livré par H KIDS", right: "Reçu par le client", leftSign: "Signature / Cachet :", rightSign: "Date et signature :" }
+    [HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE]: { title: "RÉCEPTION DE LA LIVRAISON", left: "Livré par H KIDS", right: "Reçu par le client", leftSign: "Signature / Cachet :", rightSign: "Date et signature :" },
+    [HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT]: { title: "POUR ACQUIT", left: "Reçu par H KIDS", right: "Versé par le client", leftSign: "Signature / Cachet :", rightSign: "Signature :" }
   }[document.documentType];
 
   w.ensure(block ? 110 : 20);
@@ -614,15 +674,18 @@ function isFixedDiscount(discount) {
  * charges. The lines then state their HT, and the tax is stated once, on the net.
  */
 export function invoiceShowsLineTaxes(document) {
-  return !(document?.documentType === HKIDS_DOCUMENT_TYPES.INVOICE && isFixedDiscount(document.discount));
+  return !(INVOICE_LIKE.includes(document?.documentType) && isFixedDiscount(document.discount));
 }
+
+// A credit note is an invoice in reverse: it is drawn and totalled the same way.
+const INVOICE_LIKE = Object.freeze([HKIDS_DOCUMENT_TYPES.INVOICE, HKIDS_DOCUMENT_TYPES.CREDIT_NOTE]);
 
 /**
  * The label of the rebate row of an invoice, or null when the invoice carries
  * no rebate. Shared with the Word renderer so both files say the same thing.
  */
 export function invoiceDiscountLabel(document) {
-  if (document?.documentType !== HKIDS_DOCUMENT_TYPES.INVOICE || !(Number(document.totals?.totalDiscount) > 0)) {
+  if (!INVOICE_LIKE.includes(document?.documentType) || !(Number(document.totals?.totalDiscount) > 0)) {
     return null;
   }
   return discountRowLabel(document.discount);

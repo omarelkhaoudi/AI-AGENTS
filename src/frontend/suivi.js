@@ -92,16 +92,28 @@ function photosCard({ photos }) {
   </section>`;
 }
 
-function scheduleCard({ schedule }) {
+// What the client paid, from the receipts H-KIDS gave them, with the plan
+// below it when the order states one.
+function scheduleCard({ schedule, payments }) {
+  const paid = payments && payments.received > 0
+    ? `<ul class="mt-2 list-none p-0">
+      <li class="flex items-baseline justify-between gap-3 border-b border-line py-2"><span>Montant de la commande</span><strong class="shrink-0 tabular-nums">${escapeHtml(formatDh(payments.total))}</strong></li>
+      <li class="flex items-baseline justify-between gap-3 border-b border-line py-2"><span>Déjà réglé</span><strong class="shrink-0 tabular-nums text-brand">${escapeHtml(formatDh(payments.received))}</strong></li>
+      <li class="flex items-baseline justify-between gap-3 py-2"><span>Reste à régler</span><strong class="shrink-0 tabular-nums">${escapeHtml(formatDh(payments.remaining))}</strong></li>
+    </ul>`
+    : "";
   if (schedule.length === 0) {
-    return "";
+    return paid ? `<section class="rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6">
+    <h2>Vos paiements</h2>
+    ${paid}
+  </section>` : "";
   }
   const rows = schedule.map((part) => `<li class="flex items-baseline justify-between gap-3 border-b border-line py-2 last:border-b-0">
       <span class="min-w-0 break-words">${escapeHtml(`${part.percent} % ${part.due}`)}</span>
       <strong class="shrink-0 tabular-nums">${escapeHtml(formatDh(part.amount))}</strong>
     </li>`);
   return `<section class="rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6">
-    <h2>Échéancier de paiement</h2>
+    ${paid ? `<h2>Vos paiements</h2>${paid}<h3 class="mt-4 text-[13px] font-semibold text-ink-2">Échéancier</h3>` : "<h2>Échéancier de paiement</h2>"}
     <ul class="mt-2 list-none p-0">${rows.join("")}</ul>
   </section>`;
 }

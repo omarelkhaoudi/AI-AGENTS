@@ -394,7 +394,9 @@ const DOCUMENT_LABELS = Object.freeze({
   quote: "Devis",
   purchase_order: "Bon de commande",
   invoice: "Facture",
-  delivery_note: "Bon de livraison"
+  delivery_note: "Bon de livraison",
+  credit_note: "Avoir",
+  payment_receipt: "Reçu de paiement"
 });
 
 async function askDirector(message) {
@@ -2270,6 +2272,11 @@ async function removeOrderPhoto(number, id) {
   await refreshOrders();
 }
 
+// An amount that never splits across two lines.
+function nonBreaking(value) {
+  return String(value).replace(/ /g, " ");
+}
+
 // The paperwork of the sale, the amount aside: delivery notes, invoices, and
 // what is left to invoice.
 function orderDocuments(order) {
@@ -2279,6 +2286,12 @@ function orderDocuments(order) {
   }
   if (order.invoices.length > 0) {
     parts.push(`facture${order.invoices.length > 1 ? "s" : ""} n° ${order.invoices.join(", ")}`);
+  }
+  if ((order.creditNotes ?? []).length > 0) {
+    parts.push(`avoir${order.creditNotes.length > 1 ? "s" : ""} n° ${order.creditNotes.join(", ")}`);
+  }
+  if ((order.received ?? 0) > 0) {
+    parts.push(order.remainingToPay > 0 ? `reçu ${nonBreaking(formatDh(order.received))}, reste à payer ${nonBreaking(formatDh(order.remainingToPay))}` : "payée en totalité");
   }
   if (order.quoteNumber && order.remaining !== null) {
     // Non-breaking spaces, so an amount never splits across two lines.
@@ -2505,6 +2518,11 @@ function formatAgentText(reply) {
 function documentCard(entry, index) {
   const preview = entry.preview.document;
   const instalments = preview.payment?.instalments ?? [];
+  // A receipt carries no tax; a credit note and a receipt say how the money moves.
+  const receipt = preview.documentType === "payment_receipt";
+  const settlement = receipt ? `Payé par : ${preview.payment?.method ?? ""}`
+    : preview.documentType === "credit_note" ? `Règlement : ${preview.payment?.method ?? ""}` : "";
+  const references = [preview.invoiceReference ? `facture n° ${preview.invoiceReference}` : "", preview.quoteReference ? `devis n° ${preview.quoteReference}` : ""].filter(Boolean);
   return `
     <article class="doc-card">
       <header>
@@ -2515,8 +2533,17 @@ function documentCard(entry, index) {
         </div>
         <span class="tag warning doc-status">À valider</span>
       </header>
+      ${(receipt || preview.documentType === "credit_note") && references.length > 0 ? `<p class="muted">Sur ${escapeHtml(references.join(" · "))}</p>` : ""}
       ${entry.replaces ? `<p class="doc-replaces">${icon("refresh")}<span>Correction du n° ${escapeHtml(preview.documentNumber)} : l'ancienne version sera archivée quand vous validerez.</span></p>` : ""}
       ${(entry.preview.notices ?? []).map((notice) => `<p class="doc-replaces">${icon("route")}<span>${escapeHtml(notice)}</span></p>`).join("")}
+      ${receipt ? `
+      <table class="document-table">
+        <thead><tr><th>Désignation</th><th>Montant</th></tr></thead>
+        <tbody>${preview.items.map((item) => `<tr><td>${escapeHtml(item.designation)}</td><td>${escapeHtml(formatDh(item.amountHt))}</td></tr>`).join("")}</tbody>
+      </table>
+      <ul class="doc-totals">
+        <li class="grand"><span>Montant reçu</span><strong>${escapeHtml(formatDh(preview.totals.totalTtc))}</strong></li>
+      </ul>` : `
       <table class="document-table">
         <thead><tr><th>Désignation</th><th>Qté</th><th>Montant HT</th></tr></thead>
         <tbody>${preview.items.map((item) => `<tr><td>${escapeHtml(item.designation)}</td><td>${escapeHtml(String(item.quantity))}</td><td>${escapeHtml(formatDh(item.netAmountHt ?? item.amountHt))}</td></tr>`).join("")}</tbody>
@@ -2524,8 +2551,9 @@ function documentCard(entry, index) {
       <ul class="doc-totals">
         <li><span>Total HT</span><strong>${escapeHtml(formatDh(preview.totals.totalHt))}</strong></li>
         <li><span>TVA 20 %</span><strong>${escapeHtml(formatDh(preview.totals.tva))}</strong></li>
-        <li class="grand"><span>Total TTC</span><strong>${escapeHtml(formatDh(preview.totals.totalTtc))}</strong></li>
-      </ul>
+        <li class="grand"><span>${preview.documentType === "credit_note" ? "Total de l'avoir TTC" : "Total TTC"}</span><strong>${escapeHtml(formatDh(preview.totals.totalTtc))}</strong></li>
+      </ul>`}
+      ${settlement ? `<p class="muted">${escapeHtml(settlement)}</p>` : ""}
       ${instalments.length > 0
         ? `<p class="muted">${instalments.map((part) => `${escapeHtml(String(part.percent))} % ${escapeHtml(part.due)} : ${escapeHtml(formatDh(part.amount))}`).join(" · ")}</p>`
         : preview.payment?.terms ? `<p class="muted">${escapeHtml(preview.payment.terms)}</p>` : ""}

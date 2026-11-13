@@ -11,7 +11,7 @@ import { normalizeDocumentInput } from "./document-validation.js";
 // without invoicing the sale twice? The second is the guard behind every
 // invoice preview: the invoices of one sale never add up to more than the sale.
 
-const { QUOTE, PURCHASE_ORDER, DELIVERY_NOTE, INVOICE } = HKIDS_DOCUMENT_TYPES;
+const { QUOTE, PURCHASE_ORDER, DELIVERY_NOTE, INVOICE, CREDIT_NOTE, PAYMENT_RECEIPT } = HKIDS_DOCUMENT_TYPES;
 // A cent of rounding between documents is not an overcharge.
 const TOLERANCE = 0.01;
 
@@ -64,6 +64,14 @@ export function dossierOf(documents, { type, number }) {
 
   let quoteNumber = type === QUOTE ? wanted : firstOf(start, "quoteReference");
   let deliveryNoteNumber = type === DELIVERY_NOTE ? wanted : firstOf(start, "deliveryNoteReference");
+  // A credit note or a receipt may name only an invoice: the sale is the one
+  // that invoice belongs to.
+  const settledInvoiceNumber = [CREDIT_NOTE, PAYMENT_RECEIPT].includes(type) ? firstOf(start, "invoiceReference") : "";
+  if (!quoteNumber && !deliveryNoteNumber && settledInvoiceNumber) {
+    const invoice = find(INVOICE, settledInvoiceNumber);
+    quoteNumber = firstOf(invoice, "quoteReference");
+    deliveryNoteNumber = firstOf(invoice, "deliveryNoteReference");
+  }
   if (!quoteNumber && deliveryNoteNumber) {
     quoteNumber = firstOf(find(DELIVERY_NOTE, deliveryNoteNumber), "quoteReference");
   }
@@ -85,19 +93,30 @@ export function dossierOf(documents, { type, number }) {
   } else {
     // A document that names nothing before it is a sale of its own.
     orders = type === PURCHASE_ORDER ? start : [];
-    invoices = type === INVOICE ? start : [];
+    invoices = type === INVOICE ? start : settledInvoiceNumber ? find(INVOICE, settledInvoiceNumber) : [];
   }
 
   const anomalies = [];
-  const billed = latestPerNumber(invoices, anomalies, "facture");
-  latestPerNumber(orders, anomalies, "bon de commande");
+  const billed = latestPerNumber(invoices, anomalies, "La facture");
+  latestPerNumber(orders, anomalies, "Le bon de commande");
+
+  // What was given back on the invoices of the sale, and what the client paid
+  // on it: each names an invoice of the sale, or the quote itself.
+  const invoiceNumbers = new Set(billed.map((entry) => entry.number));
+  const ofThisSale = (entry) => invoiceNumbers.has(entry.invoiceReference) || (Boolean(quoteNumber) && entry.quoteReference === quoteNumber);
+  const credits = latestPerNumber(documents.filter((entry) => entry.type === CREDIT_NOTE && ofThisSale(entry)), anomalies, "L'avoir");
+  const receipts = latestPerNumber(documents.filter((entry) => entry.type === PAYMENT_RECEIPT && ofThisSale(entry)), anomalies, "Le reçu");
   const ceilingFrom = [
     ["devis", quotes],
     ["bon de commande", orders],
     ["bon de livraison", deliveryNotes]
   ].find(([, entries]) => entries.some((entry) => entry.totalTtc !== null));
   const ceiling = ceilingFrom ? ceilingFrom[1].find((entry) => entry.totalTtc !== null).totalTtc : null;
-  const invoiced = roundMoney(billed.reduce((sum, entry) => sum + (entry.totalTtc ?? 0), 0));
+  const invoicedGross = roundMoney(billed.reduce((sum, entry) => sum + (entry.totalTtc ?? 0), 0));
+  const credited = roundMoney(credits.reduce((sum, entry) => sum + (entry.totalTtc ?? 0), 0));
+  // What remains invoiced once the credit notes are taken off.
+  const invoiced = roundMoney(invoicedGross - credited);
+  const received = roundMoney(receipts.reduce((sum, entry) => sum + (entry.totalTtc ?? 0), 0));
   if (billed.some((entry) => entry.totalTtc === null)) {
     anomalies.push("Le montant d'une facture du dossier n'a pas pu être lu : le total facturé est incomplet.");
   }
@@ -111,11 +130,18 @@ export function dossierOf(documents, { type, number }) {
     orders: Object.freeze(orders),
     deliveryNotes: Object.freeze(deliveryNotes),
     invoices: Object.freeze(billed),
+    creditNotes: Object.freeze(credits),
+    receipts: Object.freeze(receipts),
     ceiling,
     ceilingFrom: ceilingFrom?.[0] ?? null,
+    invoicedGross,
+    credited,
     invoiced,
     remaining: ceiling === null ? null : roundMoney(Math.max(0, ceiling - invoiced)),
-    stage: stageOf({ quoteNumber, orders, deliveryNotes, invoiced, ceiling }),
+    received,
+    // What the client still owes on the sale, whatever has been invoiced.
+    remainingToPay: ceiling === null ? null : roundMoney(Math.max(0, ceiling - received)),
+    stage: stageOf({ quoteNumber, orders, deliveryNotes, invoiced, ceiling, received }),
     anomalies: Object.freeze(anomalies)
   });
 }
@@ -156,9 +182,79 @@ export function checkInvoice(documents, document, { replaceExisting = false } = 
   });
 }
 
+// Whether a credit note may be issued: the invoice it names exists, and the
+// credit notes on that invoice, this one with them, never come to more than it.
+// A correction of a credit note under its own number replaces it.
+export function checkCreditNote(documents, document, { replaceExisting = false } = {}) {
+  const number = String(document.documentNumber);
+  const invoiceNumber = String(document.invoiceReference ?? "").trim();
+  const invoice = latestPerNumber(documents.filter((entry) => entry.type === INVOICE && entry.number === invoiceNumber), [], "").at(0) ?? null;
+  const previous = latestPerNumber(documents.filter((entry) => entry.type === CREDIT_NOTE
+    && entry.invoiceReference === invoiceNumber
+    && !(entry.number === number && replaceExisting)), [], "");
+  const creditedBefore = roundMoney(previous.reduce((sum, entry) => sum + (entry.totalTtc ?? 0), 0));
+  const invoiceTotal = invoice?.totalTtc ?? null;
+  const total = Number(document.totals?.totalTtc ?? 0);
+  const fits = invoiceTotal !== null && roundMoney(creditedBefore + total) <= invoiceTotal + TOLERANCE;
+  return Object.freeze({
+    ok: invoice !== null && fits,
+    reason: invoice === null ? "invoice_not_issued" : invoiceTotal === null ? "invoice_amount_unknown" : fits ? null : "exceeds_invoice",
+    invoice,
+    invoiceTotal,
+    previous: Object.freeze(previous),
+    creditedBefore,
+    creditableBefore: invoiceTotal === null ? null : roundMoney(Math.max(0, invoiceTotal - creditedBefore))
+  });
+}
+
+// Whether a receipt may be issued: with what the client already paid on the
+// sale, it must not come to more than the sale. A sale whose amount is unknown
+// cannot be checked, and the card says so.
+export function checkReceipt(documents, document, { replaceExisting = false } = {}) {
+  const number = String(document.documentNumber);
+  const others = documents.filter((entry) => !(entry.type === PAYMENT_RECEIPT && entry.number === number && replaceExisting));
+  const proposed = Object.freeze({
+    type: PAYMENT_RECEIPT,
+    number,
+    stem: null,
+    date: document.date,
+    client: document.client?.name ?? "",
+    totalTtc: document.totals?.totalTtc ?? null,
+    quoteReference: document.quoteReference ?? "",
+    deliveryNoteReference: "",
+    invoiceReference: document.invoiceReference ?? "",
+    source: "proposed"
+  });
+  const dossier = dossierOf([...others, proposed], { type: PAYMENT_RECEIPT, number });
+  const previous = (dossier?.receipts ?? []).filter((entry) => entry !== proposed);
+  const receivedBefore = roundMoney(previous.reduce((sum, entry) => sum + (entry.totalTtc ?? 0), 0));
+  const exceeds = dossier !== null && dossier.ceiling !== null && dossier.received > dossier.ceiling + TOLERANCE;
+  return Object.freeze({
+    ok: !exceeds,
+    dossier,
+    previous: Object.freeze(previous),
+    receivedBefore,
+    remainingToPayBefore: dossier === null || dossier.ceiling === null ? null : roundMoney(Math.max(0, dossier.ceiling - receivedBefore))
+  });
+}
+
 // What the card and the agent say about the sale a document belongs to.
-export function dossierNotices(document, { dossier, previous = [], invoicedBefore = 0, remainingBefore = null } = {}) {
+export function dossierNotices(document, { dossier, previous = [], invoicedBefore = 0, remainingBefore = null, invoice = null, creditedBefore = 0, creditableBefore = null, receivedBefore = 0, remainingToPayBefore = null } = {}) {
   const notices = [];
+  const numbers = (entries) => entries.map((entry) => entry.number).join(", ");
+  if (document.documentType === CREDIT_NOTE && invoice) {
+    notices.push(previous.length === 0
+      ? `Avoir sur la facture n° ${invoice.number} (${formatAmount(invoice.totalTtc)} TTC, du ${invoice.date}).`
+      : `Avoir sur la facture n° ${invoice.number} (${formatAmount(invoice.totalTtc)} TTC) : déjà ${formatAmount(creditedBefore)} en avoir (n° ${numbers(previous)}) ; reste possible avant celui-ci : ${formatAmount(creditableBefore)}.`);
+    notices.push("Le reste à facturer de la vente augmente d'autant.");
+  }
+  if (document.documentType === PAYMENT_RECEIPT && dossier) {
+    const total = Number(document.totals?.totalTtc ?? 0);
+    const before = previous.length > 0 ? ` (reçu n° ${numbers(previous)})` : "";
+    notices.push(dossier.ceiling === null
+      ? `Montant de la vente inconnu : vérifiez que ce paiement n'est pas déjà enregistré. Déjà reçu : ${formatAmount(receivedBefore)}${before}.`
+      : `Vente de ${formatAmount(dossier.ceiling)} TTC (selon le ${dossier.ceilingFrom}) : déjà reçu ${formatAmount(receivedBefore)}${before} ; après ce reçu, reste à payer ${formatAmount(Math.max(0, roundMoney(remainingToPayBefore - total)))}.`);
+  }
   if (document.documentType === PURCHASE_ORDER && document.quoteReference) {
     notices.push(`Issu du devis n° ${document.quoteReference} : à la validation, le devis passe à « accepté ».`);
   }
@@ -173,7 +269,10 @@ export function dossierNotices(document, { dossier, previous = [], invoicedBefor
   return Object.freeze(notices);
 }
 
-function stageOf({ quoteNumber, orders, deliveryNotes, invoiced, ceiling }) {
+function stageOf({ quoteNumber, orders, deliveryNotes, invoiced, ceiling, received = 0 }) {
+  if (ceiling !== null && received > 0 && received >= ceiling - TOLERANCE) {
+    return "payé en totalité";
+  }
   if (ceiling !== null && invoiced >= ceiling - TOLERANCE && invoiced > 0) {
     return "facturé en totalité";
   }
@@ -191,6 +290,7 @@ function stageOf({ quoteNumber, orders, deliveryNotes, invoiced, ceiling }) {
 
 // Several files under one number are one document issued more than once: the
 // latest counts, and the repeat is reported rather than counted twice.
+// label names the document with its article: « La facture », « L'avoir ».
 function latestPerNumber(entries, anomalies, label) {
   const byNumber = new Map();
   for (const entry of entries) {
@@ -198,7 +298,7 @@ function latestPerNumber(entries, anomalies, label) {
   }
   for (const [number, copies] of byNumber) {
     if (copies.length > 1) {
-      anomalies.push(`La ${label} n° ${number} existe en ${copies.length} exemplaires (dates ${copies.map((entry) => entry.date || "?").join(", ")}) : une seule est comptée.`);
+      anomalies.push(`${label} n° ${number} existe en ${copies.length} exemplaires (dates ${copies.map((entry) => entry.date || "?").join(", ")}) : une seule est comptée.`);
     }
   }
   return [...byNumber.values()].map((copies) => copies.reduce((latest, entry) => (dateKey(entry.date) >= dateKey(latest.date) ? entry : latest)));

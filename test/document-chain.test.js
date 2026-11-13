@@ -246,7 +246,7 @@ test("before an invoice, Finance follows the sale, and is stopped from billing m
     type: "facture", client_nom: "Client Exemple", client_adresse: "Marrakech", objet: "Vente de mobilier",
     lignes: [{ designation: "Solde sur devis n° 170", quantite: 1, prix_unitaire: ttc, prix_ttc: true }],
     caracteristiques: [], conditions_paiement: "60/20/20", reference_devis: "170", reference_bl: "",
-    numero: "", photo: 0, date: "", remplace: false
+    reference_facture: "", mode_paiement: "", numero: "", photo: 0, date: "", remplace: false
   });
   const { agent, calls } = agentWith(documents, {
     "Tu es le Director IA": [
@@ -265,9 +265,9 @@ test("before an invoice, Finance follows the sale, and is stopped from billing m
 
   const finance = calls.filter((payload) => payload.instructions.includes("Tu es l'agent Administration / Finance"));
   const consult = finance[0].tools.find((tool) => tool.name === "consulter_document");
-  assert.deepEqual(consult.parameters.properties.type.enum, ["facture", "devis", "bon_de_commande", "bon_de_livraison"], "Finance reads the documents an invoice comes from");
+  assert.deepEqual(consult.parameters.properties.type.enum, ["facture", "avoir", "recu_paiement", "devis", "bon_de_commande", "bon_de_livraison"], "Finance reads the documents an invoice comes from");
   const prepare = finance[0].tools.find((tool) => tool.name === "preparer_document");
-  assert.deepEqual(prepare.parameters.properties.type.enum, ["facture"], "but prepares only invoices");
+  assert.deepEqual(prepare.parameters.properties.type.enum, ["facture", "avoir", "recu_paiement"], "but prepares only invoices, credit notes and receipts");
 
   const followed = outputOf(finance[1]);
   assert.equal(followed.etape, "facturé en partie");
@@ -284,4 +284,52 @@ test("before an invoice, Finance follows the sale, and is stopped from billing m
   assert.equal(accepted.numero, "167");
   assert.equal(result.documents.length, 1, "only the invoice within the rest reaches the cockpit");
   assert.equal(result.documents[0].preview.document.totals.totalTtc, 2250);
+});
+
+test("Finance prepares a receipt for a payment and a credit note on an invoice, within what the sale allows", async (t) => {
+  const { documents } = await service(t);
+  await issue(documents, quote());
+  await issue(documents, invoice("166", 4500));
+  const base = {
+    client_nom: "Client Exemple", client_adresse: "Marrakech", caracteristiques: [], conditions_paiement: "60/20/20",
+    reference_bl: "", photo: 0, date: "", remplace: false
+  };
+  const receiptArgs = (amount, mode) => ({
+    ...base, type: "recu_paiement", objet: "Acompte", reference_devis: "170", reference_facture: "166", mode_paiement: mode, numero: "1",
+    lignes: [{ designation: "Acompte de 60 % sur le devis n° 170", quantite: 1, prix_unitaire: amount, prix_ttc: true }]
+  });
+  const creditArgs = (amount) => ({
+    ...base, type: "avoir", objet: "Remise commerciale", reference_devis: "170", reference_facture: "166", mode_paiement: "déduit du reste à payer", numero: "1",
+    lignes: [{ designation: "Remise commerciale sur la facture n° 166", quantite: 1, prix_unitaire: amount, prix_ttc: true }]
+  });
+  const { agent, calls } = agentWith(documents, {
+    "Tu es le Director IA": [
+      call("deleguer_a_un_agent", { agent: "finance", mission: "Reçu de l'acompte de 2 700 DH par chèque sur le devis 170, et avoir de 600 DH sur la facture 166." }, "d1"),
+      say("Le reçu et l'avoir sont prêts.")
+    ],
+    "Tu es l'agent Administration / Finance": [
+      call("preparer_document", receiptArgs(2700, ""), "f1"),
+      call("preparer_document", receiptArgs(5000, "chèque"), "f2"),
+      call("preparer_document", receiptArgs(2700, "chèque"), "f3"),
+      call("preparer_document", creditArgs(600), "f4"),
+      say("Reçu n° 1 et avoir n° 1 prêts.")
+    ]
+  });
+
+  const result = await agent.chat({ message: "Fais le reçu de l'acompte et l'avoir" });
+  const finance = calls.filter((payload) => payload.instructions.includes("Tu es l'agent Administration / Finance"));
+
+  assert.match(outputOf(finance[1]).erreur, /^Préciser mode_paiement parmi : espèces, virement bancaire, chèque/);
+  assert.match(outputOf(finance[2]).erreur, /^Reçu refusé : .+reste à payer : 4500 DH/);
+  const receipt = outputOf(finance[3]);
+  assert.equal(receipt.ok, true);
+  assert.equal(receipt.tva, 0);
+  assert.equal(receipt.total_ttc, 2700, "a receipt states the amount received, with no tax taken out");
+  assert.equal(receipt.mode_paiement, "chèque");
+  const credit = outputOf(finance[4]);
+  assert.equal(credit.ok, true);
+  assert.equal(credit.total_ttc, 600);
+
+  assert.deepEqual(result.documents.map((entry) => entry.input.documentType), ["payment_receipt", "credit_note"]);
+  assert.equal(result.documents[1].input.invoiceReference, "166");
 });

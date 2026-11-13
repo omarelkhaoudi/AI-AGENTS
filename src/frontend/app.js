@@ -3898,6 +3898,8 @@ async function generateCommercialDeliverable(deliverable) {
 showView(globalThis.location?.hash?.slice(1));
 currentTheme = applyTheme(readStoredTheme());
 renderGreeting();
+// A cockpit left open overnight still greets with the right day.
+setInterval(() => renderGreeting(), 60_000)?.unref?.();
 renderAgentRoster([]);
 updateOverview({});
 async function loadPanels() {

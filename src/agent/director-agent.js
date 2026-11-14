@@ -844,7 +844,15 @@ async function callModel(client, payload) {
           ? "Impossible de joindre OpenAI : la connexion internet semble coupée. Vérifiez le Wi-Fi ou la box, puis réessayez."
           : status === 400
             ? "OpenAI a refusé cette conversation. Ouvrez une nouvelle conversation et reposez la question."
-            : "Le service OpenAI n'a pas répondu. Réessayez dans un instant.";
+            : status === 403
+              ? "Le compte OpenAI n'a pas accès à ce modèle ou à ce pays (code 403) : vérifiez OPENAI_MODEL et le compte OpenAI."
+              : status === 404
+                ? "Le modèle OpenAI demandé n'existe pas pour ce compte (code 404) : vérifiez OPENAI_MODEL dans .env."
+                : status !== null && status >= 500
+                  ? `OpenAI est en panne de son côté (code ${status}). Réessayez dans quelques minutes.`
+                  // The status, when there is one, lets a photo of the screen say
+                  // what went wrong.
+                  : `Le service OpenAI n'a pas répondu${status ? ` (code ${status})` : ""}. Réessayez dans un instant.`;
     // What OpenAI said, in the server's terminal: never the key, only the
     // status and its message, so the next refusal is not a guess.
     if (!unreachable && status !== 401 && status !== 429) {

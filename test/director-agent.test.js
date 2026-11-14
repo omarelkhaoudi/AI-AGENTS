@@ -205,6 +205,22 @@ test("a lost internet connection is reported as such", async (t) => {
   assert.match(JSON.parse(other.body).error, /n'a pas répondu/, "any other failure keeps its own message");
 });
 
+// A photo of the screen is often all there is to go on: each refusal says what
+// it is, with its code.
+test("a model the account cannot use, a missing model and an OpenAI outage each say so, with their code", async (t) => {
+  const cases = [
+    [403, /n'a pas accès à ce modèle ou à ce pays \(code 403\)/],
+    [404, /n'existe pas pour ce compte \(code 404\)/],
+    [503, /en panne de son côté \(code 503\)/],
+    [409, /n'a pas répondu \(code 409\)/]
+  ];
+  for (const [status, expected] of cases) {
+    const { inject } = await createApi(t, scriptedClient([Object.assign(new Error("refused"), { status })]));
+    const response = await inject({ method: "POST", url: "/api/agent/chat", payload: { message: "bonjour" } });
+    assert.match(JSON.parse(response.body).error, expected);
+  }
+});
+
 test("a long conversation is cut where the direction spoke, never between a reasoning and its tool call", async () => {
   const { recentTurns } = await import("../src/agent/director-agent.js");
   const turn = (n) => [

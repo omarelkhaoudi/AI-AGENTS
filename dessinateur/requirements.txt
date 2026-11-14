@@ -1,0 +1,4 @@
+# The drafting engine needs only these two: ezdxf writes the DXF, shapely checks
+# the shapes and the nesting. Versions tested with the cockpit.
+ezdxf==1.4.4
+shapely==2.2.0

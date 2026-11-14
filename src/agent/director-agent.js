@@ -10,6 +10,7 @@ import { SPECIALISTS, SPECIALIST_IDS, runSpecialist } from "./agent-team.js";
 import { draftWhatsAppMessage } from "./whatsapp.js";
 import { STEP_LABELS, createMemoryPlanStore } from "./plan-store.js";
 import { createMemoryConversationStore } from "./conversation-store.js";
+import { DesignOfficeError, createDesignOffice, createMemoryDesignProfileBook, defaultPython, runEngine } from "./design-office.js";
 import { CNC_FILE_STATUS_LABELS, WORKSHOP_STATUSES, WORKSHOP_STATUS_LABELS, WORKSHOP_STEPS, WORKSHOP_STEP_IDS, WorkshopError, createMemoryWorkshopStore, createWorkshop, frenchDay } from "./workshop-book.js";
 import { OBJECTIVE_INDICATORS, currentMonth, measureObjective } from "./sales-objective.js";
 import { createMemoryCashBook } from "./cash-book.js";
@@ -398,6 +399,63 @@ const ORDER_TEAM_TOOL = Object.freeze({
     }
 });
 
+// The dessinateur méthodes, inside Production: the engine decomposes a piece of
+// furniture into numbered parts, nests them on the workshop's panels and writes
+// one DXF per panel, deposited on the order for the direction to validate.
+const DRAW_DXF_TOOL = Object.freeze({
+  type: "function",
+  name: "dessiner_dxf",
+  description: "Dessinateur méthodes : décompose un meuble d'un bon de commande en pièces numérotées (cotes calculées par le moteur géométrique, jamais estimées), fait le tableau de débit et le calepinage sur les panneaux de l'atelier, puis crée le DXF de chaque panneau (mm, 1:1, un calque par opération : contours, rainures, perçages, poches) et le dépose sur la commande, à valider par la direction avant la découpe CNC. Tant qu'une information manque ou qu'une valeur est à confirmer (cote, épaisseur réelle d'une matière, méthode d'assemblage), aucun DXF : l'outil renvoie les questions à poser. Appelle-le une première fois avec les paramètres connus (ou aucun) pour obtenir la liste exacte des paramètres du modèle.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      numero: { type: "string", description: "Numéro du bon de commande." },
+      meuble: { type: "string", enum: ["bibliotheque", "table_activite", "coffre_jouets", "maisonnette", "pieces_libres"], description: "Modèle : bibliotheque (bibliothèque / étagère à caisson), table_activite (table d'activité enfant), coffre_jouets (coffre à jouets), maisonnette (maisonnette de jeu), pieces_libres (meuble hors catalogue décrit pièce par pièce)." },
+      parametres: {
+        type: "array",
+        description: "Les valeurs du meuble, avec les noms de paramètres renvoyés par l'outil (largeur, hauteur, profondeur en mm, materiau_caisson = mdf18, cp18, cp15, hdf3 ou cp5…). Pour pieces_libres, pieces = la liste des pièces en JSON.",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            nom: { type: "string" },
+            valeur: { type: "string", description: "Nombre en mm, choix, matière, ou liste séparée par des virgules." },
+            source: { type: "string", enum: ["fourni", "a_confirmer"], description: "fourni : dit par la direction ou écrit sur le bon de commande ; a_confirmer : une proposition, une estimation (photo, plan) ou une valeur par défaut." }
+          },
+          required: ["nom", "valeur", "source"]
+        }
+      }
+    },
+    required: ["numero", "meuble", "parametres"]
+  }
+});
+
+const WORKSHOP_PROFILE_TOOL = Object.freeze({
+  type: "function",
+  name: "profil_atelier",
+  description: "Le profil d'atelier du dessinateur méthodes : matières (épaisseur réelle mesurée, panneau utile, marge), méthodes d'assemblage H-KIDS (embrèvement, rainure de fond, confirmat, taquets…) et espacement des pièces. lire : ce qui est confirmé et ce qui reste à confirmer, avec les champs de chaque réglage. confirmer : enregistre les valeurs que l'atelier a relevées ou décidées (« le MDF 18 mesure 18,3 », « l'embrèvement est bon tel quel ») et marque le réglage confirmé ; seulement pour un fait rapporté par la direction ou l'atelier.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      action: { type: "string", enum: ["lire", "confirmer"] },
+      reglage: { type: "string", description: "Pour confirmer : profil.materiau.<matière> (mdf18, cp18, cp15, hdf3, cp5), profil.assemblage.<méthode> ou profil.usinage. Chaîne vide pour lire." },
+      valeurs: {
+        type: "array",
+        description: "Pour confirmer : les champs relevés (ep_reelle obligatoire pour une matière ; un champ omis garde sa valeur actuelle).",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: { cle: { type: "string" }, valeur: { type: "string" } },
+          required: ["cle", "valeur"]
+        }
+      }
+    },
+    required: ["action", "reglage", "valeurs"]
+  }
+});
+
 const PUBLISH_PHOTO_TOOL = Object.freeze({
     type: "function",
     name: "publier_photo_suivi",
@@ -516,7 +574,7 @@ function instructions(today, briefing = []) {
     "",
     "Bilan commercial et relances : « fais le bilan commercial du mois », « quels devis relancer ? », « où en sont les ventes » → bilan_commercial (chiffres calculés sur les documents du cockpit : cite les numéros, ne recalcule rien, ne complète jamais avec un chiffre supposé). « J'ai relancé Mme Alami pour le devis 170, elle réfléchit », « le client du devis 172 a refusé, trop cher » → enregistrer_relance toi-même (perdu avec son motif pour un refus). Un devis ouvert sans nouvelles depuis 5 jours est à relancer : le responsable commercial est prévenu sur WhatsApp, et la direction au bout de 10 jours ; pour rédiger les messages de relance, confie-les au commercial.",
     "",
-    "Bureau d'études, avant la découpe : chaque bon de commande a un chef de charge qui le contrôle de bout en bout ; avec son numéro, il reçoit sur WhatsApp chaque étape de sa commande qui se bloque ou prend du retard, et sa réponse arrive à la Production comme compte rendu ; quand le client a un architecte, une personne de l'équipe est en lien avec lui ; après la fiche technique (étude technique terminée), le dessinateur fait le fichier de la machine CNC (G-code ou DXF) et le dépose dans le cockpit, ou l'envoie au numéro WhatsApp de l'entreprise avec « BC n° » en légende (son numéro doit être enregistré sur la commande). « Samir est chef de charge du BC 166 », « l'architecte de Mme Alami est M. Bennani, c'est Hiba qui le suit », « Karim fait le G-code » → equipe_commande. Le fichier n'atteint la machine qu'une fois validé par la direction dans le cockpit (vue Atelier) : tu ne le valides jamais, et la découpe CNC ne peut pas commencer avant. Une commande lancée sans chef de charge, un fichier CNC qui attend sa validation : signale-le dans tout point de situation.",
+    "Bureau d'études, avant la découpe : chaque bon de commande a un chef de charge qui le contrôle de bout en bout ; avec son numéro, il reçoit sur WhatsApp chaque étape de sa commande qui se bloque ou prend du retard, et sa réponse arrive à la Production comme compte rendu ; quand le client a un architecte, une personne de l'équipe est en lien avec lui ; après la fiche technique (étude technique terminée), le dessinateur fait le fichier de la machine CNC (G-code ou DXF) et le dépose dans le cockpit, ou l'envoie au numéro WhatsApp de l'entreprise avec « BC n° » en légende (son numéro doit être enregistré sur la commande). « Samir est chef de charge du BC 166 », « l'architecte de Mme Alami est M. Bennani, c'est Hiba qui le suit », « Karim fait le G-code » → equipe_commande. Le fichier n'atteint la machine qu'une fois validé par la direction dans le cockpit (vue Atelier) : tu ne le valides jamais, et la découpe CNC ne peut pas commencer avant. Une commande lancée sans chef de charge, un fichier CNC qui attend sa validation : signale-le dans tout point de situation. L'agent Production est aussi le dessinateur méthodes : « fais le DXF du BC 166 », « prépare le débit / le calepinage de la bibliothèque de Mme X », « l'épaisseur réelle du MDF 18 est 18,3 » → deleguer_a_un_agent production, avec le numéro du BC et tout ce que la direction a dit (dimensions, matière, options) ; il dépose les DXF sur la commande, à valider par la direction comme ceux du dessinateur, ou renvoie ce qui manque : transmets ses questions telles quelles.",
     "",
     "Caisse et bilan du jour : chaque entrée ou sortie d'argent que la direction t'annonce (« j'ai reçu 3 000 DH d'acompte de Mme Alami en espèces pour le devis 170 », « j'ai payé 1 200 DH de laque à Sodipeint par chèque », « j'ai versé les salaires, 18 000 DH par virement », « il y a 5 000 DH en caisse au départ ») → confie-la tout de suite au Directeur financier (finance) avec deleguer_a_un_agent, en recopiant tout : entrée ou sortie, montant, ce que c'est, moyen de paiement, qui a payé ou a été payé, numéro du devis ou du BC, la date si ce n'est pas aujourd'hui, et qui l'annonce. Plusieurs mouvements annoncés ensemble → une seule mission qui les liste tous. Finance l'enregistre au journal de caisse (et, pour le paiement d'un client dont la vente est connue, prépare son reçu de paiement à valider) et te rend le bilan du jour : réponds en deux ou trois lignes (mouvement n°, montant, solde du jour, et pour un client ce qui reste à encaisser sur sa vente). « Où en est la caisse », « bilan du jour », « combien j'ai en caisse » → bilan_caisse toi-même. Pour tout point de situation, donne aussi le bilan de caisse du jour. Une erreur de saisie (« ce n'était pas 3 000 mais 2 000 ») → finance : annuler le mouvement et enregistrer le bon. Justificatifs : une dépense annoncée avec la photo d'un reçu, d'un ticket ou d'une facture → écris « justificatif : photo n° X » dans la mission ; une photo envoyée plus tard pour une dépense déjà enregistrée (« voici le reçu du MDF ») → mission à finance : joindre la photo n° X au mouvement n° N. Sans photo, rappelle à la direction d'envoyer le justificatif. Une dépense au-dessus du seuil d'alerte s'approuve dans la vue Caisse du cockpit, par une personne : tu ne l'approuves jamais.",
     "",
@@ -560,12 +618,15 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, documentArchive = undefined, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, documentArchive = undefined, designProfileBook = null, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
   const loadCatalogue = createCatalogueLoader(cataloguePath ? { path: cataloguePath } : {});
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, documentArchive, autoAnalyse, publicBaseUrl, client, loadCatalogue });
+  // The dessinateur méthodes' engine runs with the Python of DESSINATEUR_PYTHON.
+  const python = defaultPython(env);
+  const designOffice = createDesignOffice({ book: designProfileBook ?? createMemoryDesignProfileBook(), engine: (request) => runEngine(request, { python }) });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, documentArchive, designOffice, autoAnalyse, publicBaseUrl, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -589,6 +650,8 @@ export function createDirectorAgent({
   // The register of the documents issued; read only from documentService
   // when not given.
   documentArchive = null,
+  // The dessinateur méthodes' engine and the workshop profile it draws with.
+  designOffice = createDesignOffice(),
   // A new anomaly found in the workshop book is handed to its agent at once,
   // in the background, for its cause and a rule. Off unless the server asks.
   autoAnalyse = false,
@@ -620,6 +683,7 @@ export function createDirectorAgent({
     loadObjectiveRecords,
     planStore,
     workshop,
+    designOffice,
     books,
     onNewAnomalies: (found) => queueAnalyses(found)
   });
@@ -1320,6 +1384,92 @@ async function setOrderTeam(args, { workshop, books }, by) {
   }
 }
 
+// The engine draws; the files are deposited on the order like the
+// draughtsman's, and wait for the direction. A panel already deposited for the
+// same design (same fingerprint in its name) is not deposited twice.
+async function drawDxf(args, { workshop, designOffice, books }, by) {
+  const number = text(args.numero);
+  const order = await workshop.order(number);
+  if (!order) {
+    return { ok: false, erreur: `Le bon de commande n° ${number} n'est pas au carnet d'atelier.` };
+  }
+  const params = Object.fromEntries((Array.isArray(args.parametres) ? args.parametres : [])
+    .filter((entry) => text(entry?.nom) !== "")
+    .map((entry) => [text(entry.nom), { value: text(entry.valeur), source: entry.source === "a_confirmer" ? "a_confirmer" : "fourni" }]));
+  let result;
+  try {
+    result = await designOffice.draw({ furniture: text(args.meuble), params });
+  } catch (error) {
+    if (error instanceof DesignOfficeError) {
+      return { ok: false, erreur: error.message };
+    }
+    throw error;
+  }
+  if (!result?.ok) {
+    return result ?? { ok: false, erreur: "Le moteur de dessin n'a rien renvoyé." };
+  }
+  const { panneaux: sheets = [], ...drawing } = result;
+  const answer = { ...drawing, bc: number, panneaux: sheets.map(({ dxf_base64: _file, ...sheet }) => sheet) };
+  if (!result.pret) {
+    return { ...answer, dxf: "aucun : il reste des informations à donner ou à confirmer (voir raisons et questions)." };
+  }
+  const deposited = [];
+  const already = [];
+  for (const sheet of sheets) {
+    const name = `BC${number}_${sheet.matiere}_panneau${sheet.numero}-${sheet.sur}_${String(result.empreinte).slice(0, 8)}.dxf`;
+    if ((order.cnc ?? []).some((entry) => entry.name === name && entry.status !== "refuse")) {
+      already.push(name);
+      continue;
+    }
+    try {
+      await workshop.depositCncFile(number, {
+        content: sheet.dxf_base64,
+        name,
+        note: `${result.nom_meuble}, ${sheet.nom_matiere}, panneau ${sheet.numero}/${sheet.sur}, ${sheet.pieces} pièce(s) : préparé par l'agent Production (dessinateur méthodes)`,
+        by
+      });
+      deposited.push(name);
+    } catch (error) {
+      if (error instanceof WorkshopError) {
+        return { ...answer, dxf_deposes: deposited, blocage: error.message };
+      }
+      throw error;
+    }
+  }
+  if (deposited.length > 0) {
+    await books?.team.log({ agent: "production", kind: "atelier", text: `BC ${number} (${order.client}) — ${result.nom_meuble} : ${deposited.length} DXF déposé(s), à valider par la direction.`, ref: `bc:${number}`, by });
+  }
+  return {
+    ...answer,
+    dxf_deposes: deposited,
+    deja_deposes: already,
+    suite: "Chaque DXF attend la validation de la direction dans le cockpit (vue Atelier, dessin CNC) ; la découpe CNC ne commence qu'après."
+  };
+}
+
+async function workshopProfile(args, { designOffice, books }, by) {
+  try {
+    if (args.action !== "confirmer") {
+      return await designOffice.readProfile();
+    }
+    const values = Object.fromEntries((Array.isArray(args.valeurs) ? args.valeurs : [])
+      .filter((entry) => text(entry?.cle) !== "")
+      .map((entry) => [text(entry.cle), text(entry.valeur).replace(",", ".")]));
+    const answer = await designOffice.confirmProfile({ question: text(args.reglage), values, by });
+    if (answer?.ok) {
+      const detail = Object.entries(values).map(([key, value]) => `${key} = ${value}`).join(", ");
+      await books?.team.log({ agent: "production", kind: "atelier", text: `Profil d'atelier : ${text(args.reglage)} confirmé${detail ? ` (${detail})` : ""}.`, by });
+      return { ok: true, confirme: text(args.reglage), valeurs: values };
+    }
+    return answer;
+  } catch (error) {
+    if (error instanceof DesignOfficeError) {
+      return { ok: false, erreur: error.message };
+    }
+    throw error;
+  }
+}
+
 async function advanceOrder(args, { workshop, books }, by) {
   try {
     const { changed, order } = await workshop.advance(text(args.numero), text(args.etape), {
@@ -1458,7 +1608,13 @@ async function runAgent(agentId, mission, context) {
     extraTools: [
       ...(books ? [...(agentId === "finance" ? cashTools(context, agentId) : []), ...(agentId === "commercial" ? salesTools(context, agentId) : []), ...improvementTools(context, agentId)] : []),
       ...(SPECIALISTS[agentId].keepsRegister ? [{ tool: SEARCH_DOCUMENT_TOOL, run: (searchArgs) => searchDocument(searchArgs, context) }] : []),
-      ...(SPECIALISTS[agentId].workshop === "write" ? [{ tool: ORDER_TEAM_TOOL, run: (teamArgs, by) => setOrderTeam(teamArgs, context, by) }] : [])
+      ...(SPECIALISTS[agentId].workshop === "write" ? [
+        { tool: ORDER_TEAM_TOOL, run: (teamArgs, by) => setOrderTeam(teamArgs, context, by) },
+        ...(SPECIALISTS[agentId].drafts && context.designOffice ? [
+          { tool: DRAW_DXF_TOOL, run: (drawArgs, by) => drawDxf(drawArgs, context, by) },
+          { tool: WORKSHOP_PROFILE_TOOL, run: (profileArgs, by) => workshopProfile(profileArgs, context, by) }
+        ] : [])
+      ] : [])
     ],
     briefing: books ? await agentBriefing(agentId, context) : [],
     callModel: (payload) => callModel(team.client, payload),

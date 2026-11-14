@@ -7,6 +7,7 @@ import { createMvpToolRegistry } from "./tools/mvp-tools.js";
 import { createFilePlanStore } from "./agent/plan-store.js";
 import { createFileConversationStore } from "./agent/conversation-store.js";
 import { createFileWorkshopStore } from "./agent/workshop-book.js";
+import { createFileDesignProfileBook } from "./agent/design-office.js";
 import { createFileCashBook } from "./agent/cash-book.js";
 import { createFileImprovementBook } from "./agent/improvement-book.js";
 import { createFileFollowUpBook } from "./agent/sales-book.js";
@@ -49,6 +50,10 @@ const conversationStore = createFileConversationStore();
 // The workshop book, in data/atelier.json: what happened to each order.
 const workshopStore = createFileWorkshopStore();
 
+// The workshop profile the dessinateur méthodes draws with, in
+// data/atelier-profil.json: real thicknesses, assembly clearances.
+const designProfileBook = createFileDesignProfileBook();
+
 // The cash book (data/caisse.json), the anomalies and their rules
 // (data/amelioration.json), and the team with its feed (data/equipe.json).
 // An expense of HKIDS_EXPENSE_ALERT_DH or more (2 000 DH by default) waits
@@ -73,7 +78,7 @@ const whatsAppStore = createFileWhatsAppInbox();
 // DocumentsH-KIDS Administratif unless HKIDS_ARCHIVE_DIR says where.
 const archiveDir = process.env.HKIDS_ARCHIVE_DIR?.trim() || DEFAULT_ARCHIVE_DIR;
 
-const app = buildApi({ repository, companyId: process.env.HKIDS_COMPANY_ID?.trim() || "hkids", config, toolRegistry, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, autoAnalyseAnomalies, whatsAppStore, archiveDir });
+const app = buildApi({ repository, companyId: process.env.HKIDS_COMPANY_ID?.trim() || "hkids", config, toolRegistry, planStore, conversationStore, workshopStore, designProfileBook, cashBook, improvementBook, teamBook, followUpBook, autoAnalyseAnomalies, whatsAppStore, archiveDir });
 
 // Every half hour, the workshop book is read for steps that became late, and
 // the quotes for follow-ups that became due.

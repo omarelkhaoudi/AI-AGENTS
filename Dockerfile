@@ -6,8 +6,14 @@ FROM node:24-bookworm-slim
 # Liberation Sans is metric-compatible with Arial, the face the H-KIDS
 # documents were designed in; the PDF renderer finds it by its usual path.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends fonts-liberation openssl ca-certificates \
+  && apt-get install -y --no-install-recommends fonts-liberation openssl ca-certificates python3 python3-venv \
   && rm -rf /var/lib/apt/lists/*
+
+# The dessinateur méthodes' engine (dessinateur/, Python), which the Production
+# agent runs to draw the DXF of the CNC, in its own environment.
+COPY dessinateur/requirements.txt /opt/dessinateur-requirements.txt
+RUN python3 -m venv /opt/dessinateur \
+  && /opt/dessinateur/bin/pip install --no-cache-dir -r /opt/dessinateur-requirements.txt
 
 WORKDIR /app
 
@@ -26,7 +32,9 @@ RUN DATABASE_URL="postgresql://build:build@localhost:5432/build" npx prisma gene
 USER node
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
-    PORT=3000
+    PORT=3000 \
+    DESSINATEUR_PYTHON=/opt/dessinateur/bin/python \
+    PYTHONDONTWRITEBYTECODE=1
 EXPOSE 3000
 
 # Migrations are additive and idempotent: applying them at every start keeps the

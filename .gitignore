@@ -21,5 +21,9 @@ data/
 
 !deploy/.env.production.example
 
+# Python caches of the dessinateur méthodes' engine.
+__pycache__/
+.pytest_cache/
+
 # Database dumps and document archives made by scripts/backup.sh.
 backups/

@@ -237,6 +237,7 @@ appel réseau vers OpenAI n'a lieu.
 | `OPENAI_API_KEY` | vide | **pour le Director IA** | **Secret.** Clé du compte OpenAI de l'entreprise. |
 | `OPENAI_MODEL` | `gpt-5` | non | Modèle du Director et des agents. |
 | `OPENAI_REASONING_EFFORT` | `low` | non | `minimal`, `low`, `medium`, `high` (modèles qui raisonnent). |
+| `DESSINATEUR_PYTHON` | `python` (Windows), `python3` | non | Python qui fait tourner le moteur du dessinateur méthodes (`dessinateur/`, avec `pip install -r dessinateur/requirements.txt`). Dans l'image Docker : `/opt/dessinateur/bin/python`. |
 | `HKIDS_CATALOGUE_PATH` | `data/catalogue-hkids.xlsx` | non | Catalogue produits lu par le Director. |
 | `HKIDS_PLANS_PATH` | `data/plans-director.json` | non | Où les plans d'action sont conservés. |
 | `PLANNER_PROVIDER` | `deterministic` | non | Planificateur de `/api/director/requests` : `deterministic`, `stub_llm`, `llm_mock`, `llm_openai`. |

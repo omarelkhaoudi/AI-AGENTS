@@ -891,6 +891,19 @@ Ce que fait le modèle et ce qu'il ne fait pas :
   valide ou le refuse avec un motif (droit de décider, jamais un agent), et la
   découpe CNC ne peut pas commencer avant. Rien de tout cela n'est montré au
   client ;
+- le dessinateur méthodes est dans l'agent Production (outils `dessiner_dxf`
+  et `profil_atelier`) : à partir du bon de commande, le moteur géométrique
+  de `dessinateur/` (Python, `ezdxf` et `shapely`) décompose le meuble
+  (bibliothèque, table d'activité, coffre à jouets, maisonnette, ou pièces
+  libres hors catalogue) en pièces numérotées, calcule chaque cote avec sa
+  règle, fait le tableau de débit et le calepinage sur les panneaux de
+  l'atelier, et écrit un DXF par panneau (R2010, mm, 1:1, un calque par
+  opération). Les DXF sont déposés sur la commande comme ceux du dessinateur,
+  à valider par la direction. Le modèle de langage ne calcule aucune cote, et
+  aucun DXF n'est produit tant qu'une cote, l'épaisseur réelle d'une matière
+  ou une méthode d'assemblage reste « à confirmer » : le profil d'atelier
+  (`data/atelier-profil.json`) ne change que par une valeur relevée à
+  l'atelier. Le G-code reste au dessinateur de l'atelier ou à Aspire ;
 - le bilan commercial (outil `bilan_commercial` du Director et du Commercial,
   route `GET /api/commercial`) est calculé sur les documents générés par le
   cockpit : devis émis, ventes signées (devis → BC, datées par le BC), taux de

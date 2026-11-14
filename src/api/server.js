@@ -110,6 +110,8 @@ export function buildApi({
   teamBook = null,
   // The quotes' follow-ups (data/relances.json for the server process).
   followUpBook = null,
+  // The workshop profile of the dessinateur méthodes (data/atelier-profil.json).
+  designProfileBook = null,
   // A new anomaly is handed to its agent for analysis at once. The server
   // process turns it on; a test does it by hand.
   autoAnalyseAnomalies = false,
@@ -284,6 +286,7 @@ export function buildApi({
     teamBook: teamFeed,
     followUpBook: followUps,
     documentArchive: archive,
+    designProfileBook,
     autoAnalyse: autoAnalyseAnomalies,
     publicBaseUrl,
     client: agentClient

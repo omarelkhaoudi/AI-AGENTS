@@ -2149,7 +2149,7 @@ function exportCard(file, index) {
     <article class="doc-card register-card">
       <header>
         <span class="doc-icon">${icon("file")}</span>
-        <div><strong>${escapeHtml(file.title)}</strong><span>Fichier Excel · ${escapeHtml(String(file.rows))} ligne${file.rows > 1 ? "s" : ""}${file.file ? ` · aussi rangé dans ${escapeHtml(file.file)}` : ""}</span></div>
+        <div><strong>${escapeHtml(file.title)}</strong><span>${file.label ? escapeHtml(file.label) : `Fichier Excel · ${escapeHtml(String(file.rows))} ligne${file.rows > 1 ? "s" : ""}`}${file.file ? ` · aussi rangé dans ${escapeHtml(file.file)}` : ""}</span></div>
         <button type="button" class="primary" data-export="${index}">${icon("arrow")}Télécharger</button>
       </header>
     </article>

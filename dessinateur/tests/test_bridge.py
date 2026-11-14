@@ -81,3 +81,49 @@ def test_errors_are_said_in_words():
     assert not call({"action": "regler_profil", "profil": profile, "question": "profil.machine", "valeurs": {}})["ok"]
     assert "obligatoire" in call({"action": "regler_profil", "profil": profile, "question": "profil.materiau.mdf18",
                                   "valeurs": {}})["erreur"]
+
+
+MACHINE = {"modele": "CNC exemple 1325", "controleur": "GRBL 1.1", "course_x": 3700, "course_y": 2100, "course_z": 150,
+           "vitesse_broche_max": 24000, "changeur_outils": False, "post_processeur": "grbl_mm",
+           "origine_xy": "avant_gauche", "origine_z": "dessus_matiere"}
+
+
+def machine_profile() -> dict:
+    profile = confirmed_profile()
+    for question, values in [("profil.machine", MACHINE), ("profil.outil.T1", {}), ("profil.outil.T2", {}),
+                             ("profil.outil.T3", {}), ("profil.fixation", {})]:
+        answer = call({"action": "regler_profil", "profil": profile, "question": question, "valeurs": values})
+        assert answer["ok"], answer
+        profile = answer["profil"]
+    return profile
+
+
+def test_no_gcode_before_the_machine_is_known_and_the_pilot_passed():
+    blocked = call({"action": "gcode", "profil": confirmed_profile(), "meuble": "bibliotheque",
+                    "parametres": given(BOOKCASE)})
+    assert not blocked["pret"] and not blocked["programmes"]
+    assert any("CNC de l'atelier" in reason for reason in blocked["raisons"])
+
+    profile = machine_profile()
+    pilot = call({"action": "pilote", "profil": profile})
+    assert pilot["pret"] and not pilot["qualifie"], pilot["raisons"]
+    assert pilot["fichiers"][0]["gcode"].startswith("(H-KIDS - PROGRAMME PILOTE")
+    unqualified = call({"action": "gcode", "profil": profile, "meuble": "bibliotheque", "parametres": given(BOOKCASE)})
+    assert not unqualified["pret"] and "non qualifié" in unqualified["raisons"][0]
+
+    passed = [{"post_id": "grbl_mm", "post_version": pilot["post"]["version"],
+               "machine_signature": pilot["signature_machine"], "statut": "qualifie"}]
+    made = call({"action": "gcode", "profil": profile, "meuble": "bibliotheque", "parametres": given(BOOKCASE),
+                 "qualifications": passed, "titre": "BC 171"})
+    assert made["pret"], made["raisons"]
+    files = [f for program in made["programmes"] for f in program["fichiers"]]
+    assert {program["matiere"] for program in made["programmes"]} == {"mdf18", "hdf3"}
+    assert all(f["simulation"]["ok"] and f["gcode"].rstrip().endswith("M30") for f in files)
+    assert any(f["fraises"] == ["T2"] for f in files), "no tool changer: one file per cutter"
+
+    # Another machine (other signature) is not qualified by this pilot.
+    other = dict(MACHINE, course_x=2500)
+    moved = call({"action": "regler_profil", "profil": profile, "question": "profil.machine", "valeurs": other})["profil"]
+    again = call({"action": "gcode", "profil": moved, "meuble": "bibliotheque", "parametres": given(BOOKCASE),
+                  "qualifications": passed})
+    assert not again["pret"] and "non qualifié" in again["raisons"][0]

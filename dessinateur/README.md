@@ -1,10 +1,13 @@
 # Moteur du dessinateur méthodes
 
 Le moteur géométrique de l'« Agent IA dessinateur méthodes et préparation CNC
-H-KIDS », repris dans le cockpit pour l'agent Production. Seule la partie
-dessin est reprise : modèles de meubles, cotes avec leur provenance, tableau de
-débit, calepinage et DXF. La préparation CNC (parcours, post-processeurs,
-G-code) reste hors du cockpit tant qu'elle n'est pas qualifiée sur la machine.
+H-KIDS », repris dans le cockpit pour l'agent Production : modèles de meubles,
+cotes avec leur provenance, tableau de débit, calepinage, DXF, puis parcours
+2,5D (`cam.py`), post-processeurs génériques GRBL et Mach3
+(`postprocessors.py`), simulation du G-code produit (`simulation.py`) et
+programme pilote. Un post-processeur ne sert à la production qu'après le
+programme pilote réussi sur la vraie machine ; le cockpit garde ces
+qualifications avec le profil d'atelier.
 
 - `hkids/bridge.py` : le pont appelé par `src/agent/design-office.js`
   (`python -m hkids.bridge`, une demande JSON sur l'entrée standard, la réponse

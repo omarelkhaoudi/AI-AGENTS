@@ -14,9 +14,18 @@ Demandes (champ ``action``) :
 - ``dessiner`` (``profil``, ``meuble``, ``parametres``) : décompose le meuble, et
   quand plus rien n'est à confirmer, renvoie le DXF de chaque panneau calepiné
   (R2010, mm, 1:1, un calque par opération).
+- ``pilote`` (``profil``, ``qualifications``) : le programme pilote, une petite
+  pièce d'essai à usiner dans une chute pour qualifier le post-processeur sur
+  la vraie machine, avec la simulation de son G-code.
+- ``gcode`` (``profil``, ``qualifications``, ``meuble``, ``parametres``, ``titre``) :
+  le G-code de chaque panneau (parcours 2,5D, un fichier par fraise sans
+  changeur d'outils), relu par la simulation.
 
-Règle de sûreté reprise du dessinateur : pas de DXF tant qu'une cote, une
-matière ou une méthode est « à confirmer ».
+Règles de sûreté reprises du dessinateur : pas de DXF tant qu'une cote, une
+matière ou une méthode est « à confirmer » ; pas de G-code tant que la CNC, les
+fraises et la fixation ne sont pas confirmées, que le post-processeur n'a pas
+passé le programme pilote sur cette machine (même signature) et que la
+simulation d'un fichier produit signale une erreur.
 """
 from __future__ import annotations
 
@@ -25,16 +34,20 @@ import json
 import re
 import sys
 
-from .design import compute, readiness
+from .cam import build_programs, pilot_program
+from .design import canonical_hash, compute, readiness
 from .dxf_export import sheet_dxf
 from .furniture import get_model, registry
-from .profile import (RULE_FIELDS, apply_profile_answer, default_profile, material_question, rule_question,
-                      usinage_question, with_defaults)
+from .postprocessors import get_post, list_posts
+from .profile import (RULE_FIELDS, apply_profile_answer, cnc_questions, default_profile, machine_signature,
+                      material_question, rule_question, usinage_question, with_defaults)
 from .provenance import A_CONFIRMER, FOURNI, fmt
+from .simulation import order_check, simulate
 
-# Seules les questions de profil du dessin passent par ici (la CNC et ses fraises
-# restent au programme pilote de l'atelier).
-DRAWING_PROFILE_QUESTIONS = re.compile(r"^profil\.(materiau\.\w+|assemblage\.\w+|usinage)$")
+# Les réglages du profil que le cockpit peut confirmer : ceux du dessin, puis ceux
+# de la CNC (machine, fraises, fixation).
+PROFILE_QUESTIONS = re.compile(r"^profil\.(materiau\.\w+|assemblage\.\w+|usinage|machine|outil\.\w+|fixation)$")
+CAM_SETTINGS = {"mode": "interne", "outils": {}, "notes": ""}
 
 
 class BridgeError(Exception):
@@ -146,6 +159,11 @@ def profile_summary(profile: dict) -> dict:
     questions.append(usinage_question(profile))
     return {
         "ok": True,
+        "machine": dict(profile["machine"]),
+        "fraises": [{k: t[k] for k in ("id", "nom", "diametre", "rpm", "avance", "plongee", "passe_max", "confirme")}
+                    for t in profile["outils"]],
+        "post_processeurs": list_posts(),
+        "a_confirmer_cnc": [_question(q) for q in cnc_questions(profile)],
         "materiaux": [{"id": k, "nom": m["nom"], "epaisseur_nominale": m["ep_nominale"],
                        "epaisseur_reelle": m.get("ep_reelle"), "panneau": f"{fmt(m['panneau']['longueur'])} × "
                        f"{fmt(m['panneau']['largeur'])} mm, marge {fmt(m['panneau']['marge'])} mm",
@@ -156,6 +174,92 @@ def profile_summary(profile: dict) -> dict:
         "espacement_pieces": profile["usinage"]["espacement_pieces"],
         "a_confirmer": [_question(q) for q in questions if q],
     }
+
+
+def cam_blockers(profile: dict) -> tuple[list[str], object]:
+    """Ce qui empêche tout G-code sur cette machine, avant même le meuble."""
+    reasons = [f"{q['title']} : à confirmer." for q in cnc_questions(profile)]
+    post_id = profile["machine"].get("post_processeur")
+    post = get_post(post_id)
+    known = ", ".join(p["id"] for p in list_posts())
+    if not post_id:
+        reasons.append(f"Aucun post-processeur choisi pour la machine (profil.machine, post_processeur : {known}).")
+    elif not post:
+        reasons.append(f"Post-processeur inconnu « {post_id} » ({known}).")
+    return reasons, post
+
+
+def qualified(profile: dict, post, qualifications: list) -> bool:
+    """Le post-processeur a passé le programme pilote sur cette machine, avec ces réglages."""
+    signature = machine_signature(profile)
+    return any(q.get("post_id") == post.id and str(q.get("post_version")) == str(post.version)
+               and q.get("machine_signature") == signature and q.get("statut") == "qualifie"
+               for q in qualifications)
+
+
+def _emit(post, program: dict, file: dict, profile: dict, meta: dict) -> dict:
+    tools = {t["id"]: t for t in profile["outils"]}
+    origin = profile["machine"].get("origine_xy") or "avant_gauche"
+    text = post.emit(program, file, tools, meta, origin)
+    sim = simulate(text, {"z_top": program["z_top"], "z_through": program["z_through"], "z_safe": program["z_safe"],
+                          "panel": program["panel"], "origin": origin, "tools": tools, "expected_tools": file["tools"],
+                          "machine": profile["machine"]})
+    stats = sim.get("stats") or {}
+    return {"nom": f"{file['name']}.nc", "fraises": file["tools"], "operations": len(file["ops"]), "gcode": text,
+            "simulation": {"ok": sim["ok"], "erreurs": sim["errors"], "avertissements": sim["warnings"],
+                           "duree_min": stats.get("time_min")}}
+
+
+def pilot(profile: dict, qualifications: list, thickness: float = 18.0) -> dict:
+    reasons, post = cam_blockers(profile)
+    if reasons:
+        return {"ok": True, "pret": False, "raisons": reasons, "fichiers": []}
+    program = pilot_program(profile, CAM_SETTINGS, thickness)
+    meta = {"title": "PROGRAMME PILOTE - qualification post-processeur - chute uniquement", "kind": "PILOTE"}
+    files = [_emit(post, program, f, profile, {**meta, "file": f["name"]}) for f in program["files"]]
+    problems = program["errors"] + [e for f in files for e in f["simulation"]["erreurs"]]
+    return {"ok": True, "pret": not problems, "raisons": problems, "fichiers": files,
+            "chute": "250 × 180 mm, épaisseur 18 mm ; pièce d'essai 120 × 80 mm avec un perçage Ø10, "
+                     "une poche 40 × 20 profondeur 3 et une ouverture 30 × 18",
+            "empreinte_pilote": canonical_hash({"files": [f["gcode"] for f in files],
+                                                "machine": machine_signature(profile)}),
+            "post": {"id": post.id, "version": post.version, "nom": post.name},
+            "signature_machine": machine_signature(profile), "qualifie": qualified(profile, post, qualifications)}
+
+
+def gcode(profile: dict, qualifications: list, furniture: str, given: dict, title: str) -> dict:
+    drawing = draw(profile, furniture, given)
+    out = {k: drawing[k] for k in ("ok", "meuble", "nom_meuble", "pret", "raisons", "questions", "empreinte")}
+    out["programmes"] = []
+    if not drawing["pret"]:
+        out["raisons"] = ["Le dessin n'est pas prêt : pas de G-code."] + drawing["raisons"]
+        return out
+    reasons, post = cam_blockers(profile)
+    if post and not reasons and not qualified(profile, post, qualifications):
+        reasons.append(f"Post-processeur « {post.name} » non qualifié sur cette machine : le programme pilote doit "
+                       "être usiné dans une chute et déclaré conforme d'abord.")
+    if reasons:
+        return {**out, "pret": False, "raisons": reasons}
+    model = get_model(furniture)
+    res = compute({"type": furniture, "params": _params(model, given)}, profile)
+    texts = []
+    for program in build_programs(res, profile, CAM_SETTINGS):
+        meta = {"title": f"{title or model.name} - {program['material_name']} - panneau {program['sheet']}",
+                "project": title, "design_hash": res["design_hash"], "sheet": program["sheet"], "kind": "PRODUCTION"}
+        files = [_emit(post, program, f, profile, {**meta, "file": f["name"]}) for f in program["files"]]
+        texts += [f["gcode"] for f in files]
+        problems = program["errors"] + order_check(program)
+        problems += [f"{f['nom']} : {e}" for f in files for e in f["simulation"]["erreurs"]]
+        out["programmes"].append({"matiere": program["material_id"], "nom_matiere": program["material_name"],
+                                  "panneau": program["sheet"], "fichiers": files, "erreurs": problems})
+    blocking = [f"Panneau {p['panneau']} ({p['nom_matiere']}) : {e}" for p in out["programmes"] for e in p["erreurs"]]
+    out["pret"] = not blocking
+    out["raisons"] = blocking
+    out["post"] = {"id": post.id, "version": post.version, "nom": post.name}
+    out["empreinte_cam"] = canonical_hash({"design": res["design_hash"], "machine": profile["machine"],
+                                           "tools": profile["outils"], "usinage": profile["usinage"],
+                                           "post": [post.id, post.version], "gcode": texts})
+    return out
 
 
 def handle(request: dict) -> dict:
@@ -170,9 +274,10 @@ def handle(request: dict) -> dict:
         return profile_summary(profile)
     if action == "regler_profil":
         question = str(request.get("question", ""))
-        if not DRAWING_PROFILE_QUESTIONS.match(question):
-            raise BridgeError(f"Réglage inconnu : « {question} ». Réglages du dessin : "
-                              "profil.materiau.<matière>, profil.assemblage.<méthode>, profil.usinage.")
+        if not PROFILE_QUESTIONS.match(question):
+            raise BridgeError(f"Réglage inconnu : « {question} ». Réglages : profil.materiau.<matière>, "
+                              "profil.assemblage.<méthode>, profil.usinage, profil.machine, "
+                              "profil.outil.<fraise>, profil.fixation.")
         # « 18,2 » comme on l'écrit à l'atelier.
         values = {k: v.replace(",", ".") if isinstance(v, str) and re.fullmatch(r"\s*\d+,\d+\s*", v) else v
                   for k, v in (request.get("valeurs") or {}).items()}
@@ -182,6 +287,12 @@ def handle(request: dict) -> dict:
             raise BridgeError(f"Réglage refusé : {exc}")
     if action == "dessiner":
         return draw(profile, str(request.get("meuble", "")), request.get("parametres") or {})
+    qualifications = request.get("qualifications") or []
+    if action == "pilote":
+        return pilot(profile, qualifications)
+    if action == "gcode":
+        return gcode(profile, qualifications, str(request.get("meuble", "")), request.get("parametres") or {},
+                     str(request.get("titre", "")))
     raise BridgeError(f"Action inconnue : {action}")
 
 

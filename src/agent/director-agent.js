@@ -434,16 +434,16 @@ const DRAW_DXF_TOOL = Object.freeze({
 const WORKSHOP_PROFILE_TOOL = Object.freeze({
   type: "function",
   name: "profil_atelier",
-  description: "Le profil d'atelier du dessinateur méthodes : matières (épaisseur réelle mesurée, panneau utile, marge), méthodes d'assemblage H-KIDS (embrèvement, rainure de fond, confirmat, taquets…) et espacement des pièces. lire : ce qui est confirmé et ce qui reste à confirmer, avec les champs de chaque réglage. confirmer : enregistre les valeurs que l'atelier a relevées ou décidées (« le MDF 18 mesure 18,3 », « l'embrèvement est bon tel quel ») et marque le réglage confirmé ; seulement pour un fait rapporté par la direction ou l'atelier.",
+  description: "Le profil d'atelier du dessinateur méthodes. Pour le dessin : matières (épaisseur réelle mesurée, panneau utile, marge), méthodes d'assemblage H-KIDS (embrèvement, rainure de fond, confirmat, taquets…) et espacement des pièces. Pour le G-code : la CNC (modèle, contrôleur, courses X/Y/Z, vitesse de broche max, changeur d'outils, post-processeur grbl_mm ou mach3_mm, origines), chaque fraise (diamètre, longueur utile, vitesse, avance, plongée, passe max) et la fixation des panneaux. lire : ce qui est confirmé et ce qui reste à confirmer, avec les champs de chaque réglage. confirmer : enregistre les valeurs que l'atelier a relevées ou décidées (« le MDF 18 mesure 18,3 », « la CNC est une … avec un contrôleur Mach3 ») et marque le réglage confirmé ; seulement pour un fait rapporté par la direction ou l'atelier.",
   parameters: {
     type: "object",
     additionalProperties: false,
     properties: {
       action: { type: "string", enum: ["lire", "confirmer"] },
-      reglage: { type: "string", description: "Pour confirmer : profil.materiau.<matière> (mdf18, cp18, cp15, hdf3, cp5), profil.assemblage.<méthode> ou profil.usinage. Chaîne vide pour lire." },
+      reglage: { type: "string", description: "Pour confirmer : profil.materiau.<matière> (mdf18, cp18, cp15, hdf3, cp5), profil.assemblage.<méthode>, profil.usinage, profil.machine, profil.outil.<fraise> (T1, T2, T3) ou profil.fixation. Chaîne vide pour lire." },
       valeurs: {
         type: "array",
-        description: "Pour confirmer : les champs relevés (ep_reelle obligatoire pour une matière ; un champ omis garde sa valeur actuelle).",
+        description: "Pour confirmer : les champs relevés (ep_reelle obligatoire pour une matière ; pour la machine, tous ses champs : modele, controleur, course_x, course_y, course_z, vitesse_broche_max, changeur_outils oui/non, post_processeur, origine_xy, origine_z ; un champ omis garde sa valeur actuelle).",
         items: {
           type: "object",
           additionalProperties: false,
@@ -574,7 +574,7 @@ function instructions(today, briefing = []) {
     "",
     "Bilan commercial et relances : « fais le bilan commercial du mois », « quels devis relancer ? », « où en sont les ventes » → bilan_commercial (chiffres calculés sur les documents du cockpit : cite les numéros, ne recalcule rien, ne complète jamais avec un chiffre supposé). « J'ai relancé Mme Alami pour le devis 170, elle réfléchit », « le client du devis 172 a refusé, trop cher » → enregistrer_relance toi-même (perdu avec son motif pour un refus). Un devis ouvert sans nouvelles depuis 5 jours est à relancer : le responsable commercial est prévenu sur WhatsApp, et la direction au bout de 10 jours ; pour rédiger les messages de relance, confie-les au commercial.",
     "",
-    "Bureau d'études, avant la découpe : chaque bon de commande a un chef de charge qui le contrôle de bout en bout ; avec son numéro, il reçoit sur WhatsApp chaque étape de sa commande qui se bloque ou prend du retard, et sa réponse arrive à la Production comme compte rendu ; quand le client a un architecte, une personne de l'équipe est en lien avec lui ; après la fiche technique (étude technique terminée), le dessinateur fait le fichier de la machine CNC (G-code ou DXF) et le dépose dans le cockpit, ou l'envoie au numéro WhatsApp de l'entreprise avec « BC n° » en légende (son numéro doit être enregistré sur la commande). « Samir est chef de charge du BC 166 », « l'architecte de Mme Alami est M. Bennani, c'est Hiba qui le suit », « Karim fait le G-code » → equipe_commande. Le fichier n'atteint la machine qu'une fois validé par la direction dans le cockpit (vue Atelier) : tu ne le valides jamais, et la découpe CNC ne peut pas commencer avant. Une commande lancée sans chef de charge, un fichier CNC qui attend sa validation : signale-le dans tout point de situation. L'agent Production est aussi le dessinateur méthodes : « fais le DXF du BC 166 », « prépare le débit / le calepinage de la bibliothèque de Mme X », « l'épaisseur réelle du MDF 18 est 18,3 » → deleguer_a_un_agent production, avec le numéro du BC et tout ce que la direction a dit (dimensions, matière, options) ; il dépose les DXF sur la commande, à valider par la direction comme ceux du dessinateur, ou renvoie ce qui manque : transmets ses questions telles quelles.",
+    "Bureau d'études, avant la découpe : chaque bon de commande a un chef de charge qui le contrôle de bout en bout ; avec son numéro, il reçoit sur WhatsApp chaque étape de sa commande qui se bloque ou prend du retard, et sa réponse arrive à la Production comme compte rendu ; quand le client a un architecte, une personne de l'équipe est en lien avec lui ; après la fiche technique (étude technique terminée), le dessinateur fait le fichier de la machine CNC (G-code ou DXF) et le dépose dans le cockpit, ou l'envoie au numéro WhatsApp de l'entreprise avec « BC n° » en légende (son numéro doit être enregistré sur la commande). « Samir est chef de charge du BC 166 », « l'architecte de Mme Alami est M. Bennani, c'est Hiba qui le suit », « Karim fait le G-code » → equipe_commande. Le fichier n'atteint la machine qu'une fois validé par la direction dans le cockpit (vue Atelier) : tu ne le valides jamais, et la découpe CNC ne peut pas commencer avant. Une commande lancée sans chef de charge, un fichier CNC qui attend sa validation : signale-le dans tout point de situation. L'agent Production est aussi le dessinateur méthodes : « fais le DXF du BC 166 », « prépare le débit / le calepinage de la bibliothèque de Mme X », « l'épaisseur réelle du MDF 18 est 18,3 » → deleguer_a_un_agent production, avec le numéro du BC et tout ce que la direction a dit (dimensions, matière, options) ; il dépose les DXF sur la commande, à valider par la direction comme ceux du dessinateur, ou renvoie ce qui manque : transmets ses questions telles quelles. Il fait aussi le G-code (« fais le G-code du BC 166 ») une fois la CNC, ses fraises et la fixation relevées au profil d'atelier et le post-processeur qualifié par le programme pilote (« prépare le programme pilote », « le pilote est bon, cotes 120 × 80 justes ») : même délégation à production.",
     "",
     "Caisse et bilan du jour : chaque entrée ou sortie d'argent que la direction t'annonce (« j'ai reçu 3 000 DH d'acompte de Mme Alami en espèces pour le devis 170 », « j'ai payé 1 200 DH de laque à Sodipeint par chèque », « j'ai versé les salaires, 18 000 DH par virement », « il y a 5 000 DH en caisse au départ ») → confie-la tout de suite au Directeur financier (finance) avec deleguer_a_un_agent, en recopiant tout : entrée ou sortie, montant, ce que c'est, moyen de paiement, qui a payé ou a été payé, numéro du devis ou du BC, la date si ce n'est pas aujourd'hui, et qui l'annonce. Plusieurs mouvements annoncés ensemble → une seule mission qui les liste tous. Finance l'enregistre au journal de caisse (et, pour le paiement d'un client dont la vente est connue, prépare son reçu de paiement à valider) et te rend le bilan du jour : réponds en deux ou trois lignes (mouvement n°, montant, solde du jour, et pour un client ce qui reste à encaisser sur sa vente). « Où en est la caisse », « bilan du jour », « combien j'ai en caisse » → bilan_caisse toi-même. Pour tout point de situation, donne aussi le bilan de caisse du jour. Une erreur de saisie (« ce n'était pas 3 000 mais 2 000 ») → finance : annuler le mouvement et enregistrer le bon. Justificatifs : une dépense annoncée avec la photo d'un reçu, d'un ticket ou d'une facture → écris « justificatif : photo n° X » dans la mission ; une photo envoyée plus tard pour une dépense déjà enregistrée (« voici le reçu du MDF ») → mission à finance : joindre la photo n° X au mouvement n° N. Sans photo, rappelle à la direction d'envoyer le justificatif. Une dépense au-dessus du seuil d'alerte s'approuve dans la vue Caisse du cockpit, par une personne : tu ne l'approuves jamais.",
     "",
@@ -1384,6 +1384,30 @@ async function setOrderTeam(args, { workshop, books }, by) {
   }
 }
 
+// The G-code of the panels, from the same design as the DXF.
+const GCODE_TOOL = Object.freeze({
+  type: "function",
+  name: "preparer_gcode",
+  description: "Préparation CNC : à partir du même meuble que dessiner_dxf (mêmes paramètres), calcule les parcours d'outil de chaque panneau (perçages, rainures et poches, ouvertures, puis détourage avec onglets de maintien), écrit le G-code avec le post-processeur de la machine (un fichier par fraise sans changeur d'outils), relit chaque fichier par la simulation, et dépose les fichiers sur la commande, à valider par la direction avant la découpe. Refusé tant que le dessin n'est pas prêt, que la CNC, les fraises ou la fixation ne sont pas confirmées au profil d'atelier, ou que le post-processeur n'a pas passé le programme pilote sur cette machine.",
+  parameters: DRAW_DXF_TOOL.parameters
+});
+
+const PILOT_TOOL = Object.freeze({
+  type: "function",
+  name: "programme_pilote",
+  description: "Programme pilote de la CNC : une pièce d'essai (120 × 80 mm, un perçage, une poche, une ouverture) à usiner dans une chute de 250 × 180 × 18 mm, pour qualifier le post-processeur sur la vraie machine avant tout G-code de production. preparer : génère son G-code, simulé, à télécharger sous la réponse (à usiner par l'opérateur, en surveillant la machine). resultat : enregistre ce que l'opérateur a constaté (conforme ou non, avec ce qu'il a mesuré), seulement quand la direction ou l'atelier le rapporte ; conforme qualifie le post-processeur sur cette machine.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      action: { type: "string", enum: ["preparer", "resultat"] },
+      conforme: { type: "boolean", description: "Pour resultat : la pièce d'essai est conforme (cotes, profondeurs, état de coupe)." },
+      notes: { type: "string", description: "Pour resultat : ce qui a été contrôlé et mesuré, tel que rapporté. Chaîne vide pour preparer." }
+    },
+    required: ["action", "conforme", "notes"]
+  }
+});
+
 // The engine draws; the files are deposited on the order like the
 // draughtsman's, and wait for the direction. A panel already deposited for the
 // same design (same fingerprint in its name) is not deposited twice.
@@ -1445,6 +1469,110 @@ async function drawDxf(args, { workshop, designOffice, books }, by) {
     deja_deposes: already,
     suite: "Chaque DXF attend la validation de la direction dans le cockpit (vue Atelier, dessin CNC) ; la découpe CNC ne commence qu'après."
   };
+}
+
+// The machine files of an order, deposited like the draughtsman's: each waits
+// for the direction, and the same program is never deposited twice.
+async function prepareGcode(args, { workshop, designOffice, books }, by) {
+  const number = text(args.numero);
+  const order = await workshop.order(number);
+  if (!order) {
+    return { ok: false, erreur: `Le bon de commande n° ${number} n'est pas au carnet d'atelier.` };
+  }
+  const params = Object.fromEntries((Array.isArray(args.parametres) ? args.parametres : [])
+    .filter((entry) => text(entry?.nom) !== "")
+    .map((entry) => [text(entry.nom), { value: text(entry.valeur), source: entry.source === "a_confirmer" ? "a_confirmer" : "fourni" }]));
+  let result;
+  try {
+    result = await designOffice.gcode({ furniture: text(args.meuble), params, title: `BC ${number} ${order.client ?? ""}`.trim() });
+  } catch (error) {
+    if (error instanceof DesignOfficeError) {
+      return { ok: false, erreur: error.message };
+    }
+    throw error;
+  }
+  if (!result?.ok) {
+    return result ?? { ok: false, erreur: "Le moteur de dessin n'a rien renvoyé." };
+  }
+  const programs = result.programmes ?? [];
+  const files = programs.flatMap((program) => program.fichiers.map((file) => ({ program, file })));
+  const answer = {
+    ...result,
+    bc: number,
+    programmes: programs.map((program) => ({ ...program, fichiers: program.fichiers.map(({ gcode: _text, ...file }) => file) }))
+  };
+  if (!result.pret) {
+    return { ...answer, gcode: "aucun : voir raisons." };
+  }
+  const deposited = [];
+  const already = [];
+  for (const [index, { program, file }] of files.entries()) {
+    const name = `BC${number}_${program.matiere}_panneau${program.panneau}_${file.nom.replace(/\.nc$/, "")}_${String(result.empreinte_cam).slice(0, 8)}.nc`;
+    if ((order.cnc ?? []).some((entry) => entry.name === name && entry.status !== "refuse")) {
+      already.push(name);
+      continue;
+    }
+    try {
+      await workshop.depositCncFile(number, {
+        content: Buffer.from(file.gcode, "utf8"),
+        name,
+        note: `G-code ${index + 1}/${files.length}, ${program.nom_matiere}, panneau ${program.panneau}, fraise(s) ${file.fraises.join(", ")}, post-processeur ${result.post.nom}, simulation sans erreur${file.simulation.duree_min ? `, environ ${file.simulation.duree_min} min` : ""} : préparé par l'agent Production ; à contrôler par l'opérateur avant de lancer`,
+        by
+      });
+      deposited.push(name);
+    } catch (error) {
+      if (error instanceof WorkshopError) {
+        return { ...answer, gcode_deposes: deposited, blocage: error.message };
+      }
+      throw error;
+    }
+  }
+  if (deposited.length > 0) {
+    await books?.team.log({ agent: "production", kind: "atelier", text: `BC ${number} (${order.client}) — ${result.nom_meuble} : ${deposited.length} fichier(s) G-code déposé(s), à valider par la direction.`, ref: `bc:${number}`, by });
+  }
+  return {
+    ...answer,
+    gcode_deposes: deposited,
+    deja_deposes: already,
+    ordre_d_execution: files.map(({ program, file }, index) => `${index + 1}. ${program.nom_matiere} panneau ${program.panneau} — fraise(s) ${file.fraises.join(", ")}`),
+    suite: "Chaque fichier attend la validation de la direction dans le cockpit (vue Atelier) ; l'opérateur contrôle fraises, origines et fixation avant de lancer, dans l'ordre d'exécution."
+  };
+}
+
+async function pilotProgram(args, { designOffice, books, outcome }, by) {
+  try {
+    if (args.action === "resultat") {
+      const answer = await designOffice.recordPilot({ conforming: args.conforme === true, notes: text(args.notes), by });
+      if (answer?.ok) {
+        await books?.team.log({ agent: "production", kind: "atelier", text: `Programme pilote CNC : ${answer.statut === "qualifie" ? `conforme, post-processeur ${answer.post} qualifié sur la machine` : "non conforme"}${text(args.notes) ? ` (${text(args.notes)})` : ""}.`, by });
+      }
+      return answer;
+    }
+    const pilot = await designOffice.pilot();
+    if (!pilot?.ok || !pilot.pret) {
+      return pilot;
+    }
+    for (const file of pilot.fichiers) {
+      outcome?.exports.push(Object.freeze({
+        name: `PILOTE_${file.nom}`,
+        title: `Programme pilote CNC — ${file.nom}`,
+        label: `G-code, fraise(s) ${file.fraises.join(", ")}`,
+        mimeType: "text/plain",
+        data: Buffer.from(file.gcode, "utf8").toString("base64")
+      }));
+    }
+    const { fichiers, ...rest } = pilot;
+    return {
+      ...rest,
+      fichiers: fichiers.map(({ gcode: _text, ...file }) => file),
+      note: "Les fichiers sont à télécharger sous la réponse. À usiner dans une chute uniquement, opérateur présent, puis mesurer la pièce d'essai."
+    };
+  } catch (error) {
+    if (error instanceof DesignOfficeError) {
+      return { ok: false, erreur: error.message };
+    }
+    throw error;
+  }
 }
 
 async function workshopProfile(args, { designOffice, books }, by) {
@@ -1612,6 +1740,8 @@ async function runAgent(agentId, mission, context) {
         { tool: ORDER_TEAM_TOOL, run: (teamArgs, by) => setOrderTeam(teamArgs, context, by) },
         ...(SPECIALISTS[agentId].drafts && context.designOffice ? [
           { tool: DRAW_DXF_TOOL, run: (drawArgs, by) => drawDxf(drawArgs, context, by) },
+          { tool: GCODE_TOOL, run: (gcodeArgs, by) => prepareGcode(gcodeArgs, context, by) },
+          { tool: PILOT_TOOL, run: (pilotArgs, by) => pilotProgram(pilotArgs, context, by) },
           { tool: WORKSHOP_PROFILE_TOOL, run: (profileArgs, by) => workshopProfile(profileArgs, context, by) }
         ] : [])
       ] : [])

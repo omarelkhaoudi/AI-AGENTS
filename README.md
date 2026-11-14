@@ -903,7 +903,17 @@ Ce que fait le modèle et ce qu'il ne fait pas :
   aucun DXF n'est produit tant qu'une cote, l'épaisseur réelle d'une matière
   ou une méthode d'assemblage reste « à confirmer » : le profil d'atelier
   (`data/atelier-profil.json`) ne change que par une valeur relevée à
-  l'atelier. Le G-code reste au dessinateur de l'atelier ou à Aspire ;
+  l'atelier. Production prépare aussi le G-code (`preparer_gcode`) : parcours
+  2,5D de chaque panneau (perçages, rainures et poches, ouvertures, puis
+  détourage avec onglets), un fichier par fraise sans changeur d'outils,
+  chaque fichier relu par la simulation, puis déposé sur la commande à
+  valider par la direction. Il est refusé tant que la CNC (modèle,
+  contrôleur, courses, broche, post-processeur `grbl_mm` ou `mach3_mm`), les
+  fraises et la fixation ne sont pas confirmées, et tant que le
+  post-processeur n'a pas passé le programme pilote (`programme_pilote` : une
+  pièce d'essai à usiner dans une chute, dont l'opérateur rapporte le
+  résultat) sur cette machine : un autre réglage de la machine demande un
+  nouveau pilote ;
 - le bilan commercial (outil `bilan_commercial` du Director et du Commercial,
   route `GET /api/commercial`) est calculé sur les documents générés par le
   cockpit : devis émis, ventes signées (devis → BC, datées par le BC), taux de

@@ -160,3 +160,60 @@ test("without the engine, the agent says it is not installed instead of failing"
   assert.match(noEngine.erreur, /pas installé/);
   assert.match(noOrder.erreur, /n° 999 n'est pas au carnet/);
 });
+
+const MACHINE = { modele: "CNC exemple 1325", controleur: "GRBL 1.1", course_x: "3700", course_y: "2100", course_z: "150", vitesse_broche_max: "24000", changeur_outils: "non", post_processeur: "grbl_mm", origine_xy: "avant_gauche", origine_z: "dessus_matiere" };
+const gcodeCall = (id) => call("preparer_gcode", { numero: "171", meuble: "bibliotheque", parametres }, id);
+const pilotCall = (action, conforme, notes, id) => call("programme_pilote", { action, conforme, notes }, id);
+
+test("Production makes the G-code once the machine is known and its pilot part passed, and deposits it for validation", { skip }, async (t) => {
+  const documents = await documentsWith(t);
+  const designOffice = createDesignOffice({ clock });
+  for (const [question, values] of [
+    ["profil.materiau.mdf18", { ep_reelle: "18.2" }], ["profil.materiau.hdf3", { ep_reelle: "3.1" }],
+    ["profil.assemblage.embrevement", {}], ["profil.assemblage.rainure_fond", {}], ["profil.usinage", {}],
+    ["profil.machine", MACHINE], ["profil.outil.T1", {}], ["profil.outil.T2", {}], ["profil.outil.T3", {}], ["profil.fixation", {}]
+  ]) {
+    assert.ok((await designOffice.confirmProfile({ question, values })).ok, question);
+  }
+  const workshopStore = createMemoryWorkshopStore({ clock });
+  const workshop = createWorkshop({ store: workshopStore, documentService: documents, clock });
+  await workshop.advance("171", "etude_technique", { status: "terminee" });
+  const { agent, calls } = agentWith(documents, workshopStore, {
+    "Tu es le Director IA": [toProduction("Fais le G-code du BC 171."), say("…"), toProduction("Le pilote est bon : 120 x 80 justes, poche à 3 mm. Refais le G-code du BC 171."), say("…")],
+    "Tu es l'agent Production": [
+      turn(gcodeCall("p1"), pilotCall("resultat", true, "cotes justes", "p2"), pilotCall("preparer", false, "", "p3")),
+      say("Programme pilote à usiner d'abord."),
+      turn(pilotCall("resultat", true, "120 x 80 justes, poche 3 mm, coupe propre", "p4")),
+      turn(gcodeCall("p5"), gcodeCall("p6")),
+      say("G-code déposé.")
+    ]
+  }, { designOffice });
+
+  const first = await agent.chat({ message: "Fais le G-code du BC 171." });
+  const production = () => calls.filter((payload) => payload.instructions.includes("Tu es l'agent Production"));
+  assert.ok(production()[0].tools.some((tool) => tool.name === "preparer_gcode") && production()[0].tools.some((tool) => tool.name === "programme_pilote"));
+  const [refused, tooEarly, pilot] = outputsOf(production()[1]);
+  assert.equal(refused.pret, false);
+  assert.match(refused.raisons[0], /non qualifié/);
+  assert.match(tooEarly.erreur, /Aucun programme pilote/, "no result before the pilot was prepared");
+  assert.equal(pilot.pret, true);
+  assert.ok(pilot.fichiers.every((file) => !("gcode" in file)), "the G-code does not go to the model");
+  assert.ok(first.exports.length >= 1 && first.exports.every((file) => file.name.startsWith("PILOTE_") && file.label.startsWith("G-code")));
+  assert.match(Buffer.from(first.exports[0].data, "base64").toString("utf8"), /PROGRAMME PILOTE/);
+
+  await agent.chat({ message: "Le pilote est bon." });
+  assert.equal(outputsOf(production()[3]).at(-1).statut, "qualifie");
+  const [made, again] = outputsOf(production()[4]).slice(-2);
+  assert.equal(made.pret, true, JSON.stringify(made.raisons));
+  assert.ok(made.gcode_deposes.length >= 3, "one file per cutter, for the MDF and the HDF");
+  assert.ok(made.gcode_deposes.every((name) => /^BC171_(mdf18|hdf3)_panneau1_P01_\d\d_T\d_[0-9a-f]{8}\.nc$/.test(name)));
+  assert.equal(made.ordre_d_execution.length, made.gcode_deposes.length);
+  assert.deepEqual(again.deja_deposes, made.gcode_deposes, "the same program is not deposited twice");
+
+  const order = await workshop.order("171");
+  const machineFiles = order.cnc.filter((file) => file.format === "gcode");
+  assert.equal(machineFiles.length, made.gcode_deposes.length);
+  assert.ok(machineFiles.every((file) => file.status === "a_valider" && /simulation sans erreur/.test(file.note)));
+  const read = await workshop.readCncFile("171", machineFiles[0].id);
+  assert.match(read.bytes.toString("utf8"), /^\(H-KIDS - BC 171 Client Exemple/);
+});

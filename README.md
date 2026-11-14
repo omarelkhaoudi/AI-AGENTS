@@ -914,6 +914,11 @@ Ce que fait le modèle et ce qu'il ne fait pas :
   pièce d'essai à usiner dans une chute, dont l'opérateur rapporte le
   résultat) sur cette machine : un autre réglage de la machine demande un
   nouveau pilote ;
+- le Director joint un PDF à sa réponse (outil `joindre_pdf`,
+  `src/documents/note-pdf.js`) : une fiche, un mémo, une procédure ou une
+  synthèse, en A4 avec l'en-tête H KIDS, à télécharger sous la réponse et
+  rangé dans le dossier Exports ; les devis, bons et factures gardent leurs
+  modèles numérotés ;
 - le bilan commercial (outil `bilan_commercial` du Director et du Commercial,
   route `GET /api/commercial`) est calculé sur les documents générés par le
   cockpit : devis émis, ventes signées (devis → BC, datées par le BC), taux de

@@ -43,6 +43,7 @@ import {
 } from "./company-tools.js";
 import { createDocumentArchive, frenchDate, searchDocuments } from "./document-register.js";
 import { renderXlsx, xlsxFileName } from "../documents/xlsx-writer.js";
+import { pdfFileName, renderNotePdf } from "../documents/note-pdf.js";
 import { mkdir as makeDirectory, writeFile as writeFileTo } from "node:fs/promises";
 import { join as joinPath } from "node:path";
 
@@ -309,6 +310,22 @@ export const EXCEL_TOOL = Object.freeze({
     }
 });
 
+// A text handed to the direction as a PDF, with a button to save it.
+export const PDF_TOOL = Object.freeze({
+    type: "function",
+    name: "joindre_pdf",
+    description: "Crée un fichier PDF (A4, en-tête H KIDS) à partir d'un texte et le joint à ta réponse avec un bouton « Télécharger ». À appeler dès que la direction demande un PDF, « envoie-le en PDF », « mets ça dans un document », une fiche, un mémo, une procédure, une synthèse ou un compte rendu à imprimer ou à transmettre. Pas pour un devis, un bon de commande, un bon de livraison, une facture, un avoir ou un reçu : ceux-là passent par preparer_document, avec leur numéro.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        titre: { type: "string", description: "Le titre du document, par exemple « Fiche atelier — découpe MDF 18 mm »." },
+        contenu: { type: "string", description: "Tout le texte du document, en Markdown simple : « ## Titre » pour une partie, « - » pour une liste, « 1. » pour des étapes, « | a | b | » pour un tableau, **gras**. Sans le titre ni l'en-tête de l'entreprise (ils sont ajoutés), sans emoji. Le document doit être complet : rien n'y renvoie à la discussion." }
+      },
+      required: ["titre", "contenu"]
+    }
+});
+
 const FOLLOW_DOSSIER_TOOL = Object.freeze({
     type: "function",
     name: "suivre_dossier",
@@ -513,6 +530,7 @@ const TOOLS = Object.freeze([
   FOLLOW_DOSSIER_TOOL,
   SEARCH_DOCUMENT_TOOL,
   EXCEL_TOOL,
+  PDF_TOOL,
   WORKSHOP_BOOK_TOOL,
   ADVANCE_ORDER_TOOL,
   CLIENT_LINK_TOOL,
@@ -565,6 +583,7 @@ function instructions(today, briefing = []) {
     "Retrouver un document (« ressors-moi le devis de Mme Barada », « la facture de M. Alami », « les devis de novembre ») → chercher_document toi-même. Un seul document : donne sa date, son numéro, son montant, et dis que son PDF s'ouvre avec le bouton sous ta réponse et qu'il est aussi dans le dossier du client (chemin « dossier »). Plusieurs : liste-les (date, numéro, objet, montant) et demande lequel ; tous ont leur bouton. Aucun : dis-le, avec ce que tu as cherché. Ne dis jamais que tu n'as pas accès aux documents ou aux fichiers : le registre est le tien, l'Administratif le tient à jour.",
     "",
     "Excel (« exporte-moi les devis du mois en Excel », « fais-moi un fichier Excel de la caisse ») : lis d'abord les données avec tes outils, puis exporter_excel avec ces lignes telles quelles. Le fichier s'affiche sous ta réponse avec un bouton « Télécharger » : dis-le, avec le nombre de lignes et le dossier où il est aussi rangé s'il est donné. Ne dis jamais que tu ne peux pas faire de fichier Excel.",
+    "PDF (« envoie-moi ça en PDF », « fais-moi une fiche », « mets-le dans un document ») : joindre_pdf avec le titre et le texte complet du document ; le fichier est joint sous ta réponse avec un bouton « Télécharger ». Dans ta réponse, dis seulement ce que contient le PDF, en deux ou trois lignes, sans recopier son texte. Ne dis jamais que tu ne peux pas joindre un fichier PDF, et n'invente jamais un lien ni un dossier du cockpit où il serait déposé. Ce que le PDF affirme vient de tes données ou de ce que la direction a dit : un réglage de machine, une cote ou un chiffre que tu ne connais pas y est marqué « à confirmer par l'atelier ».",
     "",
     "Chaîne d'une vente : devis → bon de commande (le client accepte) → bon de livraison → factures (acompte, solde). Chaque document cite le devis : écris toujours son numéro dans la mission. « Le client a accepté le devis 170 », « fais le BC du devis 170 » → commercial : « bon de commande à partir du devis n° 170 », avec les conditions et l'acompte s'ils sont donnés ; il reprend le devis lui-même, rien n'est à ressaisir. « Facture l'acompte du devis 170 », « facture le solde » → finance avec le numéro du devis. « Où en est le devis 170 », « qu'est-ce qui reste à facturer » → suivre_dossier toi-même, puis réponds avec l'étape, le déjà facturé, le reste à facturer et les anomalies. Une facture refusée parce qu'elle facturerait la vente deux fois ne se contourne pas : dis-le à la direction avec les factures déjà faites. Avoir (« fais un avoir de 500 DH sur la facture 180 », remise accordée après coup, article retourné) → finance avec le numéro de la facture, le montant, la raison et ce que devient l'argent (déduit du reste à payer ou remboursé, et comment). Reçu de paiement (« fais le reçu de l'acompte de Mme X ») → finance avec le numéro du devis ou de la facture, le montant, le moyen de paiement et la date du paiement. « Qu'est-ce qui reste à payer » → suivre_dossier toi-même : déjà reçu et reste à payer.",
     "",
@@ -970,6 +989,9 @@ async function runTool(call, context) {
     if (call.name === EXCEL_TOOL.name) {
       return await exportExcel(args, context);
     }
+    if (call.name === PDF_TOOL.name) {
+      return await attachPdf(args, context);
+    }
     if (call.name === WORKSHOP_BOOK_TOOL.name) {
       return await readWorkshopBook(args, context);
     }
@@ -1193,6 +1215,30 @@ export async function exportExcel(args, { archive, outcome, clock = () => new Da
   }
   outcome?.exports.push(Object.freeze({ name, title, rows: rows.length, mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data: bytes.toString("base64"), file: saved }));
   return { ok: true, fichier: name, lignes: rows.length, colonnes: columns.length, ...(saved ? { dossier: saved } : {}), note: "Le bouton « Télécharger » est sous ta réponse." };
+}
+
+export async function attachPdf(args, { archive, outcome, clock = () => new Date() }) {
+  const title = text(args.titre) || "Document H-KIDS";
+  const content = typeof args.contenu === "string" ? args.contenu.trim() : "";
+  if (content === "") {
+    return { ok: false, erreur: "Donner le contenu du document." };
+  }
+  let bytes;
+  try {
+    bytes = await renderNotePdf({ title, content, date: clock() });
+  } catch (error) {
+    return { ok: false, erreur: `Le PDF n'a pas pu être créé : ${error.message}` };
+  }
+  const name = pdfFileName(title, clock());
+  let saved = null;
+  if (archive?.dir) {
+    const folder = joinPath(archive.dir, "Exports");
+    await makeDirectory(folder, { recursive: true });
+    saved = joinPath(folder, name);
+    await writeFileTo(saved, bytes);
+  }
+  outcome?.exports.push(Object.freeze({ name, title, label: "Fichier PDF", mimeType: "application/pdf", data: bytes.toString("base64"), file: saved }));
+  return { ok: true, fichier: name, ...(saved ? { dossier: saved } : {}), note: "Le PDF est joint sous ta réponse, avec le bouton « Télécharger »." };
 }
 
 // The register searched; what is found is also shown under the answer, with a

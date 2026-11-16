@@ -114,3 +114,30 @@ test("an agent asking for a tool outside its role is refused, and told so", asyn
   assert.match(refusal.erreur, /non autorisé/);
   assert.ok(!commercialTurn.tools.some((tool) => tool.name === "get_pending_payments"), "it was never offered either");
 });
+
+// BC 162, 16/11/2026: Production spent its rounds delegating and answered
+// « Je n'ai pas pu terminer cette mission. ». The last round now writes the
+// answer from what was gathered, with no tool left to call.
+test("an agent's last round answers with what it gathered instead of calling one more tool", async () => {
+  const { MAX_SPECIALIST_ROUNDS, runSpecialist } = await import("../src/agent/agent-team.js");
+  const payloads = [];
+  const run = await runSpecialist({
+    agentId: "production",
+    mission: "BC 162 : fiche technique et DXF.",
+    model: "test",
+    today: "16/11/2026",
+    toolRegistry: { list: () => [] },
+    executeTool: async () => ({ ok: true }),
+    workshopBookTool: { type: "function", name: "carnet_atelier", parameters: { type: "object", properties: {} } },
+    readWorkshopBook: async () => ({ ok: true }),
+    callModel: async (payload) => {
+      payloads.push(payload);
+      return payload.tool_choice === "none"
+        ? { output_text: "Fiche technique en attente des sections du hêtre.", output: [] }
+        : { output: [{ type: "function_call", name: "carnet_atelier", call_id: `c${payloads.length}`, arguments: "{}" }] };
+    }
+  });
+  assert.equal(payloads.length, MAX_SPECIALIST_ROUNDS + 1);
+  assert.equal(payloads.filter((payload) => payload.tool_choice === "none").length, 1, "only the last round is closed to tools");
+  assert.equal(run.answer, "Fiche technique en attente des sections du hêtre.");
+});

@@ -160,6 +160,9 @@ test("real engine: DXF approval, qualified CNC, simulation, workshop validation 
   assert.equal(made.outputs[0].pret, true, JSON.stringify(made.outputs));
   assert.ok(made.outputs[0].gcode_deposes.length > 0); assert.deepEqual(made.outputs[0].gcode_deposes, made.outputs[1].deja_deposes);
   const gcodes = (await f.workshop.order("171")).cnc.filter((file) => file.format === "gcode");
+  const waiting = await f.workshop.order("171");
+  assert.ok(gcodes.every((file) => waiting.alerts.includes(`Fichier CNC « ${file.name} » à valider par le responsable atelier avant la découpe`)), "a G-code waits for the workshop manager, not the direction");
+  assert.match(waiting.journal.find((entry) => entry.text.includes(gcodes[0].name)).text, /à valider par le responsable atelier/);
   await assert.rejects(f.workshop.advance("171", "decoupe_cnc", { status: "en_cours" }), { code: "WORKSHOP_CNC_NOT_VALIDATED" });
   await assert.rejects(f.workshop.decideCncFile("171", gcodes[0].id, { approve: true }), { code: "WORKSHOP_CNC_SIMULATION_REQUIRED" });
   for (const file of gcodes) {

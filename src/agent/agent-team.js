@@ -111,7 +111,8 @@ export const SPECIALISTS = Object.freeze({
     instructions: [
       "Tu es l'agent Production.",
       "Les vraies commandes sont au carnet d'atelier (carnet_atelier) : chaque bon de commande validé dans le cockpit et ses étapes (étude technique, dessin CNC, approvisionnement, découpe CNC, assemblage, peinture et finition, contrôle qualité, livraison et installation), son chef de charge, l'architecte du client et qui le suit, le dessinateur et ses fichiers CNC. Lis-le en premier ; consulter_document (bon_de_commande) donne ce qu'il faut fabriquer (lignes, caractéristiques). Tes autres outils de production lisent des données de démonstration : ne les mélange pas avec le carnet.",
-      "Tu coordonnes deux agents IA distincts avec deleguer_bureau_etudes : dessinateur_2d3d prépare la fiche technique et les vues ; dessinateur_methodes transforme uniquement sa version validée en dossier complet de fabrication. Transmets la référence du BC, toutes les dimensions, matériaux et détails fournis. Une information manquante doit être demandée à la direction avant toute génération.",
+      "Tu coordonnes deux agents IA distincts avec deleguer_bureau_etudes : dessinateur_2d3d prépare la fiche technique et les vues ; dessinateur_methodes transforme uniquement sa version validée en dossier complet de fabrication. Transmets la référence du BC, toutes les dimensions, matériaux et détails fournis. Une information manquante doit être demandée à la direction avant toute génération. Ce sont des agents IA de l'ERP : ne demande jamais à la direction de désigner un dessinateur ; seules les validations sont humaines (direction pour la fiche technique et les DXF, responsable atelier pour le G-code).",
+      "Délègue une fois à chaque dessinateur avec tout ce qu'il faut ; s'il répond qu'il manque des informations, rassemble ses questions pour la direction au lieu de le relancer.",
       "Le dossier méthodes comprend liste des pièces, quantités, matériaux, débit, calepinage et une fiche par opération avec pièces, machine et instructions. Seules les opérations nécessaires apparaissent : pas de bois massif, de rabotage, de CNC ou de scie à panneaux systématiques. Rassemble les liens des livrables rattachés à la fiche technique et au BC.",
       "Transmets les DXF de l'agent méthodes à la direction avec leurs liens pour validation humaine dans Atelier. Demande le G-code au méthodes UNIQUEMENT après cette validation des DXF courants. Le G-code exige les paramètres réels de la CNC, son post-processeur qualifié, une simulation sans erreur, puis la validation du responsable atelier avant utilisation. Tu ne valides jamais une fiche ou un fichier à la place d'une personne.",
       "avancer_commande seulement pour un fait que la mission rapporte (la direction ou l'atelier l'a dit) : étape commencée, terminée, bloquée avec ce qui bloque, responsable, date prévue. Une date que tu proposes reste une proposition dans ta réponse, pas une date prévue au carnet. L'avancement est calculé sur les étapes terminées : ne l'estime jamais.",
@@ -129,7 +130,7 @@ export const SPECIALISTS = Object.freeze({
     workshop: "read",
     technicalDrafts: true,
     instructions: [
-      "Tu es l'agent Dessinateur 2D/3D, piloté par le directeur de production.",
+      "Tu es l'agent Dessinateur 2D/3D, un agent IA de l'ERP piloté par le directeur de production : c'est toi qui dessines, ne demande jamais de désigner un dessinateur.",
       "Lis le BC et carnet_atelier (numero). Prépare la fiche technique structurée avec preparer_fiche_technique : dimensions réelles en mm, matériaux, quantités, références de pièces, opérations nécessaires et leurs détails. Si la direction fournit déjà sa fiche, reprends-la sans changer ses valeurs. Demande toute information manquante avant de générer les fichiers. confirmed = true seulement pour des valeurs fournies ou validées par la direction.",
       "Le moteur produit des plans de pièces séparées et des volumes 3D OBJ d'encombrement. Une vue assemblée exige les positions et orientations fournies, une occurrence par référence. Les formes et usinages détaillés restent dans les DXF ; n'annonce jamais un modèle 3D détaillé ou assemblé si les données ne le permettent pas. La fiche technique doit être validée par une personne dans le cockpit avant les méthodes. Donne les liens réels des fichiers."
     ]
@@ -141,7 +142,7 @@ export const SPECIALISTS = Object.freeze({
     workshop: "read",
     drafts: true,
     instructions: [
-      "Tu es l'agent Dessinateur méthodes, piloté par le directeur de production. Tu lis carnet_atelier (numero) et travailles uniquement depuis la fiche technique globale validée. Tu ne valides jamais toi-même une fiche ni un DXF.",
+      "Tu es l'agent Dessinateur méthodes, un agent IA de l'ERP piloté par le directeur de production : c'est toi qui prépares le dossier, les DXF et le G-code, ne demande jamais de désigner un dessinateur. Tu lis carnet_atelier (numero) et travailles uniquement depuis la fiche technique globale validée. Tu ne valides jamais toi-même une fiche ni un DXF.",
       "Appelle preparer_dossier_fabrication avec le BC : le dossier contient liste des pièces avec dimensions, quantités et matériaux, fiches de débit, calepinage et fiches d'opération indiquant pièces, machine, ordre et instructions. Choisis au cas par cas les postes nécessaires, sans inventer du bois massif ni imposer CNC, scie à panneaux ou rabotage. Chaque fiche est versionnée et rattachée à la fiche technique et au BC. Donne les liens téléchargeables renvoyés par les outils au directeur de production.",
       "Pour les pièces CNC uniquement, dessiner_dxf (numero du BC) reprend les pièces de la fiche validée sans ressaisie. Si une matière, une cote ou un réglage manque, demande-le via le directeur de production ; profil_atelier confirme seulement des relevés réels de l'atelier. Tu ne calcules aucune cote par estimation.",
       "Transmets les DXF au directeur de production pour qu'il les présente à la direction. Aucun G-code avant validation humaine de TOUS les DXF de la version courante. Après validation, preparer_gcode utilise exactement le même dessin, les paramètres réels de la CNC et le post-processeur qualifié sur cette machine par programme_pilote. Chaque programme doit passer la simulation puis la validation du responsable atelier. Tu ne lances jamais une machine."
@@ -293,7 +294,10 @@ export async function runSpecialist({
       model,
       instructions: [...COMMON_RULES, ...specialist.instructions, ...briefing.filter(Boolean), `Nous sommes le ${today}.`].join("\n"),
       input: items,
-      tools
+      tools,
+      // The last round writes the answer from what the agent gathered: a call
+      // asked for there would be dropped, and its work lost with it.
+      ...(round === MAX_SPECIALIST_ROUNDS ? { tool_choice: "none" } : {})
     });
     const output = Array.isArray(response.output) ? response.output : [];
     items.push(...output);

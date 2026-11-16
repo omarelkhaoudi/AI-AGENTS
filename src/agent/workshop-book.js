@@ -453,7 +453,7 @@ function createWorkshopStore({ load, save, clock, photoFiles, cncFiles, signatur
         drawing.responsible ||= order.team?.drafter ?? "";
         drawing.updatedAt = at;
         order.steps.dessin_cnc = drawing;
-        order.journal.push({ at, by, text: `Dessin CNC : fichier « ${name} » déposé, à valider par la direction${text(note) ? ` (${text(note)})` : ""}.` });
+        order.journal.push({ at, by, text: `Dessin CNC : fichier « ${name} » déposé, à valider par ${format === "gcode" ? "le responsable atelier" : "la direction"}${text(note) ? ` (${text(note)})` : ""}.` });
         return id;
       });
     },
@@ -885,7 +885,7 @@ function workshopOrder(order, record = { steps: {}, journal: [] }, issued, day) 
     obsolete: entry.obsolete === true
   }));
   for (const entry of cnc.filter((candidate) => !candidate.obsolete && candidate.status === "a_valider")) {
-    alerts.push(`Fichier CNC « ${entry.name} » à valider par la direction avant la découpe`);
+    alerts.push(`Fichier CNC « ${entry.name} » à valider par ${entry.format === "gcode" ? "le responsable atelier" : "la direction"} avant la découpe`);
   }
   // Only an order made from a quote can tell: invoices name their quote, never
   // the order.

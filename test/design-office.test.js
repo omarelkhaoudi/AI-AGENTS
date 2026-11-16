@@ -231,7 +231,7 @@ test("Commercial reads who answers for an order but cannot change it", async (t)
   const commercial = calls.filter((payload) => payload.instructions.includes("Tu es l'agent Commercial"));
   assert.ok(!commercial[0].tools.some((tool) => tool.name === "equipe_commande"));
   const read = JSON.parse(commercial[1].input.at(-1).output);
-  assert.deepEqual(read.equipe, { chef_de_charge: "à désigner", architecte: "aucun", lien_avec_l_architecte: null, dessinateur: "à désigner" });
+  assert.deepEqual(read.equipe, { chef_de_charge: "à désigner", architecte: "aucun", lien_avec_l_architecte: null, dessinateur: "aucun (facultatif : fiche technique, DXF et G-code sont préparés par les agents IA du bureau d'études)" }, "the drawings are the AI drafters' work: nobody is to be named");
   assert.deepEqual(read.fichiers_cnc, []);
 });
 

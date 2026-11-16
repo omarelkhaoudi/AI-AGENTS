@@ -429,7 +429,7 @@ const CLIENT_LINK_TOOL = Object.freeze({
 const ORDER_TEAM_TOOL = Object.freeze({
     type: "function",
     name: "equipe_commande",
-    description: "Enregistre qui répond d'un bon de commande : le chef de charge qui contrôle la commande de bout en bout (et son numéro WhatsApp : il y reçoit les alertes de retard et de blocage de la commande), l'architecte du client (et son numéro), la personne de l'équipe en lien avec l'architecte, le dessinateur qui fait le G-code de la machine CNC après la fiche technique (et son numéro WhatsApp : il pourra y envoyer ses fichiers). Seulement pour ce que la direction ou l'atelier a dit. Chaîne vide pour ne pas changer un rôle, « - » pour le retirer.",
+    description: "Enregistre qui répond d'un bon de commande : le chef de charge qui contrôle la commande de bout en bout (et son numéro WhatsApp : il y reçoit les alertes de retard et de blocage de la commande), l'architecte du client (et son numéro), la personne de l'équipe en lien avec l'architecte, et un dessinateur humain s'il y en a un (facultatif : fiche technique, DXF et G-code sont préparés par les agents IA du bureau d'études ; son numéro WhatsApp lui permet d'envoyer des fichiers). Seulement pour ce que la direction ou l'atelier a dit. Chaîne vide pour ne pas changer un rôle, « - » pour le retirer.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -614,7 +614,7 @@ function instructions(today, briefing = []) {
     "",
     "Bilan commercial et relances : « fais le bilan commercial du mois », « quels devis relancer ? », « où en sont les ventes » → bilan_commercial (chiffres calculés sur les documents du cockpit : cite les numéros, ne recalcule rien, ne complète jamais avec un chiffre supposé). « J'ai relancé Mme Alami pour le devis 170, elle réfléchit », « le client du devis 172 a refusé, trop cher » → enregistrer_relance toi-même (perdu avec son motif pour un refus). Un devis ouvert sans nouvelles depuis 5 jours est à relancer : le responsable commercial est prévenu sur WhatsApp, et la direction au bout de 10 jours ; pour rédiger les messages de relance, confie-les au commercial.",
     "",
-    "Bureau d'études : Production coordonne deux agents IA distincts via deleguer_bureau_etudes : dessinateur_2d3d (plans et fiche technique à valider) et dessinateur_methodes (dossier de fabrication depuis la fiche validée, opérations nécessaires uniquement). Les demandes de fabrication, DXF, débit, calepinage et G-code sont confiées à production, qui rassemble les livrables par BC et version. Production présente les DXF à la direction avec leurs liens. Aucun G-code avant la validation humaine de tous les DXF courants ; paramètres réels CNC, post-processeur qualifié, simulation et validation du responsable atelier requis. Toute information manquante se demande avant génération. Tu ne valides jamais les fiches ou fichiers.",
+    "Bureau d'études : Production coordonne deux agents IA distincts via deleguer_bureau_etudes : dessinateur_2d3d (plans et fiche technique à valider) et dessinateur_methodes (dossier de fabrication depuis la fiche validée, opérations nécessaires uniquement). Les demandes de fabrication, DXF, débit, calepinage et G-code sont confiées à production, qui rassemble les livrables par BC et version. Production présente les DXF à la direction avec leurs liens. Aucun G-code avant la validation humaine de tous les DXF courants ; paramètres réels CNC, post-processeur qualifié, simulation et validation du responsable atelier requis. Toute information manquante se demande avant génération. Tu ne valides jamais les fiches ou fichiers. Les dessinateurs sont des agents IA de l'ERP, pas des personnes : ne demande jamais à la direction de désigner un dessinateur ; les personnes qui valident sont la direction (fiche technique, DXF) et le responsable atelier (G-code).",
     "",
     "Caisse et bilan du jour : chaque entrée ou sortie d'argent que la direction t'annonce (« j'ai reçu 3 000 DH d'acompte de Mme Alami en espèces pour le devis 170 », « j'ai payé 1 200 DH de laque à Sodipeint par chèque », « j'ai versé les salaires, 18 000 DH par virement », « il y a 5 000 DH en caisse au départ ») → confie-la tout de suite au Directeur financier (finance) avec deleguer_a_un_agent, en recopiant tout : entrée ou sortie, montant, ce que c'est, moyen de paiement, qui a payé ou a été payé, numéro du devis ou du BC, la date si ce n'est pas aujourd'hui, et qui l'annonce. Plusieurs mouvements annoncés ensemble → une seule mission qui les liste tous. Finance l'enregistre au journal de caisse (et, pour le paiement d'un client dont la vente est connue, prépare son reçu de paiement à valider) et te rend le bilan du jour : réponds en deux ou trois lignes (mouvement n°, montant, solde du jour, et pour un client ce qui reste à encaisser sur sa vente). « Où en est la caisse », « bilan du jour », « combien j'ai en caisse » → bilan_caisse toi-même. Pour tout point de situation, donne aussi le bilan de caisse du jour. Une erreur de saisie (« ce n'était pas 3 000 mais 2 000 ») → finance : annuler le mouvement et enregistrer le bon. Justificatifs : une dépense annoncée avec la photo d'un reçu, d'un ticket ou d'une facture → écris « justificatif : photo n° X » dans la mission ; une photo envoyée plus tard pour une dépense déjà enregistrée (« voici le reçu du MDF ») → mission à finance : joindre la photo n° X au mouvement n° N. Sans photo, rappelle à la direction d'envoyer le justificatif. Une dépense au-dessus du seuil d'alerte s'approuve dans la vue Caisse du cockpit, par une personne : tu ne l'approuves jamais.",
     "",
@@ -841,7 +841,10 @@ export function createDirectorAgent({
           model,
           instructions: instructions(formatDate(clock()), briefing),
           input: items,
-          tools: TOOLS
+          tools: TOOLS,
+          // The last round answers with what was gathered, instead of asking
+          // for one more tool and leaving the direction with no answer.
+          ...(round === MAX_TOOL_ROUNDS ? { tool_choice: "none" } : {})
         }, { aiUsage, agent: "director" });
         const output = Array.isArray(response.output) ? response.output : [];
         items.push(...output);
@@ -1507,7 +1510,9 @@ function orderTeam(order) {
     chef_de_charge: lead ? `${lead}${leadPhone ? ` (${leadPhone})` : " — sans numéro : ne reçoit pas les alertes"}` : "à désigner",
     architecte: architect ? `${architect}${architectPhone ? ` (${architectPhone})` : ""}` : "aucun",
     lien_avec_l_architecte: liaison || (architect ? "à désigner" : null),
-    dessinateur: drafter ? `${drafter}${drafterPhone ? ` (${drafterPhone})` : ""}` : "à désigner"
+    // The drawings, the DXF and the G-code are the AI drafters' work (Hiba,
+    // 16/11/2026): a person in this role is optional, never a blocker.
+    dessinateur: drafter ? `${drafter}${drafterPhone ? ` (${drafterPhone})` : ""}` : "aucun (facultatif : fiche technique, DXF et G-code sont préparés par les agents IA du bureau d'études)"
   };
 }
 

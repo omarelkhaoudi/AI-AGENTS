@@ -54,8 +54,10 @@ async function issue(documents, input) {
 const GCODE = Buffer.from("%\nG21 G90\nG0 X0 Y0\nG1 X100 Y0 F1200\nM30\n%\n");
 async function drawingValidated(store, number, by = "direction") {
   await store.updateStep(number, "etude_technique", { status: "terminee", by });
-  const id = await store.addCncFile(number, { bytes: GCODE, name: `panneaux-${number}.nc`, format: "gcode", by });
-  await store.decideCncFile(number, id, { approve: true, by });
+  const dxf = await store.addCncFile(number, { bytes: Buffer.from("0\nSECTION\n2\nENTITIES\n0\nENDSEC\n0\nEOF\n"), name: `panneaux-${number}.dxf`, format: "dxf", by });
+  await store.decideCncFile(number, dxf, { approve: true, by });
+  const id = await store.addCncFile(number, { bytes: GCODE, name: `panneaux-${number}.nc`, format: "gcode", simulation: { ok: true }, by });
+  await store.decideCncFile(number, id, { approve: true, by, workshopValidation: "Simulation et préparation machine contrôlées dans ce scénario de test." });
 }
 
 async function documentsWith(t, ...inputs) {

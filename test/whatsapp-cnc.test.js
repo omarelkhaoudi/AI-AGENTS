@@ -28,6 +28,7 @@ const OWNER = "212661000001";
 const OTHER_OWNER = "212661000002";
 const DRAFTER = "212670000003";
 const GCODE = Buffer.from("%\nG21 G90\nG0 X0 Y0\nG1 X600 F1200\nM30\n%\n");
+const DXF = Buffer.from("0\nSECTION\n2\nENTITIES\n0\nENDSEC\n0\nEOF\n");
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00]);
 
 async function tempDir(t) {
@@ -99,7 +100,7 @@ async function setUp(t, { numbers = ["171"], studyDone = true, drafterOf = ["171
       await workshop.advance(number, "etude_technique", { status: "terminee" });
     }
   }
-  const meta = fakeMeta({ "media-g1": GCODE, "media-g2": GCODE, "media-photo": JPEG });
+  const meta = fakeMeta({ "media-g1": GCODE, "media-g2": DXF, "media-photo": JPEG });
   const chats = [];
   const teamBook = createMemoryTeamBook({ clock, agents: SPECIALIST_IDS });
   const { app } = await buildAuthenticatedApi({
@@ -122,19 +123,16 @@ async function setUp(t, { numbers = ["171"], studyDone = true, drafterOf = ["171
   return { app, workshop, meta, chats, teamBook, deliver };
 }
 
-test("the draughtsman's G-code sent on WhatsApp goes on their order, and the direction is told to validate it", async (t) => {
+test("WhatsApp cannot deposit G-code before DXF approval; the draughtsman gets the reason", async (t) => {
   const { workshop, meta, chats, teamBook, deliver } = await setUp(t);
 
   await deliver(DRAFTER, fileMessage("media-g1", "panneaux-lit.nc", "MDF 18 mm"), "wamid.1");
 
   const current = await workshop.order("171");
-  assert.deepEqual(current.cnc.map((file) => [file.name, file.status, file.by, file.note]), [["panneaux-lit.nc", "a_valider", "Karim", "MDF 18 mm"]]);
-  assert.equal(current.steps.find((step) => step.id === "dessin_cnc").status, "en_cours");
+  assert.deepEqual(current.cnc, []);
   assert.equal(chats.length, 0, "a machine file is not a message for the Director");
-  assert.deepEqual(meta.sent.map((message) => message.to), [DRAFTER, OWNER, OTHER_OWNER]);
-  assert.equal(meta.sent[0].text, "Bien reçu, Karim. « panneaux-lit.nc » est enregistré sur le BC n° 171 (Client Exemple). Il attend la validation de la direction ; la découpe commencera après.");
-  assert.equal(meta.sent[1].text, "Karim a envoyé le fichier CNC « panneaux-lit.nc » pour le BC n° 171 (Client Exemple) : à valider dans le cockpit, vue Atelier, avant la découpe.");
-  assert.ok((await teamBook.activity({ agent: "production" })).some((entry) => entry.text.includes("fichier CNC « panneaux-lit.nc » reçu de Karim par WhatsApp")));
+  assert.deepEqual(meta.sent.map((message) => message.to), [DRAFTER]);
+  assert.match(meta.sent[0].text, /Fichier non enregistré.*DXF.*validés/);
 
   // Words from the draughtsman are a report to Production.
   await deliver(DRAFTER, textMessage("Le G-code du tiroir arrive demain"), "wamid.2");
@@ -152,8 +150,8 @@ test("a draughtsman of several orders names one, and reaches only their own", as
   assert.equal(meta.sent.at(-1).text, "Vous n'êtes pas enregistré comme dessinateur du BC n° 173. Vos commandes en cours : BC n° 172, 171.");
   assert.deepEqual((await workshop.order("173")).cnc, []);
 
-  await deliver(DRAFTER, fileMessage("media-g2", "BC171_tiroirs.nc"), "wamid.3");
-  assert.deepEqual((await workshop.order("171")).cnc.map((file) => file.name), ["BC171_tiroirs.nc"], "the order can be named in the file's name");
+  await deliver(DRAFTER, fileMessage("media-g2", "BC171_tiroirs.dxf"), "wamid.3");
+  assert.deepEqual((await workshop.order("171")).cnc.map((file) => file.name), ["BC171_tiroirs.dxf"], "the order can be named in the file's name");
   assert.deepEqual((await workshop.order("172")).cnc, []);
 });
 
@@ -170,15 +168,15 @@ test("a file that cannot go on the order says why, and nothing is recorded", asy
   assert.equal(meta.sent.filter((message) => message.to === OWNER).length, 0, "the direction is told only of a file to validate");
 });
 
-test("the direction can send a G-code too; a stranger's is only kept for the cockpit", async (t) => {
+test("the direction can send a DXF; a stranger's file is only kept for the cockpit", async (t) => {
   const { workshop, meta, chats, deliver } = await setUp(t, { drafterOf: [] });
 
   await deliver("212699999999", fileMessage("media-g1", "panneaux.nc", "BC 171"), "wamid.1");
   assert.deepEqual((await workshop.order("171")).cnc, []);
   assert.equal(meta.sent.length, 0, "nobody answers a stranger automatically");
 
-  await deliver(OWNER, fileMessage("media-g1", "panneaux.nc", "bon de commande n° 171"), "wamid.2");
-  assert.deepEqual((await workshop.order("171")).cnc.map((file) => [file.name, file.by]), [["panneaux.nc", "La direction"]]);
+  await deliver(OWNER, fileMessage("media-g2", "panneaux.dxf", "bon de commande n° 171"), "wamid.2");
+  assert.deepEqual((await workshop.order("171")).cnc.map((file) => [file.name, file.by]), [["panneaux.dxf", "La direction"]]);
   assert.deepEqual(meta.sent.map((message) => message.to), [OWNER, OTHER_OWNER], "the other owner is told, not the sender");
   assert.equal(chats.length, 0);
 });

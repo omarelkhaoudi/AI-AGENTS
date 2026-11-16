@@ -8,6 +8,7 @@ import { createFilePlanStore } from "./agent/plan-store.js";
 import { createFileConversationStore } from "./agent/conversation-store.js";
 import { createFileWorkshopStore } from "./agent/workshop-book.js";
 import { createFileDesignProfileBook } from "./agent/design-office.js";
+import { createFileAiUsageBook } from "./agent/ai-usage.js";
 import { createFileCashBook } from "./agent/cash-book.js";
 import { createFileImprovementBook } from "./agent/improvement-book.js";
 import { createFileFollowUpBook } from "./agent/sales-book.js";
@@ -54,6 +55,10 @@ const workshopStore = createFileWorkshopStore();
 // data/atelier-profil.json: real thicknesses, assembly clearances.
 const designProfileBook = createFileDesignProfileBook();
 
+// What the AI costs, counted at each call to the model (data/couts-ia.json).
+// HKIDS_AI_BUDGET_USD sets a monthly budget, alerted at 80 % and 100 %.
+const aiUsageBook = createFileAiUsageBook();
+
 // The cash book (data/caisse.json), the anomalies and their rules
 // (data/amelioration.json), and the team with its feed (data/equipe.json).
 // An expense of HKIDS_EXPENSE_ALERT_DH or more (2 000 DH by default) waits
@@ -78,7 +83,7 @@ const whatsAppStore = createFileWhatsAppInbox();
 // DocumentsH-KIDS Administratif unless HKIDS_ARCHIVE_DIR says where.
 const archiveDir = process.env.HKIDS_ARCHIVE_DIR?.trim() || DEFAULT_ARCHIVE_DIR;
 
-const app = buildApi({ repository, companyId: process.env.HKIDS_COMPANY_ID?.trim() || "hkids", config, toolRegistry, planStore, conversationStore, workshopStore, designProfileBook, cashBook, improvementBook, teamBook, followUpBook, autoAnalyseAnomalies, whatsAppStore, archiveDir });
+const app = buildApi({ repository, companyId: process.env.HKIDS_COMPANY_ID?.trim() || "hkids", config, toolRegistry, planStore, conversationStore, workshopStore, designProfileBook, aiUsageBook, cashBook, improvementBook, teamBook, followUpBook, autoAnalyseAnomalies, whatsAppStore, archiveDir });
 
 // Every half hour, the workshop book is read for steps that became late, and
 // the quotes for follow-ups that became due.

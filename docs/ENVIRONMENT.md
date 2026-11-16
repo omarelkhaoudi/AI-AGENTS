@@ -237,6 +237,11 @@ appel réseau vers OpenAI n'a lieu.
 | `OPENAI_API_KEY` | vide | **pour le Director IA** | **Secret.** Clé du compte OpenAI de l'entreprise. |
 | `OPENAI_MODEL` | `gpt-5` | non | Modèle du Director et des agents. |
 | `OPENAI_REASONING_EFFORT` | `low` | non | `minimal`, `low`, `medium`, `high` (modèles qui raisonnent). |
+| `HKIDS_ACCOUNTS` | vide | non | Comptes de l'export comptable à remplacer, en JSON : `{"sales":["7111","Ventes de marchandises"],"expense":{"loyer":["6132","Loyers"]}}`. Clés : `client`, `sales`, `vatDue`, `cash`, `bank`, `otherIncome`, `opening`, et `expense` par catégorie de caisse. Par défaut : CGNC usuel (3421, 7121, 4455, 5161, 5141, 61xx). |
+| `HKIDS_AI_BUDGET_USD` | vide | non | Budget mensuel de l'IA, en dollars. Une alerte part à 80 % puis à 100 % (fil de l'équipe et WhatsApp de la direction), une fois chacune par mois. Vide : pas de budget, le coût reste suivi. |
+| `HKIDS_AI_BUDGET_STOP` | vide | non | `on` : le Director s'arrête quand le budget du mois est atteint, jusqu'au mois suivant ou jusqu'à ce que le budget soit relevé. Sinon il continue et l'alerte suffit. |
+| `HKIDS_USD_MAD` | vide | non | Taux dollar → dirham pour afficher aussi le coût en DH (par exemple `10`). Vide : en dollars seulement. |
+| `HKIDS_AI_PRICES` | vide | non | Tarifs à corriger ou à ajouter, en JSON : `{"gpt-5":[1.25,0.125,10]}` = dollars par million de jetons lus, lus en cache, écrits. Un modèle sans tarif est compté, jamais chiffré. |
 | `DESSINATEUR_PYTHON` | `python` (Windows), `python3` | non | Python qui fait tourner le moteur du dessinateur méthodes (`dessinateur/`, avec `pip install -r dessinateur/requirements.txt`). Dans l'image Docker : `/opt/dessinateur/bin/python`. |
 | `HKIDS_CATALOGUE_PATH` | `data/catalogue-hkids.xlsx` | non | Catalogue produits lu par le Director. |
 | `HKIDS_PLANS_PATH` | `data/plans-director.json` | non | Où les plans d'action sont conservés. |

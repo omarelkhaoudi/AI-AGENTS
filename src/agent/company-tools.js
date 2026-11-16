@@ -651,7 +651,7 @@ export async function directorBriefing({ books, workshop = null, documentService
   const withoutLead = open.filter((order) => !order.team?.lead).map((order) => order.number);
   const quotes = books.followUps && typeof documentService?.listIssued === "function" ? quotePipeline(await documentService.listIssued().catch(() => []), await books.followUps.state(), { today: clock(), days: books.followUps.days }) : [];
   const dueQuotes = quotes.filter((quote) => quote.level > 0);
-  const cncWaiting = open.flatMap((order) => (order.cnc ?? []).filter((entry) => entry.status === "a_valider").map(() => order.number));
+  const cncWaiting = open.flatMap((order) => (order.cnc ?? []).filter((entry) => !entry.obsolete && entry.status === "a_valider").map(() => order.number));
   const linked = Object.entries(members).filter(([agent]) => SPECIALISTS[agent]);
   const reports = recent.filter((entry) => entry.kind === "compte_rendu").slice(0, 8).reverse();
   const waiting = state.rules.filter((rule) => rule.status === "proposee").length;

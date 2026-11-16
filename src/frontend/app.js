@@ -62,6 +62,8 @@ const AGENT_ROSTER = Object.freeze([
   { id: "commercial", initials: "Co", color: "#2c6e9b", role: "Devis, relances clients et pipeline commercial." },
   { id: "finance", initials: "Fi", color: "#3f7d4e", role: "Encaissements, créances, factures et échéances." },
   { id: "production", initials: "Pr", color: "#b8641e", role: "Planning atelier, avancement et retards." },
+  { id: "dessinateur_2d3d", initials: "2D", color: "#367d91", role: "Plans 2D/3D et fiche technique du meuble.", parent: "Production" },
+  { id: "dessinateur_methodes", initials: "Mé", color: "#956030", role: "Débit, calepinage et fiches par opération.", parent: "Production" },
   { id: "purchasing", initials: "Ac", color: "#7a5ba6", role: "Matières, fournisseurs, stock et besoins d'achat." },
   { id: "hr", initials: "RH", color: "#a64b6b", role: "Présences, contrats et besoins de personnel." },
   { id: "marketing", initials: "Ma", color: "#c2852b", role: "Campagnes, offres et positionnement." },
@@ -1503,7 +1505,8 @@ function taskBlock(anomaly) {
 // --- Team view ------------------------------------------------------------------
 // Each agent with the person it answers to, the missions it carries, the rules
 // it applies and what it did lately; beside it, the whole team's feed.
-const ACTIVITY_LABELS = Object.freeze({ mission: "Mission", caisse: "Caisse", atelier: "Atelier", document: "Document", amelioration: "Amélioration", equipe: "Équipe", compte_rendu: "Compte rendu" });
+const ACTIVITY_LABELS = Object.freeze({ mission: "Mission", caisse: "Caisse", atelier: "Atelier", document: "Document", amelioration: "Amélioration", equipe: "Équipe", compte_rendu: "Compte rendu", alerte: "Alerte" });
+const aiUsagePanel = document.querySelector("#ai-usage");
 const teamFeed = document.querySelector("#team-feed");
 const teamView = { data: null, responded: new Set() };
 document.querySelector("#refresh-team").addEventListener("click", () => refreshTeam());
@@ -1551,6 +1554,41 @@ async function refreshTeam() {
   } catch (error) {
     teamFeed.innerHTML = `<li class="muted">${escapeHtml(error.message)}</li>`;
   }
+  await refreshAiUsage();
+}
+
+// What the AI cost this month: the total, the budget when one is set, and
+// each agent's share. An estimate; OpenAI's invoice is the reference.
+async function refreshAiUsage() {
+  try {
+    const response = await fetch("/api/ai-usage", { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("Le coût de l'IA n'a pas pu être chargé.");
+    }
+    renderAiUsage(await response.json());
+  } catch (error) {
+    aiUsagePanel.innerHTML = `<p class="muted text-[13px]">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderAiUsage(usage) {
+  const dollars = (value) => `${Number(value).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`;
+  const agentName = (id) => (id === "transcription" ? "Vocaux WhatsApp" : id === "director" ? "Director" : formatAgent(id));
+  if (usage.calls === 0) {
+    aiUsagePanel.innerHTML = '<p class="muted text-[13px]">Aucun appel au modèle ce mois-ci. Chaque question posée au Director sera comptée ici.</p>';
+    return;
+  }
+  const budget = usage.budget;
+  aiUsagePanel.innerHTML = `
+    <p class="text-[22px] font-semibold text-ink">${escapeHtml(dollars(usage.costUsd))}${usage.costMad === null ? "" : ` <small class="muted text-[13px] font-normal">≈ ${escapeHtml(formatDh(usage.costMad))}</small>`}</p>
+    <p class="progress-label">${escapeHtml(String(usage.calls))} appel${usage.calls > 1 ? "s" : ""} au modèle${usage.projectedUsd === null ? "" : ` · au rythme actuel, ${escapeHtml(dollars(usage.projectedUsd))} en fin de mois`}</p>
+    ${budget ? `
+      <div class="progress" role="img" aria-label="Budget consommé à ${escapeHtml(String(budget.usedPercent))} %"><span style="width:${Math.min(100, Math.max(0, budget.usedPercent))}%"></span></div>
+      <p class="progress-label ${budget.reached ? "late" : ""}">${escapeHtml(String(budget.usedPercent))} % du budget de ${escapeHtml(dollars(budget.usd))}${budget.reached ? (budget.stops ? " : atteint, le Director est à l'arrêt" : " : atteint") : ` · reste ${escapeHtml(dollars(budget.remainingUsd))}`}</p>` : '<p class="progress-label">Aucun budget mensuel fixé (HKIDS_AI_BUDGET_USD).</p>'}
+    ${usage.unpricedCalls > 0 ? `<p class="progress-label late">${escapeHtml(String(usage.unpricedCalls))} appel(s) sur un modèle sans tarif connu : comptés, non chiffrés (HKIDS_AI_PRICES).</p>` : ""}
+    <h4 class="mt-4!">Par agent</h4>
+    <ul>${usage.byAgent.map((line) => `<li><span>${escapeHtml(agentName(line.agent))} — ${escapeHtml(dollars(line.costUsd))}</span><small>${escapeHtml(String(line.calls))} appel${line.calls > 1 ? "s" : ""} · ${escapeHtml(Math.round((line.input + line.output) / 1000).toLocaleString("fr-FR"))} k jetons</small></li>`).join("")}</ul>
+  `;
 }
 
 async function saveMember(agentId, member) {
@@ -1882,6 +1920,35 @@ function renderOrders(orders) {
       });
     });
     const number = article.dataset.order;
+    article.querySelector("[data-technical-upload]")?.addEventListener("change", async (event) => {
+      try {
+        const file = event.currentTarget.files?.[0];
+        if (!file) return;
+        const result = await postJson(`/api/workshop/${encodeURIComponent(number)}/technical-sheet`, { sheet: JSON.parse(await file.text()) });
+        if (!result.ok) throw new Error((result.questions ?? []).join("\n"));
+        showToast("Fiche technique préparée, à valider.");
+      } catch (error) { showToast(error.message, "warn"); }
+      await refreshOrders();
+    });
+    article.querySelectorAll("[data-technical-decide]").forEach((button) => button.addEventListener("click", async () => {
+      const decision = button.dataset.technicalDecide;
+      const reason = decision === "refuser" ? globalThis.prompt?.("Quelle correction faut-il apporter à la fiche technique ?") ?? "" : "";
+      if (decision === "refuser" && !reason.trim()) return;
+      if (decision === "valider" && !globalThis.confirm?.("Valider cette version de la fiche technique pour préparer le dossier de fabrication ?")) return;
+      try {
+        await postJson(`/api/workshop/${encodeURIComponent(number)}/technical-sheet/${encodeURIComponent(button.dataset.sheetId)}/decision`, { decision, reason });
+        showToast("Décision enregistrée sur la fiche technique.");
+      } catch (error) { showToast(error.message, "warn"); }
+      await refreshOrders();
+    }));
+    article.querySelector("[data-fabrication-prepare]")?.addEventListener("click", async () => {
+      try {
+        await postJson(`/api/workshop/${encodeURIComponent(number)}/fabrication`, {});
+        showToast("Dossier de fabrication enregistré.");
+      } catch (error) { showToast(error.message, "warn"); }
+      await refreshOrders();
+    });
+    article.querySelectorAll("[data-fabrication-download]").forEach((button) => button.addEventListener("click", () => downloadCncFile(number, button.dataset.fabricationDownload, button.dataset.fileName, "fabrication/files")));
     article.querySelector("[data-portal-open]")?.addEventListener("click", async () => {
       const link = await sendPortalChange(number, "ouvrir");
       if (link) {
@@ -1909,14 +1976,19 @@ function renderOrders(orders) {
     article.querySelectorAll("[data-cnc-download]").forEach((button) => {
       button.addEventListener("click", () => downloadCncFile(number, button.dataset.cncDownload, button.dataset.cncName));
     });
+    article.querySelectorAll("[data-signed-download]").forEach((button) => {
+      button.addEventListener("click", () => downloadSignedNote(number, button.dataset.signedDownload, button.dataset.signedName));
+    });
     article.querySelectorAll("[data-cnc-decide]").forEach((button) => {
       button.addEventListener("click", async () => {
         const approve = button.dataset.cncDecide === "valider";
         const reason = approve ? "" : globalThis.prompt?.("Pourquoi ce fichier est-il refusé ? Le dessinateur le lira pour le corriger.") ?? "";
-        if (approve ? !globalThis.confirm?.("Valider ce fichier pour la machine CNC ? La découpe pourra commencer avec lui.") : reason.trim() === "") {
+        const workshopValidation = approve && button.dataset.cncFormat === "gcode" ? globalThis.prompt?.("Responsable atelier : indiquez les contrôles effectués (simulation, outils, origines, fixation) avant autorisation d'utilisation.") ?? "" : "";
+        if (approve && button.dataset.cncFormat === "gcode" && !workshopValidation.trim()) return;
+        if (approve ? !globalThis.confirm?.(button.dataset.cncFormat === "dxf" ? "Valider ce DXF pour permettre la préparation du G-code ?" : "Valider ce G-code simulé pour utilisation à l'atelier ?") : reason.trim() === "") {
           return;
         }
-        await decideCncFile(number, button.dataset.cncId, approve ? "valider" : "refuser", reason);
+        await decideCncFile(number, button.dataset.cncId, approve ? "valider" : "refuser", reason, workshopValidation);
       });
     });
     const photoField = article.querySelector("[data-photo-input]");
@@ -1985,6 +2057,7 @@ function orderCard(order) {
           </ul>
         `)}
         ${designOffice(order)}
+        ${manufacturingDossier(order)}
         ${clientAccess(order)}
         ${order.journal.length > 0 ? orderPanel(order, "journal", `${icon("history")}<span>Journal</span><small>${order.journal.length} entrée${order.journal.length > 1 ? "s" : ""}</small>`, `
           <ul class="order-journal">${[...order.journal].reverse().map((entry) => `<li><small>${escapeHtml(formatIsoDay(entry.at.slice(0, 10)))} ${escapeHtml(entry.at.slice(11, 16))}</small> ${escapeHtml(entry.text)}</li>`).join("")}</ul>
@@ -2040,8 +2113,8 @@ function designOffice(order) {
       </form>
       <div class="cnc-files">
         <p>${studyDone
-          ? "Le dessinateur dépose ici le G-code (ou le DXF) fait d'après la fiche technique, ou l'envoie au numéro WhatsApp de l'entreprise avec « BC ${escapeHtml(order.number)} » en légende. La découpe CNC ne commence qu'une fois le fichier validé par la direction."
-          : "Après la fiche technique (étude technique terminée), le dessinateur dépose ici le G-code ou le DXF. La découpe CNC attend sa validation."}</p>
+          ? "L'agent méthodes prépare les DXF des pièces CNC. Le directeur de production vous les présente pour validation ; le G-code est ensuite généré, simulé et soumis au responsable atelier."
+          : "Validez la fiche technique globale, puis préparez le dossier de fabrication. Les DXF sont validés avant toute génération de G-code."}</p>
         <ul>
           ${order.cnc.map((file) => {
             const [tone, label] = CNC_STATUS_TAGS[file.status] ?? ["", file.status];
@@ -2049,15 +2122,15 @@ function designOffice(order) {
             <li>
               <span class="cnc-icon">${icon("file")}</span>
               <div>
-                <strong>${escapeHtml(file.name)}</strong> <span class="tag ${tone}">${escapeHtml(label)}</span>
+                <strong>${escapeHtml(file.name)}</strong> <span class="tag ${file.obsolete ? "warning" : tone}">${file.obsolete ? "obsolète — archive" : escapeHtml(label)}</span>
                 <small>${file.format === "gcode" ? "G-code" : "DXF"} · ${escapeHtml(formatBytes(file.size))} · déposé le ${escapeHtml(formatIsoDay(file.depositedAt.slice(0, 10)))}${file.decidedBy ? ` · ${escapeHtml(label)} par ${escapeHtml(file.decidedBy)}` : ""}</small>
                 ${file.note ? `<small>${escapeHtml(file.note)}</small>` : ""}
                 ${file.reason ? `<small class="block">Refusé : ${escapeHtml(file.reason)}</small>` : ""}
               </div>
               <div class="cnc-actions">
                 <button type="button" class="link-button" data-cnc-download="${escapeHtml(file.id)}" data-cnc-name="${escapeHtml(file.name)}">Télécharger</button>
-                ${file.status === "a_valider" ? `
-                  <button type="button" class="secondary" data-cnc-decide="valider" data-cnc-id="${escapeHtml(file.id)}">${icon("check")}Valider</button>
+                ${file.status === "a_valider" && !file.obsolete ? `
+                  <button type="button" class="secondary" data-cnc-decide="valider" data-cnc-format="${escapeHtml(file.format)}" data-cnc-id="${escapeHtml(file.id)}">${icon("check")}${file.format === "dxf" ? "Valider le DXF" : "Validation atelier"}</button>
                   <button type="button" class="link-button" data-cnc-decide="refuser" data-cnc-id="${escapeHtml(file.id)}">Refuser</button>` : ""}
               </div>
             </li>`;
@@ -2068,6 +2141,20 @@ function designOffice(order) {
         </ul>
       </div>
     </div>
+  `);
+}
+
+function manufacturingDossier(order) {
+  const sheets = order.technicalSheets ?? [];
+  const current = sheets.at(-1);
+  const dossiers = order.fabricationDossiers ?? [];
+  const downloads = (item) => `<ul>${item.files.map((file) => `<li><button type="button" class="link-button" data-fabrication-download="${escapeHtml(file.id)}" data-file-name="${escapeHtml(file.name)}">${escapeHtml(file.name)}</button></li>`).join("")}</ul>`;
+  return orderPanel(order, "fabrication", `${icon("file")}<span>Dossier de fabrication</span><small>${current ? `Fiche technique v${current.version}` : "Fiche technique à fournir"}</small>`, `
+    <p>Production coordonne le dessinateur 2D/3D et le dessinateur méthodes. Chaque poste reçoit ses fiches d'opération, rattachées à cette commande et à la version de sa fiche technique.</p>
+    <p>Transmettez votre fiche au Director ou importez sa version structurée : <label class="link-button">Importer une fiche technique JSON<input class="visually-hidden" type="file" accept=".json,application/json" data-technical-upload></label></p>
+    ${sheets.map((sheet) => `<section><h4>Fiche technique v${sheet.version} · ${escapeHtml(sheet.data.title)} · ${escapeHtml(sheet.status)}${sheet.id !== current.id ? " · archive" : ""}</h4>${downloads(sheet)}${sheet.id === current.id && sheet.status === "a_valider" ? `<button type="button" class="secondary" data-technical-decide="valider" data-sheet-id="${escapeHtml(sheet.id)}">Valider la fiche technique</button> <button type="button" class="link-button" data-technical-decide="refuser" data-sheet-id="${escapeHtml(sheet.id)}">Demander une correction</button>` : ""}${sheet.reason ? `<p>${escapeHtml(sheet.reason)}</p>` : ""}</section>`).join("")}
+    ${current?.status === "valide" ? `<button type="button" class="secondary" data-fabrication-prepare>Préparer le dossier de fabrication</button>` : ""}
+    ${dossiers.map((dossier) => `<section><h4>Dossier v${dossier.version} · Fiche technique v${dossier.technicalSheetVersion}${dossier.technicalSheetId !== current?.id ? " · archive" : ""}</h4><p>${dossier.operations.length} fiche(s) d'opération</p><ul>${dossier.operations.map((op) => `<li><strong>${escapeHtml(op.id)}</strong> · ${escapeHtml(op.part)} × ${op.quantity} · ${escapeHtml(op.machine)} · ordre ${op.sequence}<p>${escapeHtml(op.instructions)}</p></li>`).join("")}</ul>${downloads(dossier)}</section>`).join("")}
   `);
 }
 
@@ -2099,7 +2186,8 @@ async function depositCncFile(number, file) {
     return;
   }
   try {
-    await postJson(`/api/workshop/${encodeURIComponent(number)}/cnc`, { name: file.name, content: await readAsDataUrl(file), note: note ?? "" });
+    const order = workshopView.orders.find((entry) => entry.number === number);
+    await postJson(`/api/workshop/${encodeURIComponent(number)}/cnc`, { name: file.name, content: await readAsDataUrl(file), note: note ?? "", technicalSheetId: order?.technicalSheets?.at(-1)?.id, dossierId: order?.fabricationDossiers?.at(-1)?.id });
     showToast("Fichier CNC déposé : il attend la validation de la direction.");
   } catch (error) {
     showToast(error.message, "warn");
@@ -2107,10 +2195,10 @@ async function depositCncFile(number, file) {
   await refreshOrders();
 }
 
-async function decideCncFile(number, id, decision, reason) {
+async function decideCncFile(number, id, decision, reason, workshopValidation = "") {
   try {
-    await postJson(`/api/workshop/${encodeURIComponent(number)}/cnc/${encodeURIComponent(id)}/decision`, { decision, reason });
-    showToast(decision === "valider" ? "Fichier validé : la découpe CNC peut commencer." : "Fichier refusé : le dessinateur verra pourquoi.");
+    await postJson(`/api/workshop/${encodeURIComponent(number)}/cnc/${encodeURIComponent(id)}/decision`, { decision, reason, workshopValidation });
+    showToast(decision === "valider" ? "Validation enregistrée sur cette version du fichier." : "Fichier refusé : le dessinateur verra pourquoi.");
   } catch (error) {
     showToast(error.message, "warn");
   }
@@ -2287,10 +2375,23 @@ document.querySelector("#register-form")?.addEventListener("change", () => refre
 document.querySelector("#register-sync")?.addEventListener("click", (event) => syncRegister(event.currentTarget));
 document.querySelector("#register-export")?.addEventListener("click", (event) => exportRegister(event.currentTarget));
 
-// The file needs the session token, so it is fetched, then saved from memory.
-async function downloadCncFile(number, id, name) {
+// The delivery note the client signed on their link, with its signature page.
+async function downloadSignedNote(number, id, name) {
   try {
-    const response = await fetch(`/api/workshop/${encodeURIComponent(number)}/cnc/${encodeURIComponent(id)}`, { headers: await authHeaders() });
+    const response = await fetch(`/api/workshop/${encodeURIComponent(number)}/signatures/${encodeURIComponent(id)}/pdf`, { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("Bon de livraison signé introuvable.");
+    }
+    saveBlob(await response.blob(), name || "bon-de-livraison-signe.pdf");
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+}
+
+// The file needs the session token, so it is fetched, then saved from memory.
+async function downloadCncFile(number, id, name, section = "cnc") {
+  try {
+    const response = await fetch(`/api/workshop/${encodeURIComponent(number)}/${section}/${encodeURIComponent(id)}`, { headers: await authHeaders() });
     if (!response.ok) {
       throw new Error("Fichier CNC introuvable.");
     }
@@ -2319,8 +2420,8 @@ function clientAccess(order) {
     <div class="client-access">
       <div class="client-access-head">
         <p>${order.portal
-          ? `Lien actif depuis le ${escapeHtml(formatIsoDay(order.portal.createdAt.slice(0, 10)))} : le client voit l'avancement, la livraison prévue, l'échéancier, les photos et ses documents, jamais les notes.`
-          : "Créez le lien, puis envoyez-le au client : il verra l'avancement, la livraison prévue, l'échéancier, les photos et ses documents, jamais les notes."}</p>
+          ? `Lien actif depuis le ${escapeHtml(formatIsoDay(order.portal.createdAt.slice(0, 10)))} : le client voit l'avancement, la livraison prévue, l'échéancier, les photos et ses documents, et peut y signer son bon de livraison ; jamais les notes.`
+          : "Créez le lien, puis envoyez-le au client : il verra l'avancement, la livraison prévue, l'échéancier, les photos et ses documents, et pourra y signer son bon de livraison ; jamais les notes."}</p>
         <div class="client-access-actions">
           ${order.portal
             ? `<button type="button" class="secondary" data-portal-copy="${escapeHtml(order.portal.path)}">${icon("link")}Copier le lien</button>
@@ -2328,6 +2429,10 @@ function clientAccess(order) {
             : `<button type="button" class="secondary" data-portal-open>${icon("link")}Créer et copier le lien</button>`}
         </div>
       </div>
+      ${(order.signatures ?? []).length > 0 ? `
+        <ul class="order-journal">
+          ${order.signatures.map((entry) => `<li>${icon("check-circle")} Bon de livraison n° ${escapeHtml(entry.number)} signé en ligne par <b>${escapeHtml(entry.name)}</b> le ${escapeHtml(formatIsoDay(entry.signedAt.slice(0, 10)))} · <button type="button" class="link-button" data-signed-download="${escapeHtml(entry.id)}" data-signed-name="bon-de-livraison-${escapeHtml(entry.number)}-signe.pdf">Télécharger le bon signé</button></li>`).join("")}
+        </ul>` : order.deliveryNotes.length > 0 ? `<p class="muted text-[12.5px]">Bon de livraison n° ${escapeHtml(order.deliveryNotes.join(", "))} : pas encore signé en ligne. Le client peut le signer depuis son lien de suivi.</p>` : ""}
       <ul class="client-photos">
         ${order.photos.map((photo) => `
           <li>
@@ -3183,6 +3288,8 @@ function formatAgent(agentId) {
     commercial: "Commercial",
     finance: "Finance",
     production: "Production",
+    dessinateur_2d3d: "Dessinateur 2D/3D",
+    dessinateur_methodes: "Dessinateur méthodes",
     purchasing: "Achats",
     marketing: "Marketing",
     community_manager: "Community Manager",

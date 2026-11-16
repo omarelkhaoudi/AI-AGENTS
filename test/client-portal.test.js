@@ -92,7 +92,7 @@ test("the client sees progress, steps, delivery and schedule, never a note, a pe
   const workshop = createWorkshop({ store, documentService: documents, clock });
   await workshop.advance("171", "etude_technique", { status: "terminee", responsible: "Youssef", doneDate: "04/11/2026", note: "Plans revus par Karim" });
   await workshop.setTeam("171", { lead: "Samir", architect: "Cabinet Bennani", architectPhone: "0612345678", liaison: "Youssef", drafter: "Karim" });
-  const drawing = await workshop.depositCncFile("171", { content: Buffer.from("G21\nG0 X0 Y0\nM30\n"), name: "panneaux-171.nc", note: "MDF 18 mm" });
+  const drawing = await workshop.depositCncFile("171", { content: Buffer.from("0\nSECTION\n2\nENTITIES\n0\nENDSEC\n0\nEOF\n"), name: "panneaux-171.dxf", note: "MDF 18 mm" });
   await workshop.decideCncFile("171", drawing, { approve: true });
   await workshop.advance("171", "approvisionnement", { status: "terminee" });
   await workshop.advance("171", "decoupe_cnc", { status: "bloquee", responsible: "Samir", note: "Panneaux en rupture chez le fournisseur" });

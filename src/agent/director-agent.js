@@ -11,6 +11,7 @@ import { draftWhatsAppMessage } from "./whatsapp.js";
 import { STEP_LABELS, createMemoryPlanStore } from "./plan-store.js";
 import { createMemoryConversationStore } from "./conversation-store.js";
 import { DesignOfficeError, createDesignOffice, createMemoryDesignProfileBook, defaultPython, runEngine } from "./design-office.js";
+import { cncRequest } from "./fabrication.js";
 import { CNC_FILE_STATUS_LABELS, WORKSHOP_STATUSES, WORKSHOP_STATUS_LABELS, WORKSHOP_STEPS, WORKSHOP_STEP_IDS, WorkshopError, createMemoryWorkshopStore, createWorkshop, frenchDay } from "./workshop-book.js";
 import { OBJECTIVE_INDICATORS, currentMonth, measureObjective } from "./sales-objective.js";
 import { createMemoryCashBook } from "./cash-book.js";
@@ -44,6 +45,7 @@ import {
 import { createDocumentArchive, frenchDate, searchDocuments } from "./document-register.js";
 import { renderXlsx, xlsxFileName } from "../documents/xlsx-writer.js";
 import { pdfFileName, renderNotePdf } from "../documents/note-pdf.js";
+import { JOURNAL_COLUMNS, accountsFromEnv, buildJournal, journalRows } from "./accounting-export.js";
 import { mkdir as makeDirectory, writeFile as writeFileTo } from "node:fs/promises";
 import { join as joinPath } from "node:path";
 
@@ -211,6 +213,35 @@ const COHERENCE_TOOL = Object.freeze({
   name: "verifier_coherence",
   description: "Croise les données de tous les métiers (devis, commandes, atelier, paiements, achats) et renvoie les incohérences : production sans acompte, achat pour une commande livrée, commande sans devis accepté, livré mais impayé… À appeler pour tout point de situation, toute question d'urgences et après avoir fait travailler plusieurs agents.",
   parameters: { type: "object", additionalProperties: false, properties: {} }
+});
+
+// The entries the books imply, for the accountant (CGNC accounts).
+const ACCOUNTING_TOOL = Object.freeze({
+  type: "function",
+  name: "export_comptable",
+  description: "Prépare pour le comptable le journal des écritures d'une période, en Excel (comptes du CGNC : clients 3421, ventes 7121, TVA facturée 4455, caisse 5161, banque 5141, charges 61xx) : les factures et les avoirs (journal des ventes) et les mouvements de caisse (journal de caisse et banque), une ligne par compte, débit et crédit. À appeler pour « envoie-moi l'export pour le comptable », « les écritures de novembre ». C'est une proposition de comptes à valider par le comptable, pas la comptabilité officielle.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      du: { type: "string", description: "Premier jour, JJ/MM/AAAA ; chaîne vide pour le début du premier mois du dernier document." },
+      au: { type: "string", description: "Dernier jour inclus, JJ/MM/AAAA ; chaîne vide pour sans limite." }
+    },
+    required: ["du", "au"]
+  }
+});
+
+// What the AI itself costs: counted at each call to the model.
+const AI_COST_TOOL = Object.freeze({
+  type: "function",
+  name: "couts_ia",
+  description: "Ce que l'IA a coûté sur un mois : le nombre d'appels au modèle, les jetons, le coût estimé en dollars (et en dirhams si le taux est réglé), par agent et par jour, la projection de fin de mois et le budget mensuel s'il est fixé. À appeler pour « combien coûte l'IA », « où en est le budget IA », « quel agent consomme le plus ». C'est une estimation d'après le tarif public du modèle : la facture OpenAI fait foi.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: { mois: { type: "string", description: "Le mois au format AAAA-MM ; chaîne vide pour le mois en cours." } },
+    required: ["mois"]
+  }
 });
 
 // The documents and the catalogue belong to the trades that produce them: the
@@ -416,35 +447,18 @@ const ORDER_TEAM_TOOL = Object.freeze({
     }
 });
 
-// The dessinateur méthodes, inside Production: the engine decomposes a piece of
-// furniture into numbered parts, nests them on the workshop's panels and writes
-// one DXF per panel, deposited on the order for the direction to validate.
+// Methods reads the validated technical sheet, never a second set of dimensions.
 const DRAW_DXF_TOOL = Object.freeze({
   type: "function",
   name: "dessiner_dxf",
-  description: "Dessinateur méthodes : décompose un meuble d'un bon de commande en pièces numérotées (cotes calculées par le moteur géométrique, jamais estimées), fait le tableau de débit et le calepinage sur les panneaux de l'atelier, puis crée le DXF de chaque panneau (mm, 1:1, un calque par opération : contours, rainures, perçages, poches) et le dépose sur la commande, à valider par la direction avant la découpe CNC. Tant qu'une information manque ou qu'une valeur est à confirmer (cote, épaisseur réelle d'une matière, méthode d'assemblage), aucun DXF : l'outil renvoie les questions à poser. Appelle-le une première fois avec les paramètres connus (ou aucun) pour obtenir la liste exacte des paramètres du modèle.",
+  description: "Depuis la fiche technique validée et son dossier de fabrication, prépare les DXF et le calepinage des seules pièces routées CNC. Les dimensions, matières et usinages sont repris du dossier, sans ressaisie. Renvoie les questions si un réglage manque. Dépose les fichiers versionnés sur le BC ; Production les transmet à la direction pour validation avant tout G-code.",
   parameters: {
     type: "object",
     additionalProperties: false,
     properties: {
-      numero: { type: "string", description: "Numéro du bon de commande." },
-      meuble: { type: "string", enum: ["bibliotheque", "table_activite", "coffre_jouets", "maisonnette", "pieces_libres"], description: "Modèle : bibliotheque (bibliothèque / étagère à caisson), table_activite (table d'activité enfant), coffre_jouets (coffre à jouets), maisonnette (maisonnette de jeu), pieces_libres (meuble hors catalogue décrit pièce par pièce)." },
-      parametres: {
-        type: "array",
-        description: "Les valeurs du meuble, avec les noms de paramètres renvoyés par l'outil (largeur, hauteur, profondeur en mm, materiau_caisson = mdf18, cp18, cp15, hdf3 ou cp5…). Pour pieces_libres, pieces = la liste des pièces en JSON.",
-        items: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            nom: { type: "string" },
-            valeur: { type: "string", description: "Nombre en mm, choix, matière, ou liste séparée par des virgules." },
-            source: { type: "string", enum: ["fourni", "a_confirmer"], description: "fourni : dit par la direction ou écrit sur le bon de commande ; a_confirmer : une proposition, une estimation (photo, plan) ou une valeur par défaut." }
-          },
-          required: ["nom", "valeur", "source"]
-        }
-      }
+      numero: { type: "string", description: "Numéro du bon de commande dont la fiche technique est validée." }
     },
-    required: ["numero", "meuble", "parametres"]
+    required: ["numero"]
   }
 });
 
@@ -527,6 +541,8 @@ const TOOLS = Object.freeze([
   LIST_PLANS_TOOL,
   ADJUST_PLAN_TOOL,
   COHERENCE_TOOL,
+  AI_COST_TOOL,
+  ACCOUNTING_TOOL,
   FOLLOW_DOSSIER_TOOL,
   SEARCH_DOCUMENT_TOOL,
   EXCEL_TOOL,
@@ -559,6 +575,9 @@ const TOOLS = Object.freeze([
   }
 ]);
 
+// What changes when the direction writes on WhatsApp instead of the cockpit.
+const WHATSAPP_CHANNEL_NOTE = "La direction t'écrit en ce moment sur WhatsApp, pas dans le cockpit. Réponds en quelques lignes, sans tableau Markdown ni titre (une liste à tirets au plus). Un document préparé (devis, bon de commande, facture…) lui est envoyé en aperçu PDF dans cette conversation, et elle le valide en répondant « valide » (ou l'abandonne avec « annule ») : dis-le ainsi, jamais « Valider et générer dans le cockpit ». Un document retrouvé au registre (trois au plus), un PDF joint ou un fichier Excel lui est envoyé en fichier dans la conversation. Un message préparé pour un client ou un fournisseur dont le numéro est connu part quand elle répond « envoie ». Les validations sensibles (dépense à approuver, fichier CNC, règle d'amélioration, clôture) restent dans le cockpit.";
+
 function instructions(today, briefing = []) {
   return [
     "Tu es le Director IA de H KIDS, fabricant marocain de mobilier et d'aménagement sur mesure pour enfants (Marrakech).",
@@ -583,6 +602,8 @@ function instructions(today, briefing = []) {
     "Retrouver un document (« ressors-moi le devis de Mme Barada », « la facture de M. Alami », « les devis de novembre ») → chercher_document toi-même. Un seul document : donne sa date, son numéro, son montant, et dis que son PDF s'ouvre avec le bouton sous ta réponse et qu'il est aussi dans le dossier du client (chemin « dossier »). Plusieurs : liste-les (date, numéro, objet, montant) et demande lequel ; tous ont leur bouton. Aucun : dis-le, avec ce que tu as cherché. Ne dis jamais que tu n'as pas accès aux documents ou aux fichiers : le registre est le tien, l'Administratif le tient à jour.",
     "",
     "Excel (« exporte-moi les devis du mois en Excel », « fais-moi un fichier Excel de la caisse ») : lis d'abord les données avec tes outils, puis exporter_excel avec ces lignes telles quelles. Le fichier s'affiche sous ta réponse avec un bouton « Télécharger » : dis-le, avec le nombre de lignes et le dossier où il est aussi rangé s'il est donné. Ne dis jamais que tu ne peux pas faire de fichier Excel.",
+    "Comptable (« l'export pour le comptable », « les écritures de novembre ») : export_comptable. Dis le nombre d'écritures, si le débit égale le crédit et ce qui reste à compléter à la main, et rappelle que ce sont des comptes proposés, à valider par le comptable.",
+    "Coût de l'IA (« combien coûte l'IA ce mois », « où en est le budget IA ») : couts_ia. Donne le coût estimé, les agents qui consomment le plus, la projection de fin de mois et le budget s'il est fixé, et rappelle en une phrase que c'est une estimation : la facture OpenAI fait foi.",
     "PDF (« envoie-moi ça en PDF », « fais-moi une fiche », « mets-le dans un document ») : joindre_pdf avec le titre et le texte complet du document ; le fichier est joint sous ta réponse avec un bouton « Télécharger ». Dans ta réponse, dis seulement ce que contient le PDF, en deux ou trois lignes, sans recopier son texte. Ne dis jamais que tu ne peux pas joindre un fichier PDF, et n'invente jamais un lien ni un dossier du cockpit où il serait déposé. Ce que le PDF affirme vient de tes données ou de ce que la direction a dit : un réglage de machine, une cote ou un chiffre que tu ne connais pas y est marqué « à confirmer par l'atelier ».",
     "",
     "Chaîne d'une vente : devis → bon de commande (le client accepte) → bon de livraison → factures (acompte, solde). Chaque document cite le devis : écris toujours son numéro dans la mission. « Le client a accepté le devis 170 », « fais le BC du devis 170 » → commercial : « bon de commande à partir du devis n° 170 », avec les conditions et l'acompte s'ils sont donnés ; il reprend le devis lui-même, rien n'est à ressaisir. « Facture l'acompte du devis 170 », « facture le solde » → finance avec le numéro du devis. « Où en est le devis 170 », « qu'est-ce qui reste à facturer » → suivre_dossier toi-même, puis réponds avec l'étape, le déjà facturé, le reste à facturer et les anomalies. Une facture refusée parce qu'elle facturerait la vente deux fois ne se contourne pas : dis-le à la direction avec les factures déjà faites. Avoir (« fais un avoir de 500 DH sur la facture 180 », remise accordée après coup, article retourné) → finance avec le numéro de la facture, le montant, la raison et ce que devient l'argent (déduit du reste à payer ou remboursé, et comment). Reçu de paiement (« fais le reçu de l'acompte de Mme X ») → finance avec le numéro du devis ou de la facture, le montant, le moyen de paiement et la date du paiement. « Qu'est-ce qui reste à payer » → suivre_dossier toi-même : déjà reçu et reste à payer.",
@@ -593,7 +614,7 @@ function instructions(today, briefing = []) {
     "",
     "Bilan commercial et relances : « fais le bilan commercial du mois », « quels devis relancer ? », « où en sont les ventes » → bilan_commercial (chiffres calculés sur les documents du cockpit : cite les numéros, ne recalcule rien, ne complète jamais avec un chiffre supposé). « J'ai relancé Mme Alami pour le devis 170, elle réfléchit », « le client du devis 172 a refusé, trop cher » → enregistrer_relance toi-même (perdu avec son motif pour un refus). Un devis ouvert sans nouvelles depuis 5 jours est à relancer : le responsable commercial est prévenu sur WhatsApp, et la direction au bout de 10 jours ; pour rédiger les messages de relance, confie-les au commercial.",
     "",
-    "Bureau d'études, avant la découpe : chaque bon de commande a un chef de charge qui le contrôle de bout en bout ; avec son numéro, il reçoit sur WhatsApp chaque étape de sa commande qui se bloque ou prend du retard, et sa réponse arrive à la Production comme compte rendu ; quand le client a un architecte, une personne de l'équipe est en lien avec lui ; après la fiche technique (étude technique terminée), le dessinateur fait le fichier de la machine CNC (G-code ou DXF) et le dépose dans le cockpit, ou l'envoie au numéro WhatsApp de l'entreprise avec « BC n° » en légende (son numéro doit être enregistré sur la commande). « Samir est chef de charge du BC 166 », « l'architecte de Mme Alami est M. Bennani, c'est Hiba qui le suit », « Karim fait le G-code » → equipe_commande. Le fichier n'atteint la machine qu'une fois validé par la direction dans le cockpit (vue Atelier) : tu ne le valides jamais, et la découpe CNC ne peut pas commencer avant. Une commande lancée sans chef de charge, un fichier CNC qui attend sa validation : signale-le dans tout point de situation. L'agent Production est aussi le dessinateur méthodes : « fais le DXF du BC 166 », « prépare le débit / le calepinage de la bibliothèque de Mme X », « l'épaisseur réelle du MDF 18 est 18,3 » → deleguer_a_un_agent production, avec le numéro du BC et tout ce que la direction a dit (dimensions, matière, options) ; il dépose les DXF sur la commande, à valider par la direction comme ceux du dessinateur, ou renvoie ce qui manque : transmets ses questions telles quelles. Il fait aussi le G-code (« fais le G-code du BC 166 ») une fois la CNC, ses fraises et la fixation relevées au profil d'atelier et le post-processeur qualifié par le programme pilote (« prépare le programme pilote », « le pilote est bon, cotes 120 × 80 justes ») : même délégation à production.",
+    "Bureau d'études : Production coordonne deux agents IA distincts via deleguer_bureau_etudes : dessinateur_2d3d (plans et fiche technique à valider) et dessinateur_methodes (dossier de fabrication depuis la fiche validée, opérations nécessaires uniquement). Les demandes de fabrication, DXF, débit, calepinage et G-code sont confiées à production, qui rassemble les livrables par BC et version. Production présente les DXF à la direction avec leurs liens. Aucun G-code avant la validation humaine de tous les DXF courants ; paramètres réels CNC, post-processeur qualifié, simulation et validation du responsable atelier requis. Toute information manquante se demande avant génération. Tu ne valides jamais les fiches ou fichiers.",
     "",
     "Caisse et bilan du jour : chaque entrée ou sortie d'argent que la direction t'annonce (« j'ai reçu 3 000 DH d'acompte de Mme Alami en espèces pour le devis 170 », « j'ai payé 1 200 DH de laque à Sodipeint par chèque », « j'ai versé les salaires, 18 000 DH par virement », « il y a 5 000 DH en caisse au départ ») → confie-la tout de suite au Directeur financier (finance) avec deleguer_a_un_agent, en recopiant tout : entrée ou sortie, montant, ce que c'est, moyen de paiement, qui a payé ou a été payé, numéro du devis ou du BC, la date si ce n'est pas aujourd'hui, et qui l'annonce. Plusieurs mouvements annoncés ensemble → une seule mission qui les liste tous. Finance l'enregistre au journal de caisse (et, pour le paiement d'un client dont la vente est connue, prépare son reçu de paiement à valider) et te rend le bilan du jour : réponds en deux ou trois lignes (mouvement n°, montant, solde du jour, et pour un client ce qui reste à encaisser sur sa vente). « Où en est la caisse », « bilan du jour », « combien j'ai en caisse » → bilan_caisse toi-même. Pour tout point de situation, donne aussi le bilan de caisse du jour. Une erreur de saisie (« ce n'était pas 3 000 mais 2 000 ») → finance : annuler le mouvement et enregistrer le bon. Justificatifs : une dépense annoncée avec la photo d'un reçu, d'un ticket ou d'une facture → écris « justificatif : photo n° X » dans la mission ; une photo envoyée plus tard pour une dépense déjà enregistrée (« voici le reçu du MDF ») → mission à finance : joindre la photo n° X au mouvement n° N. Sans photo, rappelle à la direction d'envoyer le justificatif. Une dépense au-dessus du seuil d'alerte s'approuve dans la vue Caisse du cockpit, par une personne : tu ne l'approuves jamais.",
     "",
@@ -637,7 +658,7 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, documentArchive = undefined, designProfileBook = null, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, documentArchive = undefined, designProfileBook = null, aiUsage = null, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
@@ -645,7 +666,7 @@ export function createDirectorAgentFromEnv({ env = process.env, documentService,
   // The dessinateur méthodes' engine runs with the Python of DESSINATEUR_PYTHON.
   const python = defaultPython(env);
   const designOffice = createDesignOffice({ book: designProfileBook ?? createMemoryDesignProfileBook(), engine: (request) => runEngine(request, { python }) });
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, documentArchive, designOffice, autoAnalyse, publicBaseUrl, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, documentArchive, designOffice, aiUsage, autoAnalyse, publicBaseUrl, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -671,6 +692,9 @@ export function createDirectorAgent({
   documentArchive = null,
   // The dessinateur méthodes' engine and the workshop profile it draws with.
   designOffice = createDesignOffice(),
+  // Where each call to the model is counted (src/agent/ai-usage.js); none in
+  // a test that does not ask for it.
+  aiUsage = null,
   // A new anomaly found in the workshop book is handed to its agent at once,
   // in the background, for its cause and a rule. Off unless the server asks.
   autoAnalyse = false,
@@ -703,6 +727,7 @@ export function createDirectorAgent({
     planStore,
     workshop,
     designOffice,
+    aiUsage,
     books,
     onNewAnomalies: (found) => queueAnalyses(found)
   });
@@ -771,7 +796,9 @@ export function createDirectorAgent({
 
     // confidential: false when the person asking may not see salaries and
     // confidential expenses; the direction on WhatsApp may.
-    async chat({ message, photos = [], files = [], conversationId = null, userId = null, confidential = true } = {}) {
+    // channel: "whatsapp" when the direction writes on the company's number;
+    // what waits for a validation is then validated there, by a word.
+    async chat({ message, photos = [], files = [], conversationId = null, userId = null, confidential = true, channel = "cockpit" } = {}) {
       const stored = conversationId ? await conversationStore.get(conversationId) : null;
       const previous = stored && stored.userId === (userId ?? null) ? stored : null;
       const id = previous ? conversationId : randomUUID();
@@ -783,6 +810,9 @@ export function createDirectorAgent({
       }
       if (!this.isConfigured()) {
         throw new DirectorAgentError("L'agent IA n'est pas configuré : renseignez OPENAI_API_KEY dans .env.", "AGENT_NOT_CONFIGURED");
+      }
+      if (aiUsage && await aiUsage.overBudget()) {
+        throw new DirectorAgentError("Le budget IA du mois est atteint : le Director s'arrête jusqu'au mois prochain. Pour continuer, relevez HKIDS_AI_BUDGET_USD (ou retirez HKIDS_AI_BUDGET_STOP) et redémarrez le cockpit.", "AGENT_BUDGET_REACHED");
       }
       resolvedClient ??= await clientFactory({ apiKey });
 
@@ -804,15 +834,15 @@ export function createDirectorAgent({
 
       const outcome = freshOutcome(conversationPhotos);
       const context = baseContext(outcome, userId, confidential !== false);
-      const briefing = await directorBriefing(context);
+      const briefing = [...await directorBriefing(context), ...(channel === "whatsapp" ? [WHATSAPP_CHANNEL_NOTE] : [])];
       let reply = "";
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
-        const response = await callModel(resolvedClient, {
+        const response = await askModel(resolvedClient, {
           model,
           instructions: instructions(formatDate(clock()), briefing),
           input: items,
           tools: TOOLS
-        });
+        }, { aiUsage, agent: "director" });
         const output = Array.isArray(response.output) ? response.output : [];
         items.push(...output);
         const calls = output.filter((item) => item.type === "function_call");
@@ -911,6 +941,16 @@ function withReasoning(payload) {
   return /^(gpt-5|o\d)/.test(String(payload.model)) ? { ...payload, reasoning: { effort: REASONING_EFFORT } } : payload;
 }
 
+// Every call to the model is counted for the agent that made it. Counting
+// never gets in the way of the answer.
+async function askModel(client, payload, { aiUsage = null, agent = "director" } = {}) {
+  const response = await callModel(client, payload);
+  if (aiUsage && response?.usage) {
+    await aiUsage.record({ agent, model: payload.model, usage: response.usage }).catch(() => {});
+  }
+  return response;
+}
+
 async function callModel(client, payload) {
   try {
     return await client.responses.create(withReasoning(payload));
@@ -979,6 +1019,12 @@ async function runTool(call, context) {
     }
     if (call.name === COHERENCE_TOOL.name) {
       return await runCoherence(context);
+    }
+    if (call.name === ACCOUNTING_TOOL.name) {
+      return await exportAccounting(args, context);
+    }
+    if (call.name === AI_COST_TOOL.name) {
+      return context.aiUsage ? { ok: true, ...(await context.aiUsage.summary({ month: text(args.mois) })) } : { ok: false, erreur: "Le suivi des coûts de l'IA n'est pas activé sur ce poste." };
     }
     if (call.name === FOLLOW_DOSSIER_TOOL.name) {
       return await followDossier(args, context);
@@ -1217,6 +1263,58 @@ export async function exportExcel(args, { archive, outcome, clock = () => new Da
   return { ok: true, fichier: name, lignes: rows.length, colonnes: columns.length, ...(saved ? { dossier: saved } : {}), note: "Le bouton « Télécharger » est sous ta réponse." };
 }
 
+export async function exportAccounting(args, { documentService, books, archive, outcome, confidential = true, clock = () => new Date() }) {
+  const from = isoOf(args.du);
+  const to = isoOf(args.au);
+  if ((text(args.du) && !from) || (text(args.au) && !to)) {
+    return { ok: false, erreur: "Dates illisibles : écrire JJ/MM/AAAA." };
+  }
+  const journal = await buildJournal({
+    issued: await documentService.listIssued(),
+    readIssued: (type, number) => documentService.readIssued(type, number),
+    cashEntries: await books.cash.entries(),
+    accounts: accountsFromEnv(),
+    from,
+    to,
+    confidential
+  });
+  if (journal.lines.length === 0) {
+    return { ok: true, ecritures: 0, note: "Aucune écriture sur cette période : ni facture, ni avoir, ni mouvement de caisse." };
+  }
+  const title = `Écritures comptables${from || to ? ` ${from ? frenchOf(from) : "…"} au ${to ? frenchOf(to) : "…"}` : ""}`;
+  const rows = [...journalRows(journal), ...journal.notes.map((note) => ["", "NOTE", "", "", "", note, "", ""])];
+  const bytes = await renderXlsx({ title, columns: [...JOURNAL_COLUMNS], rows, total: true, sheetName: "Journal" });
+  const name = xlsxFileName(title, clock());
+  let saved = null;
+  if (archive?.dir) {
+    const folder = joinPath(archive.dir, "Exports");
+    await makeDirectory(folder, { recursive: true });
+    saved = joinPath(folder, name);
+    await writeFileTo(saved, bytes);
+  }
+  outcome?.exports.push(Object.freeze({ name, title, rows: rows.length, mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data: bytes.toString("base64"), file: saved }));
+  return {
+    ok: true,
+    fichier: name,
+    ecritures: journal.lines.length,
+    total_debit: journal.totals.debit,
+    total_credit: journal.totals.credit,
+    equilibre: journal.totals.balanced,
+    a_completer: journal.notes,
+    note: "Proposition de comptes à valider par le comptable ; le bouton « Télécharger » est sous la réponse."
+  };
+}
+
+function isoOf(value) {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(text(value));
+  return match ? `${match[3]}-${match[2]}-${match[1]}` : "";
+}
+
+function frenchOf(iso) {
+  const [year, month, day] = iso.split("-");
+  return `${day}/${month}/${year}`;
+}
+
 export async function attachPdf(args, { archive, outcome, clock = () => new Date() }) {
   const title = text(args.titre) || "Document H-KIDS";
   const content = typeof args.contenu === "string" ? args.contenu.trim() : "";
@@ -1333,7 +1431,14 @@ async function readWorkshopBook(args, context) {
         en_retard: step.late
       })),
       equipe: orderTeam(order),
+      fiche_technique: order.technicalSheets.at(-1) ? manufacturingLinks(order.number, order.technicalSheets.at(-1)) : null,
+      dossier_fabrication: order.fabricationDossiers.at(-1) ? manufacturingLinks(order.number, order.fabricationDossiers.at(-1)) : null,
+      bons_de_livraison_signes: (order.signatures ?? []).map((entry) => ({ numero: entry.number, signe_par: entry.name, le: frenchDay(entry.signedAt.slice(0, 10)) })),
       fichiers_cnc: order.cnc.map((entry) => ({
+        id: entry.id,
+        url: `/api/workshop/${encodeURIComponent(order.number)}/cnc/${entry.id}`,
+        obsolete: entry.obsolete,
+        version: entry.version,
         fichier: entry.name,
         format: entry.format === "gcode" ? "G-code" : "DXF",
         statut: CNC_FILE_STATUS_LABELS[entry.status],
@@ -1434,9 +1539,60 @@ async function setOrderTeam(args, { workshop, books }, by) {
 const GCODE_TOOL = Object.freeze({
   type: "function",
   name: "preparer_gcode",
-  description: "Préparation CNC : à partir du même meuble que dessiner_dxf (mêmes paramètres), calcule les parcours d'outil de chaque panneau (perçages, rainures et poches, ouvertures, puis détourage avec onglets de maintien), écrit le G-code avec le post-processeur de la machine (un fichier par fraise sans changeur d'outils), relit chaque fichier par la simulation, et dépose les fichiers sur la commande, à valider par la direction avant la découpe. Refusé tant que le dessin n'est pas prêt, que la CNC, les fraises ou la fixation ne sont pas confirmées au profil d'atelier, ou que le post-processeur n'a pas passé le programme pilote sur cette machine.",
+  description: "G-code des pièces CNC de la fiche technique validée : REFUSÉ avant validation humaine de tous les DXF courants du même dessin. Paramètres réels CNC, post-processeur qualifié et simulation sans erreur obligatoires. Dépôt versionné rattaché à la fiche et au dossier, à valider par le responsable atelier avant utilisation.",
   parameters: DRAW_DXF_TOOL.parameters
 });
+
+const TECHNICAL_SHEET_TOOL = Object.freeze({
+  type: "function", name: "preparer_fiche_technique",
+  description: 'Prépare une fiche technique À VALIDER humainement, plans SVG et volumes OBJ. fiche = JSON {title, units:"mm", notes, parts:[{ref,name,length,width,thickness,quantity,material,confirmed,materialId,operations:[{type:"cnc"|"sciage_panneaux"|"rabotage"|"autre",machine,instructions,checks}], stock:{length,width,margin,kerf}, grain,rotationAllowed,features:[],contour,position:{x,y,z,plane:"xy"|"xz"|"yz"}}]}. stock requis pour scie ; materialId du profil atelier pour CNC ; features et contour selon pieces_libres, seulement si nécessaires. confirmed true pour des valeurs fournies ; sans toutes les informations renvoie des questions et aucun fichier. Positions optionnelles : sans elles la 3D présente des pièces séparées. Aucun défaut de matériau ni de poste.',
+  parameters: { type: "object", additionalProperties: false, properties: { numero: { type: "string" }, fiche: { type: "string", description: "Fiche technique structurée en JSON, uniquement d'après les informations fournies." } }, required: ["numero", "fiche"] }
+});
+const FABRICATION_TOOL = Object.freeze({
+  type: "function", name: "preparer_dossier_fabrication",
+  description: "Transforme la fiche technique courante validée en dossier versionné : liste des pièces, débit, calepinage scie et fiches par opération avec machine et instructions. Aucun fichier si la fiche n'est pas validée. CNC uniquement pour les pièces concernées via dessiner_dxf ensuite.",
+  parameters: { type: "object", additionalProperties: false, properties: { numero: { type: "string" } }, required: ["numero"] }
+});
+const DESIGN_DELEGATE_TOOL = Object.freeze({
+  type: "function", name: "deleguer_bureau_etudes",
+  description: "Le directeur de production confie une mission à l'un des deux dessinateurs IA distincts et rassemble ses livrables. Transmettre le BC, la fiche technique et toutes les informations connues.",
+  parameters: { type: "object", additionalProperties: false, properties: { agent: { type: "string", enum: ["dessinateur_2d3d", "dessinateur_methodes"] }, mission: { type: "string" } }, required: ["agent", "mission"] }
+});
+
+function manufacturingLinks(number, item) {
+  const files = [...item.files.filter((f) => !/_OP\d+/.test(f.name)), ...item.files.filter((f) => /_OP\d+/.test(f.name))];
+  return {
+    id: item.id, version: item.version, status: item.status, technicalSheetId: item.technicalSheetId,
+    technicalSheetVersion: item.technicalSheetVersion, title: item.data?.title,
+    nombre_pieces: item.data?.parts.length, nombre_operations: item.operations?.length,
+    apercu_pieces: item.data?.parts.slice(0, 5).map((p) => ({ ref: p.ref, name: p.name, length: p.length, width: p.width, thickness: p.thickness, quantity: p.quantity, material: p.material })),
+    files: files.slice(0, 8).map((f) => ({ id: f.id, name: f.name, url: `/api/workshop/${encodeURIComponent(number)}/fabrication/files/${f.id}` })),
+    fichiers_supplementaires: Math.max(0, item.files.length - 8),
+    dossier_complet: `Tous les fichiers et détails sont disponibles dans le cockpit, commande ${number}, Dossier de fabrication.`
+  };
+}
+
+async function prepareTechnicalSheet(args, { workshop }, by) {
+  try {
+    let data;
+    try { data = JSON.parse(args.fiche); } catch { return { ok: false, erreur: "La fiche doit être un objet JSON lisible." }; }
+    const result = await workshop.saveTechnicalSheet(text(args.numero), data, { by });
+    return result.ok ? { ...result, sheet: manufacturingLinks(text(args.numero), result.sheet) } : result;
+  } catch (error) {
+    if (error instanceof WorkshopError) return { ok: false, erreur: error.message, code: error.code };
+    throw error;
+  }
+}
+
+async function prepareFabrication(args, { workshop }, by) {
+  try {
+    const dossier = await workshop.prepareFabrication(text(args.numero), { by });
+    return { ok: true, dossier: manufacturingLinks(text(args.numero), dossier) };
+  } catch (error) {
+    if (error instanceof WorkshopError) return { ok: false, erreur: error.message, code: error.code };
+    throw error;
+  }
+}
 
 const PILOT_TOOL = Object.freeze({
   type: "function",
@@ -1463,12 +1619,13 @@ async function drawDxf(args, { workshop, designOffice, books }, by) {
   if (!order) {
     return { ok: false, erreur: `Le bon de commande n° ${number} n'est pas au carnet d'atelier.` };
   }
-  const params = Object.fromEntries((Array.isArray(args.parametres) ? args.parametres : [])
-    .filter((entry) => text(entry?.nom) !== "")
-    .map((entry) => [text(entry.nom), { value: text(entry.valeur), source: entry.source === "a_confirmer" ? "a_confirmer" : "fourni" }]));
+  const technicalSheet = order.technicalSheets.at(-1);
+  const dossier = order.fabricationDossiers.at(-1);
+  if (technicalSheet?.status !== "valide" || dossier?.technicalSheetId !== technicalSheet.id) return { ok: false, erreur: "Fournir et valider la fiche technique, puis préparer son dossier de fabrication avant les DXF.", code: "WORKSHOP_TECHNICAL_SHEET_NOT_VALIDATED" };
+  if (!technicalSheet.data.parts.some((p) => p.operations.some((op) => op.type === "cnc"))) return { ok: true, pret: true, dxf_deposes: [], suite: "Aucune pièce ne nécessite la CNC dans cette fiche technique." };
   let result;
   try {
-    result = await designOffice.draw({ furniture: text(args.meuble), params });
+    result = await designOffice.draw(cncRequest(technicalSheet.data));
   } catch (error) {
     if (error instanceof DesignOfficeError) {
       return { ok: false, erreur: error.message };
@@ -1478,16 +1635,25 @@ async function drawDxf(args, { workshop, designOffice, books }, by) {
   if (!result?.ok) {
     return result ?? { ok: false, erreur: "Le moteur de dessin n'a rien renvoyé." };
   }
-  const { panneaux: sheets = [], ...drawing } = result;
-  const answer = { ...drawing, bc: number, panneaux: sheets.map(({ dxf_base64: _file, ...sheet }) => sheet) };
+  const { panneaux: sheets = [], plans_pieces: partPlans = [], ...drawing } = result;
+  const answer = { ...drawing, bc: number, panneaux: sheets.map(({ dxf_base64: _file, svg_base64: _svg, placements: _placements, ...sheet }) => sheet) };
   if (!result.pret) {
     return { ...answer, dxf: "aucun : il reste des informations à donner ou à confirmer (voir raisons et questions)." };
   }
+  const mismatched = (result.pieces ?? []).find((p) => {
+    const source = technicalSheet.data.parts.find((part) => `${part.ref} — ${part.name}` === p.designation);
+    return source && Math.abs(source.thickness - Number(String(p.epaisseur).replace(",", "."))) > 0.001;
+  });
+  if (mismatched) return { ok: false, erreur: `L'épaisseur du profil atelier diffère de la fiche technique validée : ${mismatched.designation}. Corriger et faire revalider la fiche.`, code: "WORKSHOP_THICKNESS_MISMATCH" };
+  await workshop.addFabricationFiles(number, dossier.id, [...partPlans.map((plan) => ({ name: `plan-cnc-${plan.ref}-${String(result.empreinte).slice(0, 8)}.svg`, content: Buffer.from(plan.svg_base64, "base64").toString("utf8") })), ...sheets.flatMap((panel) => [
+    ...(panel.svg_base64 ? [{ name: `calepinage-cnc-${panel.matiere}-${panel.numero}-${String(result.empreinte).slice(0, 8)}.svg`, content: Buffer.from(panel.svg_base64, "base64").toString("utf8") }] : []),
+    { name: `calepinage-cnc-${panel.matiere}-${panel.numero}-${String(result.empreinte).slice(0, 8)}.json`, content: JSON.stringify({ order: number, technicalSheetId: technicalSheet.id, dossierId: dossier.id, designHash: result.empreinte, ...panel, dxf_base64: undefined, svg_base64: undefined }, null, 2) }
+  ])]);
   const deposited = [];
   const already = [];
   for (const sheet of sheets) {
     const name = `BC${number}_${sheet.matiere}_panneau${sheet.numero}-${sheet.sur}_${String(result.empreinte).slice(0, 8)}.dxf`;
-    if ((order.cnc ?? []).some((entry) => entry.name === name && entry.status !== "refuse")) {
+    if ((order.cnc ?? []).some((entry) => entry.name === name && !entry.obsolete && entry.technicalSheetId === technicalSheet.id && entry.status !== "refuse")) {
       already.push(name);
       continue;
     }
@@ -1496,7 +1662,10 @@ async function drawDxf(args, { workshop, designOffice, books }, by) {
         content: sheet.dxf_base64,
         name,
         note: `${result.nom_meuble}, ${sheet.nom_matiere}, panneau ${sheet.numero}/${sheet.sur}, ${sheet.pieces} pièce(s) : préparé par l'agent Production (dessinateur méthodes)`,
-        by
+        by,
+        technicalSheetId: technicalSheet.id,
+        dossierId: dossier.id,
+        designHash: result.empreinte
       });
       deposited.push(name);
     } catch (error) {
@@ -1513,7 +1682,8 @@ async function drawDxf(args, { workshop, designOffice, books }, by) {
     ...answer,
     dxf_deposes: deposited,
     deja_deposes: already,
-    suite: "Chaque DXF attend la validation de la direction dans le cockpit (vue Atelier, dessin CNC) ; la découpe CNC ne commence qu'après."
+    fichiers: (await workshop.order(number)).cnc.filter((f) => !f.obsolete && f.designHash === result.empreinte && f.format === "dxf").map((f) => ({ id: f.id, name: f.name, url: `/api/workshop/${encodeURIComponent(number)}/cnc/${f.id}` })),
+    suite: "Le directeur de production transmet les DXF à la direction. Le G-code attend la validation de la direction de tous ces DXF courants ; il sera ensuite simulé et validé par le responsable atelier."
   };
 }
 
@@ -1525,12 +1695,20 @@ async function prepareGcode(args, { workshop, designOffice, books }, by) {
   if (!order) {
     return { ok: false, erreur: `Le bon de commande n° ${number} n'est pas au carnet d'atelier.` };
   }
-  const params = Object.fromEntries((Array.isArray(args.parametres) ? args.parametres : [])
-    .filter((entry) => text(entry?.nom) !== "")
-    .map((entry) => [text(entry.nom), { value: text(entry.valeur), source: entry.source === "a_confirmer" ? "a_confirmer" : "fourni" }]));
+  const sheet = order.technicalSheets.at(-1);
+  const dossier = order.fabricationDossiers.at(-1);
+  if (sheet?.status !== "valide" || dossier?.technicalSheetId !== sheet.id) return { ok: false, pret: false, erreur: "Fiche technique et dossier de fabrication courants requis.", raisons: ["Fournir et valider la fiche technique."], code: "WORKSHOP_TECHNICAL_SHEET_NOT_VALIDATED" };
+  const dxfs = order.cnc.filter((f) => f.format === "dxf" && !f.obsolete && f.technicalSheetId === sheet.id && f.dossierId === dossier.id);
+  const blocked = () => ({ ok: false, pret: false, raisons: ["Tous les DXF de la version courante doivent être validés par la direction avant toute génération de G-code."], code: "WORKSHOP_DXF_NOT_VALIDATED" });
+  if (!dxfs.length || dxfs.some((f) => f.status !== "valide")) return blocked();
   let result;
   try {
-    result = await designOffice.gcode({ furniture: text(args.meuble), params, title: `BC ${number} ${order.client ?? ""}`.trim() });
+    const request = cncRequest(sheet.data);
+    const current = await designOffice.draw(request);
+    if (!current?.pret || dxfs.some((f) => f.designHash !== current.empreinte)) return blocked();
+    const expected = current.panneaux.map((panel) => `BC${number}_${panel.matiere}_panneau${panel.numero}-${panel.sur}_${String(current.empreinte).slice(0, 8)}.dxf`);
+    if (!expected.length || expected.some((name) => !dxfs.some((f) => f.name === name))) return blocked();
+    result = await designOffice.gcode({ ...request, title: `BC ${number} ${order.client ?? ""}`.trim() });
   } catch (error) {
     if (error instanceof DesignOfficeError) {
       return { ok: false, erreur: error.message };
@@ -1550,11 +1728,13 @@ async function prepareGcode(args, { workshop, designOffice, books }, by) {
   if (!result.pret) {
     return { ...answer, gcode: "aucun : voir raisons." };
   }
+  if (!files.length || files.some(({ file }) => file.simulation?.ok !== true) || dxfs.some((f) => f.designHash !== result.empreinte)) return { ok: false, pret: false, raisons: ["Simulation sans erreur et dessin conforme aux DXF validés requis."], code: "WORKSHOP_CNC_SIMULATION_REQUIRED" };
   const deposited = [];
   const already = [];
+  const nameOf = ({ program, file }) => `BC${number}_${program.matiere}_panneau${program.panneau}_${file.nom.replace(/\.nc$/, "")}_${String(result.empreinte_cam).slice(0, 8)}.nc`;
   for (const [index, { program, file }] of files.entries()) {
-    const name = `BC${number}_${program.matiere}_panneau${program.panneau}_${file.nom.replace(/\.nc$/, "")}_${String(result.empreinte_cam).slice(0, 8)}.nc`;
-    if ((order.cnc ?? []).some((entry) => entry.name === name && entry.status !== "refuse")) {
+    const name = nameOf({ program, file });
+    if ((order.cnc ?? []).some((entry) => entry.name === name && !entry.obsolete && entry.technicalSheetId === sheet.id && entry.status !== "refuse")) {
       already.push(name);
       continue;
     }
@@ -1563,7 +1743,14 @@ async function prepareGcode(args, { workshop, designOffice, books }, by) {
         content: Buffer.from(file.gcode, "utf8"),
         name,
         note: `G-code ${index + 1}/${files.length}, ${program.nom_matiere}, panneau ${program.panneau}, fraise(s) ${file.fraises.join(", ")}, post-processeur ${result.post.nom}, simulation sans erreur${file.simulation.duree_min ? `, environ ${file.simulation.duree_min} min` : ""} : préparé par l'agent Production ; à contrôler par l'opérateur avant de lancer`,
-        by
+        by,
+        technicalSheetId: sheet.id,
+        dossierId: dossier.id,
+        designHash: result.empreinte,
+        sourceDxfIds: dxfs.map((f) => f.id),
+        simulation: file.simulation,
+        camHash: result.empreinte_cam,
+        expectedGcodeNames: files.map(nameOf)
       });
       deposited.push(name);
     } catch (error) {
@@ -1580,6 +1767,7 @@ async function prepareGcode(args, { workshop, designOffice, books }, by) {
     ...answer,
     gcode_deposes: deposited,
     deja_deposes: already,
+    fichiers: (await workshop.order(number)).cnc.filter((f) => !f.obsolete && f.format === "gcode" && f.technicalSheetId === sheet.id).map((f) => ({ id: f.id, name: f.name, url: `/api/workshop/${encodeURIComponent(number)}/cnc/${f.id}` })),
     ordre_d_execution: files.map(({ program, file }, index) => `${index + 1}. ${program.nom_matiere} panneau ${program.panneau} — fraise(s) ${file.fraises.join(", ")}`),
     suite: "Chaque fichier attend la validation de la direction dans le cockpit (vue Atelier) ; l'opérateur contrôle fraises, origines et fixation avant de lancer, dans l'ordre d'exécution."
   };
@@ -1782,18 +1970,25 @@ async function runAgent(agentId, mission, context) {
     extraTools: [
       ...(books ? [...(agentId === "finance" ? cashTools(context, agentId) : []), ...(agentId === "commercial" ? salesTools(context, agentId) : []), ...improvementTools(context, agentId)] : []),
       ...(SPECIALISTS[agentId].keepsRegister ? [{ tool: SEARCH_DOCUMENT_TOOL, run: (searchArgs) => searchDocument(searchArgs, context) }] : []),
+      ...(SPECIALISTS[agentId].coordinatesDesign ? [{ tool: DESIGN_DELEGATE_TOOL, run: async (args) => {
+        if (!["dessinateur_2d3d", "dessinateur_methodes"].includes(args.agent)) return { ok: false, erreur: "Ce rôle n'appartient pas au bureau d'études." };
+        const run = await runAgent(args.agent, text(args.mission), context);
+        return { ok: true, agent: run.label, reponse: run.answer, outils_utilises: run.tools };
+      } }] : []),
+      ...(SPECIALISTS[agentId].technicalDrafts ? [{ tool: TECHNICAL_SHEET_TOOL, run: (args, by) => prepareTechnicalSheet(args, context, by) }] : []),
       ...(SPECIALISTS[agentId].workshop === "write" ? [
-        { tool: ORDER_TEAM_TOOL, run: (teamArgs, by) => setOrderTeam(teamArgs, context, by) },
-        ...(SPECIALISTS[agentId].drafts && context.designOffice ? [
+        { tool: ORDER_TEAM_TOOL, run: (teamArgs, by) => setOrderTeam(teamArgs, context, by) }
+      ] : []),
+      ...(SPECIALISTS[agentId].drafts && context.designOffice ? [
+          { tool: FABRICATION_TOOL, run: (args, by) => prepareFabrication(args, context, by) },
           { tool: DRAW_DXF_TOOL, run: (drawArgs, by) => drawDxf(drawArgs, context, by) },
           { tool: GCODE_TOOL, run: (gcodeArgs, by) => prepareGcode(gcodeArgs, context, by) },
           { tool: PILOT_TOOL, run: (pilotArgs, by) => pilotProgram(pilotArgs, context, by) },
           { tool: WORKSHOP_PROFILE_TOOL, run: (profileArgs, by) => workshopProfile(profileArgs, context, by) }
-        ] : [])
       ] : [])
     ],
     briefing: books ? await agentBriefing(agentId, context) : [],
-    callModel: (payload) => callModel(team.client, payload),
+    callModel: (payload) => askModel(team.client, payload, { aiUsage: context.aiUsage, agent: agentId }),
     model: team.model,
     today: formatDate(clock()),
     toolRegistry: team.toolRegistry,

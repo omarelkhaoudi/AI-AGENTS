@@ -134,7 +134,7 @@ test("the direction talks to the Director on WhatsApp, the team reports back, an
   assert.equal(meta.sent[0].authorization, "Bearer test-access");
   assert.match(meta.sent[0].url, /\/1234567890\/messages$/);
   assert.match(meta.sent[0].text, /Bien noté : J'ai reçu 3000 DH/);
-  assert.match(meta.sent[0].text, /1 message\(s\) préparé\(s\) : à relire et envoyer depuis le cockpit/);
+  assert.match(meta.sent[0].text, /1 message\(s\) préparé\(s\) sans numéro connu : à relire et envoyer depuis le cockpit/);
 
   // The next message continues the same conversation.
   await app.inject({ method: "POST", url: "/webhooks/whatsapp", ...signed(webhook("212661000001", "Et le bilan ?", "wamid.b")) });

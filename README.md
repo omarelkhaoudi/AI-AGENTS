@@ -145,6 +145,7 @@ doivent jamais y aller.
 | `data/justificatifs/` | Les justificatifs des dépenses (photo du reçu, facture PDF), un fichier par pièce, reliés à leur mouvement de caisse. | — |
 | `data/amelioration.json` | Les anomalies (étape d'atelier bloquée ou en retard, ou signalée) et les règles proposées par les agents pour qu'elles ne se répètent pas. Une règle ne s'applique qu'une fois validée. | — |
 | `data/equipe.json` | Le responsable humain relié à chaque agent et le fil d'équipe (missions, caisse, atelier, documents, comptes rendus reçus par WhatsApp), que chaque agent relit avant de travailler. | — |
+| `data/couts-ia.json` | Ce que l'IA a consommé, jour par jour et agent par agent : appels au modèle, jetons, coût estimé. | — |
 | `data/whatsapp.json` | Les messages reçus et envoyés par le numéro WhatsApp Business de H-KIDS, et la conversation du Director de chaque numéro de la direction. | — |
 
 Chaque **dépense** passe par quatre états, dans l'ordre (cahier des charges,
@@ -178,12 +179,13 @@ message écrit au numéro de H-KIDS dépend de qui l'écrit :
 
 | Qui écrit | Ce qui se passe |
 | --- | --- |
-| La direction (`WHATSAPP_OWNER_NUMBERS`) | Le message va au **Director**, comme s'il était tapé dans le cockpit, et sa réponse part sur WhatsApp. Ce qui demande une validation (messages à envoyer, documents) attend dans le cockpit. |
+| La direction (`WHATSAPP_OWNER_NUMBERS`) | Le message va au **Director**, comme s'il était tapé dans le cockpit, et sa réponse part sur WhatsApp **avec ses fichiers** : un document retrouvé au registre (trois au plus), un PDF ou un fichier Excel qu'il a fait. Un document préparé (devis, bon de commande, facture…) arrive en **aperçu PDF** barré « APERÇU — NON VALIDÉ » ; la direction répond **« valide »** (ou « valide 172 ») pour le générer et reçoit le PDF définitif, **« annule »** pour l'abandonner. Un message préparé pour un client dont le numéro est connu part quand elle répond **« envoie »**. Rien n'est généré ni envoyé sans ce mot ; ce qui attend est gardé 48 heures. Les décisions sensibles (dépense à approuver, fichier CNC, règle, clôture) restent dans le cockpit. |
 | Un responsable relié à un agent (vue Équipe) | C'est un **compte rendu** : il entre dans le fil d'équipe, que lisent le Director et l'agent concerné, et un accusé de réception part. Ce n'est jamais un ordre. |
 | Toute autre personne (client, fournisseur) | Le message attend dans la vue **WhatsApp** du cockpit. Personne ne répond automatiquement : une personne répond depuis le cockpit. |
 
 Les messages préparés par les agents gardent leur validation humaine : le bouton
-« Envoyer depuis le numéro H-KIDS » les envoie tels que relus. WhatsApp n'autorise
+« Envoyer depuis le numéro H-KIDS » du cockpit, ou le mot « envoie » de la
+direction sur WhatsApp, les envoie tels que relus. WhatsApp n'autorise
 un message libre que dans les **24 heures** qui suivent le dernier message de la
 personne ; au-delà, Meta exige un modèle approuvé. Le cockpit le dit, et le
 bouton « Ouvrir dans WhatsApp » reste disponible pour ce cas.
@@ -891,29 +893,44 @@ Ce que fait le modèle et ce qu'il ne fait pas :
   valide ou le refuse avec un motif (droit de décider, jamais un agent), et la
   découpe CNC ne peut pas commencer avant. Rien de tout cela n'est montré au
   client ;
-- le dessinateur méthodes est dans l'agent Production (outils `dessiner_dxf`
-  et `profil_atelier`) : à partir du bon de commande, le moteur géométrique
-  de `dessinateur/` (Python, `ezdxf` et `shapely`) décompose le meuble
-  (bibliothèque, table d'activité, coffre à jouets, maisonnette, ou pièces
-  libres hors catalogue) en pièces numérotées, calcule chaque cote avec sa
-  règle, fait le tableau de débit et le calepinage sur les panneaux de
-  l'atelier, et écrit un DXF par panneau (R2010, mm, 1:1, un calque par
-  opération). Les DXF sont déposés sur la commande comme ceux du dessinateur,
-  à valider par la direction. Le modèle de langage ne calcule aucune cote, et
-  aucun DXF n'est produit tant qu'une cote, l'épaisseur réelle d'une matière
-  ou une méthode d'assemblage reste « à confirmer » : le profil d'atelier
-  (`data/atelier-profil.json`) ne change que par une valeur relevée à
-  l'atelier. Production prépare aussi le G-code (`preparer_gcode`) : parcours
-  2,5D de chaque panneau (perçages, rainures et poches, ouvertures, puis
-  détourage avec onglets), un fichier par fraise sans changeur d'outils,
-  chaque fichier relu par la simulation, puis déposé sur la commande à
-  valider par la direction. Il est refusé tant que la CNC (modèle,
-  contrôleur, courses, broche, post-processeur `grbl_mm` ou `mach3_mm`), les
-  fraises et la fixation ne sont pas confirmées, et tant que le
-  post-processeur n'a pas passé le programme pilote (`programme_pilote` : une
-  pièce d'essai à usiner dans une chute, dont l'opérateur rapporte le
-  résultat) sur cette machine : un autre réglage de la machine demande un
-  nouveau pilote ;
+- Production coordonne deux agents IA distincts : `dessinateur_2d3d` prépare
+  la fiche technique et ses vues d'encombrement 2D/3D ;
+  `dessinateur_methodes` transforme sa version validée en dossier complet
+  (liste des pièces, quantités, matériaux, débit, calepinage et fiches par
+  opération, avec machine, ordre et instructions). Seules les opérations
+  nécessaires figurent dans ces fiches : CNC, scie à panneaux, rabotage ou
+  autres postes selon le meuble. Toute information manquante est demandée
+  avant génération. Chaque livrable est enregistré dans
+  `data/commandes/BC<référence>/`, versionné et rattaché à la fiche globale.
+  Pour les pièces CNC, le moteur `dessinateur/` produit plans détaillés,
+  calepinage et DXF (R2010, mm, 1:1). Production transmet les DXF à la
+  direction : **aucun G-code avant validation de tous les DXF courants**.
+  Le G-code exige les paramètres réels, le post-processeur qualifié sur la
+  machine par programme pilote, la simulation intégrée sans erreur, puis
+  la validation du responsable atelier. Une correction conserve les
+  archives et rend les anciens programmes obsolètes pour utilisation.
+  Les formats, les routes et un exemple de fiche sont décrits dans
+  [`dessinateur/README.md`](dessinateur/README.md) ;
+- l'export comptable (`src/agent/accounting-export.js`, route
+  `GET /api/accounting/journal.xlsx?from=AAAA-MM-JJ&to=AAAA-MM-JJ`, outil
+  `export_comptable` du Director) donne au comptable le journal des écritures
+  en Excel, une ligne par compte, débit égal au crédit : les factures et les
+  avoirs (client 3421, ventes 7121, TVA facturée 4455), puis les mouvements
+  de caisse (caisse 5161 ou banque 5141, charges 61xx). Les paiements viennent
+  du journal de caisse, jamais des reçus, pour n'être comptés qu'une fois ;
+  un salaire reste masqué à qui n'a pas le droit de le voir. Les comptes sont
+  ceux du CGNC usuels pour un fabricant, remplaçables (`HKIDS_ACCOUNTS`) : c'est
+  une **proposition**, le comptable décide de ce qu'il passe ;
+- le coût de l'IA est suivi (`src/agent/ai-usage.js`, route
+  `GET /api/ai-usage`, panneau « Coût de l'IA ce mois » de la vue Équipe,
+  outil `couts_ia` du Director) : chaque appel au modèle est compté pour
+  l'agent qui l'a fait (Director, agents, vocaux WhatsApp), avec les jetons
+  rapportés par OpenAI ; le coût est une **estimation** d'après le tarif
+  public du modèle (`HKIDS_AI_PRICES` le corrige), la facture OpenAI fait
+  foi. Un budget mensuel (`HKIDS_AI_BUDGET_USD`) alerte à 80 % puis à 100 %
+  dans le fil de l'équipe et sur le WhatsApp de la direction ;
+  `HKIDS_AI_BUDGET_STOP="on"` arrête aussi le Director une fois le budget
+  atteint ;
 - le Director joint un PDF à sa réponse (outil `joindre_pdf`,
   `src/documents/note-pdf.js`) : une fiche, un mémo, une procédure ou une
   synthèse, en A4 avec l'en-tête H KIDS, à télécharger sous la réponse et

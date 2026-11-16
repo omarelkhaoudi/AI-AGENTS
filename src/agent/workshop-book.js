@@ -7,7 +7,9 @@ import { dossierOf, latestIssued } from "../documents/document-ledger.js";
 import { validateAndPrepareDocument } from "../documents/document-validation.js";
 import { HKIDS_FIXED_IDENTITY } from "../documents/hkids-template.js";
 import { parseReferenceImage } from "../documents/purchase-order.js";
+import { renderSignedPdf } from "../documents/signed-pdf.js";
 import { normalizeWhatsAppNumber } from "./whatsapp.js";
+import { fabricationArtifacts, fingerprint, safeReference, sheetQuestions, technicalArtifacts } from "./fabrication.js";
 
 // The workshop book: every purchase order validated in the cockpit follows the
 // manufacturing route of the specification (section 5), from the technical
@@ -31,6 +33,13 @@ import { normalizeWhatsAppNumber } from "./whatsapp.js";
 // the documents of the sale. Never a note, a person in charge or a blocking
 // reason: those stay inside the company.
 //
+// The client signs the delivery note on that same link (section 7: « bon de
+// livraison — signature électronique »): their name and the signature they
+// drew, once per note. The drawn signature and the note exactly as it was
+// signed are kept, and the signed PDF is the note followed by a page saying
+// who signed and when. It is an acknowledgement of receipt, not a certified
+// signature.
+//
 // The design office (Hiba's request of 09/11/2026): each order has a chef de
 // charge who answers for it, the client's architect when there is one and the
 // member of the team who deals with them, and the draughtsman who turns the
@@ -44,7 +53,7 @@ export const DEFAULT_WORKSHOP_PATH = join(PROJECT_ROOT, "data", "atelier.json");
 
 export const WORKSHOP_STEPS = Object.freeze([
   Object.freeze({ id: "etude_technique", label: "Étude technique", detail: "plans et fiche de fabrication" }),
-  Object.freeze({ id: "dessin_cnc", label: "Dessin CNC", detail: "G-code du dessinateur, validé avant découpe" }),
+  Object.freeze({ id: "dessin_cnc", label: "Dessin CNC", detail: "DXF validés, puis G-code simulé et validé par l'atelier" }),
   Object.freeze({ id: "approvisionnement", label: "Approvisionnement", detail: "vérification des matières" }),
   Object.freeze({ id: "decoupe_cnc", label: "Découpe CNC", detail: "découpe des panneaux" }),
   Object.freeze({ id: "assemblage", label: "Assemblage", detail: "montage en atelier" }),
@@ -95,15 +104,19 @@ export function createMemoryWorkshopStore({ clock = () => new Date() } = {}) {
       orders = next;
     },
     photoFiles: memoryFolder(),
-    cncFiles: memoryFolder()
+    cncFiles: memoryFolder(),
+    signatureFiles: memoryFolder(),
+    manufacturingFiles: memoryFolder()
   });
 }
 
-export function createFileWorkshopStore({ path = DEFAULT_WORKSHOP_PATH, photosDir = join(dirname(path), "atelier-photos"), cncDir = join(dirname(path), "atelier-cnc"), clock = () => new Date() } = {}) {
+export function createFileWorkshopStore({ path = DEFAULT_WORKSHOP_PATH, photosDir = join(dirname(path), "atelier-photos"), cncDir = join(dirname(path), "atelier-cnc"), signaturesDir = join(dirname(path), "atelier-signatures"), clock = () => new Date() } = {}) {
   return createWorkshopStore({
     clock,
     photoFiles: diskFolder(photosDir),
     cncFiles: diskFolder(cncDir),
+    signatureFiles: diskFolder(signaturesDir),
+    manufacturingFiles: diskFolder(join(dirname(path), "commandes")),
     load: async () => {
       try {
         return JSON.parse(await readFile(path, "utf8"));
@@ -141,7 +154,7 @@ function memoryFolder() {
 function diskFolder(dir) {
   return {
     write: async (name, bytes) => {
-      await mkdir(dir, { recursive: true });
+      await mkdir(dirname(join(dir, name)), { recursive: true });
       await writeFile(join(dir, name), bytes);
     },
     read: async (name) => {
@@ -164,7 +177,7 @@ function diskFolder(dir) {
   };
 }
 
-function createWorkshopStore({ load, save, clock, photoFiles, cncFiles }) {
+function createWorkshopStore({ load, save, clock, photoFiles, cncFiles, signatureFiles, manufacturingFiles }) {
   // Changes are applied one at a time, so two requests never overwrite each other.
   let queue = Promise.resolve();
   const exclusive = (work) => {
@@ -174,7 +187,7 @@ function createWorkshopStore({ load, save, clock, photoFiles, cncFiles }) {
   };
   // One order's record, changed and saved with a journal line.
   const mutate = (number, change) => exclusive(async () => {
-    const orders = await load();
+    const orders = structuredClone(await load());
     const key = String(number);
     const order = orders[key] ?? { steps: {}, journal: [] };
     const at = clock().toISOString();
@@ -184,9 +197,88 @@ function createWorkshopStore({ load, save, clock, photoFiles, cncFiles }) {
     return outcome;
   });
 
+  async function keepArtifacts(number, section, version, artifacts, at) {
+    const files = [];
+    for (const artifact of artifacts) {
+      const name = `BC${safeReference(number)}_${section}_v${version}_${artifact.name}`;
+      const file = `BC${safeReference(number)}/${section}/v${version}/${name}`;
+      const bytes = Buffer.from(artifact.content, "utf8");
+      await manufacturingFiles.write(file, bytes);
+      files.push({ id: randomUUID(), name, file, size: bytes.length, hash: fingerprint(artifact.content), createdAt: at });
+    }
+    return files;
+  }
+
   return Object.freeze({
     async all() {
       return load();
+    },
+
+    async saveTechnicalSheet(number, data, { by = "dessinateur_2d3d" } = {}) {
+      const questions = sheetQuestions(data);
+      if (questions.length) return { ok: false, questions };
+      return mutate(number, async (order, at) => {
+        const sheets = order.technicalSheets ??= [];
+        const hash = fingerprint(data);
+        const previous = sheets.at(-1);
+        if (previous?.hash === hash && previous.status !== "refuse") return { ok: true, sheet: previous, unchanged: true };
+        const version = sheets.length + 1;
+        const files = await keepArtifacts(number, "FT", version, technicalArtifacts(number, version, data), at);
+        const sheet = { id: randomUUID(), version, hash, data: structuredClone(data), status: "a_valider", by, createdAt: at, files };
+        sheets.push(sheet);
+        for (const entry of order.cnc ?? []) entry.obsolete = true;
+        order.steps.etude_technique = { ...order.steps.etude_technique, status: "en_cours", doneDate: null };
+        order.journal.push({ at, by, text: `Fiche technique v${version} préparée : validation humaine requise ; les anciens livrables restent archivés.` });
+        return { ok: true, sheet };
+      });
+    },
+
+    async decideTechnicalSheet(number, id, { approve, reason = "", by = "direction" }) {
+      return mutate(number, (order, at) => {
+        const sheet = order.technicalSheets?.at(-1);
+        if (!sheet || sheet.id !== id) throw new WorkshopError("Seule la fiche technique courante peut être validée.", "WORKSHOP_TECHNICAL_SHEET_STALE");
+        if (sheet.status !== "a_valider") throw new WorkshopError("Cette fiche technique a déjà été décidée.", "WORKSHOP_TECHNICAL_SHEET_DECIDED");
+        if (!approve && !text(reason)) throw new WorkshopError("Préciser la correction demandée.", "WORKSHOP_TECHNICAL_SHEET_REASON");
+        Object.assign(sheet, { status: approve ? "valide" : "refuse", decidedBy: by, decidedAt: at, reason: text(reason) });
+        order.steps.etude_technique = { ...order.steps.etude_technique, status: approve ? "terminee" : "en_cours", doneDate: approve ? at.slice(0, 10) : null };
+        order.journal.push({ at, by, text: `Fiche technique v${sheet.version} ${approve ? "validée" : `refusée : ${text(reason)}`}.` });
+        return sheet;
+      });
+    },
+
+    async prepareFabrication(number, { by = "dessinateur_methodes" } = {}) {
+      return mutate(number, async (order, at) => {
+        const sheet = order.technicalSheets?.at(-1);
+        if (sheet?.status !== "valide") throw new WorkshopError("Fournir et valider la fiche technique globale avant le dossier de fabrication.", "WORKSHOP_TECHNICAL_SHEET_NOT_VALIDATED");
+        const dossiers = order.fabricationDossiers ??= [];
+        if (dossiers.at(-1)?.technicalSheetId === sheet.id) return dossiers.at(-1);
+        const version = dossiers.length + 1;
+        let built;
+        try { built = fabricationArtifacts(number, version, sheet); } catch (error) { throw new WorkshopError(error.message, "WORKSHOP_NESTING_INVALID"); }
+        const files = await keepArtifacts(number, "FAB", version, built.files, at);
+        const dossier = { id: randomUUID(), version, technicalSheetId: sheet.id, technicalSheetVersion: sheet.version, operations: built.operations, files, by, createdAt: at };
+        dossiers.push(dossier);
+        order.journal.push({ at, by, text: `Dossier de fabrication v${version} rattaché à la fiche technique v${sheet.version} : ${built.operations.length} fiches d'opération.` });
+        return dossier;
+      });
+    },
+
+    async readManufacturingFile(number, id) {
+      const order = (await load())[String(number)];
+      const file = [...(order?.technicalSheets ?? []), ...(order?.fabricationDossiers ?? [])].flatMap((item) => item.files).find((item) => item.id === id);
+      const bytes = file ? await manufacturingFiles.read(file.file) : null;
+      return bytes ? { ...file, bytes } : null;
+    },
+
+    async addFabricationFiles(number, dossierId, artifacts) {
+      return mutate(number, async (order, at) => {
+        const dossier = order.fabricationDossiers?.at(-1);
+        if (!dossier || dossier.id !== dossierId || dossier.technicalSheetId !== order.technicalSheets?.at(-1)?.id) throw new WorkshopError("Le dossier de fabrication a changé : reprendre la version courante.", "WORKSHOP_DOSSIER_REQUIRED");
+        const pending = artifacts.filter((a) => !dossier.files.some((f) => f.name.endsWith(`_${a.name}`)));
+        if (pending.some((a) => !/^[a-zA-Z0-9_.-]+$/.test(a.name))) throw new WorkshopError("Nom de livrable invalide.", "WORKSHOP_FILE_NAME_INVALID");
+        dossier.files.push(...await keepArtifacts(number, "FAB", dossier.version, pending, at));
+        return dossier;
+      });
     },
 
     // The link of the order's client: the active one, or a new token. A link
@@ -254,6 +346,34 @@ function createWorkshopStore({ load, save, clock, photoFiles, cncFiles }) {
       return bytes ? { bytes, format: photo.format } : null;
     },
 
+    // A delivery note the client signed on their link: the drawn signature
+    // and the note exactly as it was signed are kept, one file each. A note is
+    // signed once.
+    async addSignature(number, { type, documentNumber, name, png, pdf, ip = "", userAgent = "" }) {
+      return mutate(number, async (order, at) => {
+        if ((order.signatures ?? []).some((entry) => entry.type === type && entry.number === documentNumber)) {
+          throw new WorkshopError("Ce bon de livraison est déjà signé.", "WORKSHOP_ALREADY_SIGNED");
+        }
+        const id = randomUUID();
+        const file = `${String(number).replace(/[^0-9A-Za-z_-]/g, "_")}_${id}`;
+        await signatureFiles.write(`${file}.png`, png);
+        await signatureFiles.write(`${file}.pdf`, pdf);
+        const entry = { id, type, number: documentNumber, name, signedAt: at, file, ip, userAgent: text(userAgent).slice(0, 200) };
+        order.signatures = [...(order.signatures ?? []), entry];
+        order.journal.push({ at, by: "client", text: `Bon de livraison n° ${documentNumber} signé en ligne par ${name}.` });
+        return entry;
+      });
+    },
+
+    async readSignature(number, id) {
+      const entry = ((await load())[String(number)]?.signatures ?? []).find((candidate) => candidate.id === id);
+      if (!entry) {
+        return null;
+      }
+      const [png, pdf] = await Promise.all([signatureFiles.read(`${entry.file}.png`), signatureFiles.read(`${entry.file}.pdf`)]);
+      return png && pdf ? { entry, png, pdf } : null;
+    },
+
     // Who answers for the order. Only the roles given change; an empty name
     // removes one.
     async setTeam(number, roles = {}, { by = "direction" } = {}) {
@@ -298,15 +418,32 @@ function createWorkshopStore({ load, save, clock, photoFiles, cncFiles }) {
     // A machine file from the draughtsman, once the technical sheet is done.
     // It waits for the direction's validation; the drawing step is under way
     // until then.
-    async addCncFile(number, { bytes, name, format, note = "", by = "direction" }) {
+    async addCncFile(number, { bytes, name, format, note = "", by = "direction", designHash = null, technicalSheetId = null, dossierId = null, simulation = null, sourceDxfIds = [], expectedGcodeNames = [], camHash = null }) {
       return mutate(number, async (order, at) => {
         if (order.steps.etude_technique?.status !== "terminee") {
           throw new WorkshopError("La fiche technique vient d'abord : terminez l'étude technique avant de déposer le dessin CNC.", "WORKSHOP_STUDY_NOT_DONE");
         }
+        const sheet = order.technicalSheets?.at(-1);
+        if (sheet && (sheet.status !== "valide" || sheet.id !== technicalSheetId)) throw new WorkshopError("La fiche technique courante doit être validée et rattachée au fichier CNC.", "WORKSHOP_TECHNICAL_SHEET_NOT_VALIDATED");
+        const dossier = order.fabricationDossiers?.at(-1);
+        if (sheet && (!dossier || dossier.id !== dossierId || dossier.technicalSheetId !== sheet.id)) throw new WorkshopError("Préparer le dossier de fabrication courant avant les DXF.", "WORKSHOP_DOSSIER_REQUIRED");
+        if (format === "gcode") {
+          const dxfs = (order.cnc ?? []).filter((f) => f.format === "dxf" && !f.obsolete && (!sheet || f.technicalSheetId === sheet.id));
+          if (!dxfs.length || dxfs.some((f) => f.status !== "valide") || (designHash && dxfs.some((f) => f.designHash !== designHash))) throw new WorkshopError("Tous les DXF de la version courante doivent être validés avant le G-code.", "WORKSHOP_DXF_NOT_VALIDATED");
+          if (sheet && (!sourceDxfIds.length || dxfs.some((f) => !sourceDxfIds.includes(f.id)))) throw new WorkshopError("Le G-code doit référencer tous ses DXF validés.", "WORKSHOP_DXF_NOT_VALIDATED");
+          if (camHash) for (const entry of order.cnc ?? []) if (entry.format === "gcode" && entry.camHash !== camHash) entry.obsolete = true;
+        }
+        if (format === "dxf") for (const entry of order.cnc ?? []) {
+          if (entry.format === "gcode" || (entry.name === name && entry.status === "refuse") || (designHash && entry.designHash && entry.designHash !== designHash)) entry.obsolete = true;
+        }
         const id = randomUUID();
         const file = `${String(number).replace(/[^0-9A-Za-z_-]/g, "_")}_${id}.${extensionOf(name)}`;
         await cncFiles.write(file, bytes);
-        order.cnc = [...(order.cnc ?? []), { id, file, name, format, size: bytes.length, note: text(note), status: "a_valider", depositedAt: at, by }];
+        const version = sheet?.version ?? 1;
+        const archiveName = `BC${safeReference(number)}_v${version}_${id}_${name}`;
+        const archivePath = `BC${safeReference(number)}/CNC/v${version}/${archiveName}`;
+        await manufacturingFiles.write(archivePath, bytes);
+        order.cnc = [...(order.cnc ?? []), { id, file, name, format, size: bytes.length, note: text(note), status: "a_valider", depositedAt: at, by, version, archivePath, designHash, technicalSheetId, dossierId, simulation, sourceDxfIds, expectedGcodeNames, camHash, obsolete: false }];
         const drawing = { status: "a_faire", responsible: "", plannedDate: null, startedDate: null, doneDate: null, note: "", ...order.steps.dessin_cnc };
         if (drawing.status !== "en_cours") {
           drawing.status = "en_cours";
@@ -323,7 +460,7 @@ function createWorkshopStore({ load, save, clock, photoFiles, cncFiles }) {
 
     // The direction's word on a machine file. Once every file is decided and
     // one is valid, the drawing is finished; a refused file says why.
-    async decideCncFile(number, id, { approve, reason = "", by = "direction" }) {
+    async decideCncFile(number, id, { approve, reason = "", by = "direction", workshopValidation = "" }) {
       if (!approve && !text(reason)) {
         throw new WorkshopError("Un fichier CNC refusé doit dire pourquoi, pour que le dessinateur le corrige.", "WORKSHOP_CNC_REASON_MISSING");
       }
@@ -335,9 +472,12 @@ function createWorkshopStore({ load, save, clock, photoFiles, cncFiles }) {
         if (entry.status !== "a_valider") {
           throw new WorkshopError(`Ce fichier est déjà ${CNC_FILE_STATUS_LABELS[entry.status]}.`, "WORKSHOP_CNC_ALREADY_DECIDED");
         }
+        if (entry.obsolete) throw new WorkshopError("Ce fichier est obsolète : contrôler la version courante.", "WORKSHOP_CNC_OBSOLETE");
+        if (approve && entry.format === "gcode" && (!text(workshopValidation) || !entry.simulation?.ok)) throw new WorkshopError("Le G-code exige une simulation sans erreur et la validation explicite du responsable atelier.", "WORKSHOP_CNC_SIMULATION_REQUIRED");
+        if (approve && entry.format === "gcode") entry.workshopValidation = { by, at, notes: text(workshopValidation) };
         Object.assign(entry, { status: approve ? "valide" : "refuse", decidedAt: at, decidedBy: by, ...(approve ? {} : { reason: text(reason) }) });
         order.journal.push({ at, by, text: approve ? `Dessin CNC : fichier « ${entry.name} » validé pour la machine.` : `Dessin CNC : fichier « ${entry.name} » refusé : ${text(reason)}.` });
-        const files = order.cnc;
+        const files = order.cnc.filter((f) => !f.obsolete);
         if (files.some((candidate) => candidate.status === "valide") && !files.some((candidate) => candidate.status === "a_valider")) {
           const drawing = order.steps.dessin_cnc ?? { status: "a_faire", responsible: "", plannedDate: null, startedDate: null, note: "" };
           if (drawing.status !== "terminee") {
@@ -473,7 +613,14 @@ export function createWorkshop({ store, documentService, clock = () => new Date(
       plannedDelivery: delivery.status === "terminee" ? null : delivery.plannedDate,
       schedule: await paymentSchedule(current.number),
       photos: Object.freeze((record?.photos ?? []).map((photo) => Object.freeze({ id: photo.id, caption: photo.caption, publishedAt: photo.publishedAt }))),
-      documents: Object.freeze(clientDocuments(dossier, current.number)),
+      // A delivery note says whether the client signed it, and by which name.
+      documents: Object.freeze(clientDocuments(dossier, current.number).map((entry) => {
+        if (entry.type !== HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE) {
+          return entry;
+        }
+        const signed = (record?.signatures ?? []).find((candidate) => candidate.number === entry.number);
+        return Object.freeze({ ...entry, signature: signed ? Object.freeze({ name: signed.name, signedAt: signed.signedAt }) : null });
+      })),
       // What the client has paid, from the receipts H-KIDS gave them, and what
       // remains. Only when the amount of the sale is known.
       payments: dossier && dossier.ceiling !== null
@@ -496,9 +643,49 @@ export function createWorkshop({ store, documentService, clock = () => new Date(
     }
   }
 
+  // The signed delivery note: the note as it was signed, then the page of the
+  // signature.
+  async function signedPdf(current, signatureId) {
+    const kept = await store.readSignature(current.number, signatureId);
+    if (!kept) {
+      return null;
+    }
+    const bytes = await renderSignedPdf({
+      pdfBytes: kept.pdf,
+      signaturePng: kept.png,
+      name: kept.entry.name,
+      signedAt: kept.entry.signedAt,
+      documentLabel: `Bon de livraison n° ${kept.entry.number}`,
+      orderNumber: current.number,
+      client: current.client,
+      ip: kept.entry.ip
+    });
+    return { name: `bon-de-livraison-${kept.entry.number}-signe.pdf`, bytes };
+  }
+
   return Object.freeze({
     book,
     order,
+    async saveTechnicalSheet(number, data, options) {
+      await issuedOrder(number);
+      return store.saveTechnicalSheet(String(number).trim(), data, options);
+    },
+    async decideTechnicalSheet(number, id, fields) {
+      await issuedOrder(number);
+      return store.decideTechnicalSheet(String(number).trim(), id, fields);
+    },
+    async prepareFabrication(number, fields) {
+      await issuedOrder(number);
+      return store.prepareFabrication(String(number).trim(), fields);
+    },
+    async readManufacturingFile(number, id) {
+      await issuedOrder(number);
+      return store.readManufacturingFile(String(number).trim(), id);
+    },
+    async addFabricationFiles(number, dossierId, files) {
+      await issuedOrder(number);
+      return store.addFabricationFiles(String(number).trim(), dossierId, files);
+    },
     async advance(number, stepId, fields) {
       await issuedOrder(number);
       const { changed } = await store.updateStep(String(number).trim(), stepId, fields);
@@ -539,15 +726,15 @@ export function createWorkshop({ store, documentService, clock = () => new Date(
     },
 
     // content: the file as base64 (or bytes), name: its name with extension.
-    async depositCncFile(number, { content, name, note = "", by = "direction" }) {
+    async depositCncFile(number, { content, name, note = "", by = "direction", ...metadata }) {
       await issuedOrder(number);
       const upload = readCncUpload(content, name);
-      return store.addCncFile(String(number).trim(), { ...upload, note, by });
+      return store.addCncFile(String(number).trim(), { ...upload, note, by, ...metadata });
     },
 
-    async decideCncFile(number, id, { approve, reason = "", by = "direction" }) {
+    async decideCncFile(number, id, { approve, reason = "", by = "direction", workshopValidation = "" }) {
       await issuedOrder(number);
-      return store.decideCncFile(String(number).trim(), id, { approve, reason, by });
+      return store.decideCncFile(String(number).trim(), id, { approve, reason, by, workshopValidation });
     },
 
     async readCncFile(number, id) {
@@ -560,6 +747,38 @@ export function createWorkshop({ store, documentService, clock = () => new Date(
     async clientPhoto(token, id) {
       const current = await clientOrder(token);
       return current ? store.readPhoto(current.number, id) : null;
+    },
+
+    // The client signs a delivery note of their own sale: their name and the
+    // signature drawn on the page, as a PNG data URL.
+    async signDeliveryNote(token, number, { name, signature, ip = "", userAgent = "" } = {}) {
+      const view = await clientView(token);
+      const listed = view?.documents.find((entry) => entry.type === HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE && entry.number === String(number).trim());
+      if (!listed) {
+        throw new WorkshopError("Ce bon de livraison n'existe pas pour cette commande.", "WORKSHOP_DOCUMENT_NOT_FOUND");
+      }
+      const signer = text(name).replace(/\s+/g, " ");
+      if (signer.length < 3 || signer.length > 80) {
+        throw new WorkshopError("Écrivez votre nom et votre prénom.", "WORKSHOP_SIGNER_INVALID");
+      }
+      const png = readSignatureImage(signature);
+      const issued = await documentService.readIssuedPdf(HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE, listed.number);
+      if (!issued) {
+        throw new WorkshopError("Ce bon de livraison n'existe pas pour cette commande.", "WORKSHOP_DOCUMENT_NOT_FOUND");
+      }
+      const entry = await store.addSignature(view.order.number, { type: HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE, documentNumber: listed.number, name: signer, png, pdf: issued.bytes, ip: text(ip).slice(0, 64), userAgent });
+      return Object.freeze({ order: await order(view.order.number), signature: Object.freeze({ id: entry.id, number: entry.number, name: entry.name, signedAt: entry.signedAt }) });
+    },
+
+    // The signed delivery note, for the client who signed it and for the cockpit.
+    async clientSignedDocument(token, number) {
+      const current = await clientOrder(token);
+      const entry = current?.signatures.find((candidate) => candidate.number === String(number).trim());
+      return entry ? signedPdf(current, entry.id) : null;
+    },
+
+    async signedDocument(number, id) {
+      return signedPdf(await issuedOrder(number), id);
     },
 
     // A document of the client's sale, and no other: what the view lists is
@@ -617,7 +836,9 @@ export function buildWorkshopBook(issued, records, today = new Date()) {
 }
 
 function workshopOrder(order, record = { steps: {}, journal: [] }, issued, day) {
-  const steps = WORKSHOP_STEPS.map((step) => {
+  const sheet = record.technicalSheets?.at(-1);
+  const cncNeeded = !sheet || sheet.data.parts.some((p) => p.operations.some((op) => op.type === "cnc"));
+  const steps = WORKSHOP_STEPS.filter((step) => cncNeeded || !["dessin_cnc", "decoupe_cnc"].includes(step.id)).map((step) => {
     const state = { status: "a_faire", responsible: "", plannedDate: null, startedDate: null, doneDate: null, note: "", ...record.steps?.[step.id] };
     return Object.freeze({
       id: step.id,
@@ -652,9 +873,18 @@ function workshopOrder(order, record = { steps: {}, journal: [] }, issued, day) 
     by: entry.by,
     decidedAt: entry.decidedAt ?? null,
     decidedBy: entry.decidedBy ?? null,
-    reason: entry.reason ?? ""
+    reason: entry.reason ?? "",
+    version: entry.version ?? 1,
+    archivePath: entry.archivePath ?? null,
+    technicalSheetId: entry.technicalSheetId ?? null,
+    dossierId: entry.dossierId ?? null,
+    designHash: entry.designHash ?? null,
+    sourceDxfIds: entry.sourceDxfIds ?? [],
+    simulation: entry.simulation ?? null,
+    workshopValidation: entry.workshopValidation ?? null,
+    obsolete: entry.obsolete === true
   }));
-  for (const entry of cnc.filter((candidate) => candidate.status === "a_valider")) {
+  for (const entry of cnc.filter((candidate) => !candidate.obsolete && candidate.status === "a_valider")) {
     alerts.push(`Fichier CNC « ${entry.name} » à valider par la direction avant la découpe`);
   }
   // Only an order made from a quote can tell: invoices name their quote, never
@@ -690,19 +920,39 @@ function workshopOrder(order, record = { steps: {}, journal: [] }, issued, day) 
     alerts: Object.freeze(alerts),
     team: Object.freeze(Object.fromEntries(ORDER_ROLE_IDS.map((id) => [id, record.team?.[id] ?? ""]))),
     cnc: Object.freeze(cnc),
+    technicalSheets: structuredClone(record.technicalSheets ?? []),
+    fabricationDossiers: structuredClone(record.fabricationDossiers ?? []),
     portal: record.portal?.active ? Object.freeze({ path: portalLink(record.portal.token).path, createdAt: record.portal.createdAt }) : null,
     photos: Object.freeze((record.photos ?? []).map((photo) => Object.freeze({ id: photo.id, caption: photo.caption, publishedAt: photo.publishedAt }))),
+    // The delivery notes the client signed on their link.
+    signatures: Object.freeze((record.signatures ?? []).map((entry) => Object.freeze({ id: entry.id, type: entry.type, number: entry.number, name: entry.name, signedAt: entry.signedAt }))),
     journal: Object.freeze([...(record.journal ?? [])])
   });
+}
+
+// The signature drawn on the client's page: a PNG, neither empty nor heavy.
+export const MAX_SIGNATURE_BYTES = 400 * 1024;
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+export function readSignatureImage(dataUrl) {
+  const match = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(typeof dataUrl === "string" ? dataUrl.trim() : "");
+  const bytes = match ? Buffer.from(match[1], "base64") : null;
+  if (!bytes || bytes.length < 200 || bytes.length > MAX_SIGNATURE_BYTES || !bytes.subarray(0, 8).equals(PNG_MAGIC)) {
+    throw new WorkshopError("La signature n'a pas pu être lue : signez à nouveau dans le cadre.", "WORKSHOP_SIGNATURE_INVALID");
+  }
+  return bytes;
 }
 
 // The CNC cut, and the end of the drawing, wait for a machine file the
 // direction validated. A cut already under way before this rule may finish.
 function refuseWithoutValidatedFile(order, stepId, from, to) {
-  const files = order.cnc ?? [];
-  if (stepId === "decoupe_cnc" && ["en_cours", "terminee"].includes(to) && !["en_cours", "terminee"].includes(from) && !files.some((entry) => entry.status === "valide")) {
+  const files = (order.cnc ?? []).filter((f) => !f.obsolete);
+  const gcode = files.filter((f) => f.format === "gcode");
+  const sheet = order.technicalSheets?.at(-1);
+  if (stepId === "decoupe_cnc" && ["en_cours", "terminee"].includes(to) && (sheet || !["en_cours", "terminee"].includes(from)) && ((sheet && sheet.status !== "valide") || !gcode.length || gcode.some((f) => f.status !== "valide" || !f.simulation?.ok || !f.workshopValidation || (f.expectedGcodeNames ?? []).some((name) => !gcode.some((candidate) => candidate.name === name && candidate.camHash === f.camHash))) || files.some((f) => f.format === "dxf" && f.status !== "valide"))) {
     throw new WorkshopError("Aucun fichier CNC validé pour cette commande : le G-code du dessinateur doit être validé par la direction avant la découpe.", "WORKSHOP_CNC_NOT_VALIDATED");
   }
+  if (stepId === "etude_technique" && to === "terminee" && order.technicalSheets?.length && order.technicalSheets.at(-1).status !== "valide") throw new WorkshopError("Valider la fiche technique dans le bureau d'études avant de terminer l'étude.", "WORKSHOP_TECHNICAL_SHEET_NOT_VALIDATED");
   if (stepId === "dessin_cnc" && to === "terminee" && from !== "terminee" && (!files.some((entry) => entry.status === "valide") || files.some((entry) => entry.status === "a_valider"))) {
     throw new WorkshopError("Le dessin CNC se termine quand la direction a validé son fichier (G-code ou DXF) dans le cockpit.", "WORKSHOP_CNC_NOT_VALIDATED");
   }

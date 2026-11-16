@@ -59,6 +59,9 @@ import {
   verifyTotp
 } from "../security/two-factor.js";
 import { HkidsDocumentService, normalizeDocumentError } from "../documents/document-service.js";
+import { renderPreviewPdf } from "../documents/preview-pdf.js";
+import { createAiUsageFromEnv, createMemoryAiUsageBook } from "../agent/ai-usage.js";
+import { JOURNAL_COLUMNS, accountsFromEnv, buildJournal, journalRows } from "../agent/accounting-export.js";
 import { createCommercialFileService, normalizeCommercialFileError } from "../documents/commercial-file-service.js";
 
 // The one outbound tool. It is never routed by a planner, so the only way to
@@ -112,6 +115,9 @@ export function buildApi({
   followUpBook = null,
   // The workshop profile of the dessinateur méthodes (data/atelier-profil.json).
   designProfileBook = null,
+  // What the AI costs, call by call (data/couts-ia.json), or a ledger a test gives.
+  aiUsageBook = null,
+  aiUsage = null,
   // A new anomaly is handed to its agent for analysis at once. The server
   // process turns it on; a test does it by hand.
   autoAnalyseAnomalies = false,
@@ -271,6 +277,16 @@ export function buildApi({
     return true;
   }
   const teamFeed = teamBook ?? createMemoryTeamBook({ clock, agents: SPECIALIST_IDS });
+  // Each call to the model is counted; a budget reached is written to the
+  // team feed and told to the direction on WhatsApp.
+  const usage = aiUsage ?? createAiUsageFromEnv({
+    book: aiUsageBook ?? createMemoryAiUsageBook(),
+    clock,
+    onAlert: async (alert) => {
+      await teamFeed.log({ agent: "director", kind: "alerte", text: alert.text, by: "cockpit" });
+      await whatsApp.tellDirection(alert.text);
+    }
+  });
   const agent = directorAgent ?? createDirectorAgentFromEnv({
     documentService: hkidsDocuments,
     runDirectorRequest,
@@ -287,6 +303,7 @@ export function buildApi({
     followUpBook: followUps,
     documentArchive: archive,
     designProfileBook,
+    aiUsage: usage,
     autoAnalyse: autoAnalyseAnomalies,
     publicBaseUrl,
     client: agentClient
@@ -312,7 +329,32 @@ export function buildApi({
       }
     },
     recordFollowUp: (number, { note, by }) => recordFollowUp({ devis: number, canal: "autre", date: "", note, perdu: false, motif: "" }, { books: { followUps, team: teamFeed }, documentService: hkidsDocuments, clock }, by),
-    transcriber: whatsAppTranscriber === undefined ? createOpenAiTranscriberFromEnv() : whatsAppTranscriber,
+    transcriber: whatsAppTranscriber === undefined ? createOpenAiTranscriberFromEnv({ onUsage: (heard) => usage.recordTranscription(heard) }) : whatsAppTranscriber,
+    // The files of the Director's answers, and the generation of a document
+    // the direction validated by its word on WhatsApp: the same confirmed
+    // step as « Valider et générer » in the cockpit.
+    documents: {
+      previewPdf: (prepared) => renderPreviewPdf(prepared.preview.document),
+      async generate(item) {
+        const replaceExisting = item.replaces === true;
+        try {
+          const preview = await hkidsDocuments.preview(item.input, { replaceExisting });
+          const generated = await hkidsDocuments.generate({ ...item.input, previewToken: preview.previewToken, userConfirmation: true }, { replaceExisting });
+          await app.syncArchive();
+          return { ok: true, pdf: await hkidsDocuments.readIssuedPdf(generated.document.documentType, generated.document.documentNumber) };
+        } catch (error) {
+          const normalized = normalizeDocumentError(error);
+          if (!normalized) {
+            throw error;
+          }
+          return { ok: false, erreur: WHATSAPP_DOCUMENT_REFUSALS[normalized.body.details?.code] ?? "le cockpit l'a refusé ; ouvrez-le pour voir pourquoi." };
+        }
+      },
+      async issuedPdf(found) {
+        const file = await archive.pdf(String(found.stem));
+        return file ? { bytes: file.bytes } : null;
+      }
+    },
     log: (error) => app.log.error(error)
   });
   const syncAnomalies = async (orders) => (typeof agent.syncAnomalies === "function" ? agent.syncAnomalies(orders) : improvement.sync(orders));
@@ -701,6 +743,34 @@ export function buildApi({
       }
     });
 
+    // The entries for the accountant, in Excel: invoices and credit notes, then
+    // the cash movements, on the CGNC accounts. ?from=AAAA-MM-JJ&to=AAAA-MM-JJ.
+    app.get("/api/accounting/journal.xlsx", readRouteOptions(), async (request, reply) => {
+      const day = (value) => (/^\d{4}-\d{2}-\d{2}$/.test(String(value ?? "")) ? String(value) : "");
+      const from = day(request.query?.from);
+      const to = day(request.query?.to);
+      const journal = await buildJournal({
+        issued: await hkidsDocuments.listIssued(),
+        readIssued: (type, number) => hkidsDocuments.readIssued(type, number),
+        cashEntries: await cash.entries(),
+        accounts: accountsFromEnv(),
+        from,
+        to,
+        confidential: seesConfidential(request)
+      });
+      const rows = [...journalRows(journal), ...journal.notes.map((note) => ["", "NOTE", "", "", "", note, "", ""])];
+      const bytes = await renderXlsx({ title: "Écritures comptables H-KIDS", columns: [...JOURNAL_COLUMNS], rows, total: true, sheetName: "Journal" });
+      return reply
+        .type("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        .header("Content-Disposition", `attachment; filename="${xlsxFileName("ecritures comptables", clock())}"`)
+        .header("X-Journal-Balanced", String(journal.totals.balanced))
+        .send(bytes);
+    });
+
+    // What the AI cost this month (or the month asked): an estimate, by agent
+    // and by day, with the budget when one is set.
+    app.get("/api/ai-usage", readRouteOptions(), async (request) => usage.summary({ month: typeof request.query?.month === "string" ? request.query.month : "" }));
+
     app.get("/api/agent/status", readRouteOptions(), async () => ({
       configured: agent.isConfigured(),
       model: agent.model
@@ -751,6 +821,34 @@ export function buildApi({
       } catch (error) {
         return sendDomainError(reply, "Workshop book unavailable.", error);
       }
+    });
+
+    app.post("/api/workshop/:number/technical-sheet", writeRouteOptions(), async (request, reply) => {
+      try {
+        const result = await workshop.saveTechnicalSheet(request.params.number, request.body?.sheet, { by: request.principal.userId });
+        return reply.code(result.ok ? 201 : 400).send(result);
+      } catch (error) { return sendWorkshopError(reply, error, "Technical sheet preparation failed."); }
+    });
+
+    app.post("/api/workshop/:number/technical-sheet/:id/decision", decisionRouteOptions(), async (request, reply) => {
+      if (!["valider", "refuser"].includes(request.body?.decision)) return reply.code(400).send({ error: "decision must be valider or refuser." });
+      try {
+        const sheet = await workshop.decideTechnicalSheet(request.params.number, request.params.id, { approve: request.body.decision === "valider", reason: request.body.reason, by: request.principal.name ?? request.principal.userId });
+        return { sheet, order: await workshop.order(request.params.number) };
+      } catch (error) { return sendWorkshopError(reply, error, "Technical sheet decision failed."); }
+    });
+
+    app.post("/api/workshop/:number/fabrication", writeRouteOptions(), async (request, reply) => {
+      try { return reply.code(201).send({ dossier: await workshop.prepareFabrication(request.params.number, { by: request.principal.userId }) }); }
+      catch (error) { return sendWorkshopError(reply, error, "Fabrication preparation failed."); }
+    });
+
+    app.get("/api/workshop/:number/fabrication/files/:id", readRouteOptions(), async (request, reply) => {
+      try {
+        const file = await workshop.readManufacturingFile(request.params.number, request.params.id);
+        if (!file) return reply.code(404).send({ error: "Fichier de fabrication introuvable." });
+        return reply.type("application/octet-stream").header("Content-Disposition", `attachment; filename="${basenameForHeader(file.name)}"`).header("X-Content-Type-Options", "nosniff").header("Cache-Control", "private, no-store").send(file.bytes);
+      } catch (error) { return sendWorkshopError(reply, error, "Fabrication file unavailable."); }
     });
 
     // Hiba moves a step from the cockpit as she would tell the Director; the
@@ -833,6 +931,8 @@ export function buildApi({
           content: typeof request.body?.content === "string" ? request.body.content : "",
           name: typeof request.body?.name === "string" ? request.body.name : "",
           note: typeof request.body?.note === "string" ? request.body.note : "",
+          technicalSheetId: typeof request.body?.technicalSheetId === "string" ? request.body.technicalSheetId : null,
+          dossierId: typeof request.body?.dossierId === "string" ? request.body.dossierId : null,
           by: request.principal.userId ?? "direction"
         });
         return reply.code(201).send({ id });
@@ -842,6 +942,20 @@ export function buildApi({
     });
 
     // Always a download, never shown in the page.
+    // A delivery note the client signed on their link: the note as signed,
+    // followed by the page of the signature.
+    app.get("/api/workshop/:number/signatures/:id/pdf", readRouteOptions(), async (request, reply) => {
+      try {
+        const file = await workshop.signedDocument(request.params.number, request.params.id);
+        if (!file) {
+          return reply.code(404).send({ error: "Bon de livraison signé introuvable." });
+        }
+        return reply.type("application/pdf").header("Content-Disposition", `attachment; filename="${basenameForHeader(file.name)}"`).send(file.bytes);
+      } catch (error) {
+        return sendWorkshopError(reply, error, "Signed delivery note unavailable.");
+      }
+    });
+
     app.get("/api/workshop/:number/cnc/:id", readRouteOptions(), async (request, reply) => {
       try {
         const file = await workshop.readCncFile(request.params.number, request.params.id);
@@ -872,6 +986,7 @@ export function buildApi({
         const file = await workshop.decideCncFile(request.params.number, request.params.id, {
           approve: decision === "valider",
           reason: typeof request.body?.reason === "string" ? request.body.reason : "",
+          workshopValidation: typeof request.body?.workshopValidation === "string" ? request.body.workshopValidation : "",
           by
         });
         await teamFeed.log({ agent: "production", kind: "atelier", text: `BC ${request.params.number} : fichier CNC « ${file.name} » ${decision === "valider" ? "validé" : `refusé (${file.reason})`} par ${by}.`, ref: `bc:${request.params.number}`, by });
@@ -1249,6 +1364,39 @@ export function buildApi({
         : reply.code(404).send({ error: "Document introuvable." });
     });
 
+    // The client signs a delivery note of their sale on their link: their
+    // name and the signature they drew. Limited like a sign-in, since whoever
+    // holds the link may try; the direction is told at once.
+    app.post("/api/public/suivi/:token/documents/delivery_note/:number/signature", { config: { login: true }, bodyLimit: Math.max(securityConfig.bodyLimitBytes, SIGNATURE_BODY_LIMIT_BYTES) }, async (request, reply) => {
+      clientPageHeaders(reply);
+      try {
+        const signed = await workshop.signDeliveryNote(request.params.token, request.params.number, {
+          name: request.body?.name,
+          signature: request.body?.signature,
+          ip: request.ip,
+          userAgent: request.headers["user-agent"]
+        });
+        const line = `BC ${signed.order.number} (${signed.order.client}) — bon de livraison n° ${signed.signature.number} signé en ligne par ${signed.signature.name}.`;
+        await teamFeed.log({ agent: "commercial", kind: "document", text: line, ref: `bc:${signed.order.number}`, by: "client" });
+        whatsApp.tellDirection(line).catch((error) => app.log.error(error));
+        return reply.code(201).send({ signature: { number: signed.signature.number, name: signed.signature.name, signedAt: signed.signature.signedAt } });
+      } catch (error) {
+        if (error instanceof WorkshopError) {
+          const statusCode = error.code === "WORKSHOP_DOCUMENT_NOT_FOUND" ? 404 : error.code === "WORKSHOP_ALREADY_SIGNED" ? 409 : 400;
+          return reply.code(statusCode).send({ error: error.message, details: { code: error.code } });
+        }
+        return sendDomainError(reply, "Signature failed.", error);
+      }
+    });
+
+    app.get("/api/public/suivi/:token/documents/delivery_note/:number/signed", async (request, reply) => {
+      const file = await workshop.clientSignedDocument(request.params.token, request.params.number);
+      clientPageHeaders(reply);
+      return file
+        ? reply.type("application/pdf").header("Content-Disposition", `inline; filename="${basenameForHeader(file.name)}"`).send(file.bytes)
+        : reply.code(404).send({ error: "Document introuvable." });
+    });
+
     // Photos and documents travel with the message: up to four of each, a
     // photo shrunk by the cockpit, a document up to 5 MB, base64 included.
     // Who is signed in, so the cockpit can show the name and check that a token
@@ -1616,7 +1764,10 @@ const PUBLIC_API_ROUTES = Object.freeze([
   // The client's follow-up: reached by an unguessable link, read-only.
   "/api/public/suivi/:token",
   "/api/public/suivi/:token/photos/:id",
-  "/api/public/suivi/:token/documents/:type/:number"
+  "/api/public/suivi/:token/documents/:type/:number",
+  // The client signs their delivery note there, and reads it back signed.
+  "/api/public/suivi/:token/documents/delivery_note/:number/signature",
+  "/api/public/suivi/:token/documents/delivery_note/:number/signed"
 ]);
 
 // A client page and what it loads: never cached, never indexed, and its address
@@ -1783,6 +1934,20 @@ function writeRouteOptions() {
 // A purchase order may carry its reference visual, which does not fit in the
 // general body limit. Only the two document routes get the larger allowance.
 const DOCUMENT_BODY_LIMIT_BYTES = 5 * 1024 * 1024;
+// Why a document validated on WhatsApp was not generated, in the direction's words.
+const WHATSAPP_DOCUMENT_REFUSALS = Object.freeze({
+  DOCUMENT_NUMBER_USED: "ce numéro a été pris entre-temps ; redemandez le document, il prendra le numéro suivant.",
+  PURCHASE_ORDER_NUMBER_USED: "ce numéro de bon de commande a été pris entre-temps ; redemandez-le.",
+  DOCUMENT_TO_REPLACE_NOT_FOUND: "le document à corriger n'existe plus sous ce numéro.",
+  INVOICE_EXCEEDS_SALE: "il ferait facturer plus que le montant de la vente.",
+  CREDITED_INVOICE_NOT_FOUND: "la facture que cet avoir corrige n'a pas été générée par le cockpit.",
+  CREDIT_NOTE_EXCEEDS_INVOICE: "il rendrait plus que la facture qu'il corrige.",
+  RECEIPT_EXCEEDS_SALE: "il ferait encaisser plus que la vente."
+});
+
+// A drawn signature of 400 KB at most, sent as base64 with a name.
+const SIGNATURE_BODY_LIMIT_BYTES = 700 * 1024;
+
 // A CNC file of 8 MB, sent as base64.
 const CNC_BODY_LIMIT_BYTES = 12 * 1024 * 1024;
 const CHAT_BODY_LIMIT_BYTES = 40 * 1024 * 1024;

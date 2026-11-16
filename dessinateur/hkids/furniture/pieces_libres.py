@@ -174,7 +174,7 @@ class PiecesLibres(FurnitureModel):
             d.parts.append(Part("", name, int(_val(pc["qty"])) * n_meubles, material_id=mat_id,
                                 material_name=mat["nom"], thickness=e, length=L, width=W,
                                 grain_x=bool(pc.get("grain", mat["fil"])),
-                                rotation_allowed=not bool(pc.get("grain", mat["fil"])),
+                                rotation_allowed=not bool(pc.get("grain", mat["fil"])) and bool(pc.get("rotation_allowed", True)),
                                 corner_r=float(_val(pc.get("corner_r")) or 0), features=feats, contour=contour,
                                 assembly=pc.get("assembly", ""), orientation=pc.get("orientation", ""),
                                 notes=[pc["note"]] if pc.get("note") else []))

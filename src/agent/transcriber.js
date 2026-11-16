@@ -14,16 +14,17 @@ export class TranscriptionError extends Error {
   }
 }
 
-export function createOpenAiTranscriberFromEnv({ env = process.env, clientFactory = defaultClientFactory } = {}) {
+// onUsage: told what each transcription consumed, for the AI cost ledger.
+export function createOpenAiTranscriberFromEnv({ env = process.env, clientFactory = defaultClientFactory, onUsage = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   if (apiKey === "") {
     return null;
   }
   const model = typeof env.OPENAI_TRANSCRIBE_MODEL === "string" && env.OPENAI_TRANSCRIBE_MODEL.trim() !== "" ? env.OPENAI_TRANSCRIBE_MODEL.trim() : DEFAULT_TRANSCRIBE_MODEL;
-  return createOpenAiTranscriber({ apiKey, model, clientFactory });
+  return createOpenAiTranscriber({ apiKey, model, clientFactory, onUsage });
 }
 
-export function createOpenAiTranscriber({ apiKey, model = DEFAULT_TRANSCRIBE_MODEL, clientFactory = defaultClientFactory }) {
+export function createOpenAiTranscriber({ apiKey, model = DEFAULT_TRANSCRIBE_MODEL, clientFactory = defaultClientFactory, onUsage = null }) {
   let client = null;
   return Object.freeze({
     async transcribe({ bytes, mimeType = "audio/ogg", filename = "" }) {
@@ -36,6 +37,9 @@ export function createOpenAiTranscriber({ apiKey, model = DEFAULT_TRANSCRIBE_MOD
             model,
             ...(prompt ? { prompt } : {})
           });
+          if (typeof onUsage === "function" && result?.usage) {
+            await Promise.resolve(onUsage({ model, usage: result.usage })).catch(() => {});
+          }
           return (typeof result === "string" ? result : String(result?.text ?? "")).trim();
         } catch (cause) {
           throw new TranscriptionError(

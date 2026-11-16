@@ -1,7 +1,9 @@
 // The client's follow-up page. The token is the last part of the address
 // (/suivi/<token>); the page reads what the order's link shows and nothing
 // else: progress, finished steps, the planned delivery, the payment schedule,
-// the published photos and the documents of the sale.
+// the published photos and the documents of the sale. A delivery note can be
+// signed here, once: a name, and a signature drawn with the finger or the
+// mouse.
 
 const token = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] ?? "");
 const base = `/api/public/suivi/${encodeURIComponent(token)}`;
@@ -42,6 +44,7 @@ function render(view) {
   contact.hidden = false;
   document.title = `Commande n° ${view.order.number} - H-KIDS`;
   show("tracking");
+  tracking.querySelectorAll("[data-sign]").forEach((form) => bindSignature(form));
 }
 
 function summaryCard({ order, progress, finished, plannedDelivery }) {
@@ -126,11 +129,121 @@ function documentsCard({ documents }) {
       <a class="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-3 py-2.5 font-semibold text-ink transition hover:border-brand/40 hover:bg-brand-soft" href="${base}/documents/${encodeURIComponent(entry.type)}/${encodeURIComponent(entry.number)}" target="_blank" rel="noopener noreferrer">
         <span class="min-w-0 break-words">${escapeHtml(entry.label)}</span><span class="shrink-0 text-[12.5px] text-brand">PDF</span>
       </a>
+      ${entry.type === "delivery_note" ? signatureBlock(entry) : ""}
     </li>`);
   return `<section class="rounded-2xl border border-line bg-surface p-5 shadow-card sm:p-6">
     <h2>Vos documents</h2>
     <ul class="mt-3 flex list-none flex-col gap-2 p-0">${links.join("")}</ul>
   </section>`;
+}
+
+// Under a delivery note: who signed it and the signed PDF, or the form to sign
+// it. The signature is an acknowledgement of receipt.
+function signatureBlock(entry) {
+  const signedUrl = `${base}/documents/delivery_note/${encodeURIComponent(entry.number)}/signed`;
+  if (entry.signature) {
+    return `<p class="mt-1.5 px-1 text-[12.5px] text-ink-2">Réception signée le ${escapeHtml(day(entry.signature.signedAt))} par ${escapeHtml(entry.signature.name)} · <a class="font-semibold text-brand" href="${signedUrl}" target="_blank" rel="noopener noreferrer">Bon signé (PDF)</a></p>`;
+  }
+  return `<details class="mt-1.5 rounded-xl border border-line bg-surface px-3 py-2">
+      <summary class="cursor-pointer text-[13px] font-semibold text-brand">Signer la réception</summary>
+      <form class="mt-3 flex flex-col gap-3" data-sign="${escapeHtml(entry.number)}" novalidate>
+        <p class="text-[12.5px] text-ink-2">À signer une fois la marchandise reçue. Votre signature vaut accusé de réception du ${escapeHtml(entry.label.toLowerCase())}.</p>
+        <label class="flex flex-col gap-1 text-[12.5px] font-semibold text-ink-2">Votre nom et prénom
+          <input name="name" type="text" autocomplete="name" maxlength="80" required class="font-normal">
+        </label>
+        <div class="flex flex-col gap-1">
+          <span class="text-[12.5px] font-semibold text-ink-2">Votre signature (au doigt ou à la souris)</span>
+          <canvas width="560" height="200" class="h-[160px] w-full touch-none rounded-lg border border-line bg-white" aria-label="Cadre de signature"></canvas>
+          <button type="button" data-sign-clear class="link-button self-start text-[12.5px]">Effacer et recommencer</button>
+        </div>
+        <label class="cash-confidential text-[12.5px]"><input name="confirm" type="checkbox" required><span>Je confirme avoir reçu la marchandise décrite dans ce bon de livraison.</span></label>
+        <p data-sign-status class="text-[12.5px] font-semibold text-ink-2" role="status" aria-live="polite"></p>
+        <button type="submit" class="primary">Signer la réception</button>
+      </form>
+    </details>`;
+}
+
+// The signature is drawn in dark ink on a white frame, whatever the page's
+// theme, and sent as a PNG with the name.
+function bindSignature(form) {
+  const canvas = form.querySelector("canvas");
+  const context = canvas.getContext("2d");
+  const status = form.querySelector("[data-sign-status]");
+  let drawing = false;
+  // How much was drawn, in the frame's own pixels: a dot is not a signature.
+  let ink = 0;
+  let last = null;
+  const clear = () => {
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    ink = 0;
+  };
+  const point = (event) => {
+    const box = canvas.getBoundingClientRect();
+    return { x: ((event.clientX - box.left) / box.width) * canvas.width, y: ((event.clientY - box.top) / box.height) * canvas.height };
+  };
+  clear();
+  context.lineWidth = 2.6;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.strokeStyle = "#16201c";
+  canvas.addEventListener("pointerdown", (event) => {
+    drawing = true;
+    canvas.setPointerCapture(event.pointerId);
+    last = point(event);
+    context.beginPath();
+    context.moveTo(last.x, last.y);
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (!drawing) {
+      return;
+    }
+    const { x, y } = point(event);
+    context.lineTo(x, y);
+    context.stroke();
+    ink += Math.hypot(x - last.x, y - last.y);
+    last = { x, y };
+  });
+  for (const end of ["pointerup", "pointercancel", "pointerleave"]) {
+    canvas.addEventListener(end, () => {
+      drawing = false;
+    });
+  }
+  form.querySelector("[data-sign-clear]").addEventListener("click", clear);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const name = form.elements.name.value.trim();
+    if (name.length < 3) {
+      status.textContent = "Écrivez votre nom et votre prénom.";
+      return;
+    }
+    if (ink < 120) {
+      status.textContent = "Signez dans le cadre blanc.";
+      return;
+    }
+    if (!form.elements.confirm.checked) {
+      status.textContent = "Cochez la case pour confirmer la réception.";
+      return;
+    }
+    const button = form.querySelector("button[type='submit']");
+    button.disabled = true;
+    status.textContent = "Envoi de la signature…";
+    try {
+      const response = await fetch(`${base}/documents/delivery_note/${encodeURIComponent(form.dataset.sign)}/signature`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, signature: canvas.toDataURL("image/png") })
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(response.status === 429 ? "Trop d'essais : réessayez dans une minute." : body.error ?? "La signature n'a pas pu être enregistrée.");
+      }
+      await load();
+    } catch (error) {
+      status.textContent = error.message;
+      button.disabled = false;
+    }
+  });
 }
 
 // AAAA-MM-JJ (or a full timestamp) as JJ/MM/AAAA; a date already written the

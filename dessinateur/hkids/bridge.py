@@ -37,6 +37,7 @@ import sys
 from .cam import build_programs, pilot_program
 from .design import canonical_hash, compute, readiness
 from .dxf_export import sheet_dxf
+from .drawing import part_svg, sheet_svg
 from .furniture import get_model, registry
 from .postprocessors import get_post, list_posts
 from .profile import (RULE_FIELDS, apply_profile_answer, cnc_questions, default_profile, machine_signature,
@@ -138,7 +139,11 @@ def draw(profile: dict, furniture: str, given: dict) -> dict:
                          "a_confirmer": x["source"] == A_CONFIRMER} for x in res["extras"]],
         "empreinte": res.get("design_hash"),
         "panneaux": [],
+        "plans_pieces": [],
     }
+    if ready["ready"]:
+        out["plans_pieces"] = [{"ref": part["ref"], "svg_base64": base64.b64encode(part_svg(part).encode("utf-8")).decode("ascii")}
+                               for part in res["parts"]]
     nesting = res.get("nesting")
     if nesting:
         for group in nesting["groups"]:
@@ -149,6 +154,9 @@ def draw(profile: dict, furniture: str, given: dict) -> dict:
                 if ready["ready"]:
                     data = sheet_dxf(group, sheet, {p["ref"]: p for p in res["parts"]})
                     entry["dxf_base64"] = base64.b64encode(data).decode("ascii")
+                    svg = sheet_svg(group, sheet, {p["ref"]: p for p in res["parts"]}, len(group["sheets"]))
+                    entry["svg_base64"] = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+                    entry["placements"] = sheet["placements"]
                 out["panneaux"].append(entry)
     return out
 

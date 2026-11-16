@@ -81,12 +81,13 @@ test("the draughtsman's G-code waits for the direction before the CNC cut can st
   await assert.rejects(workshop.depositCncFile("171", { content: base64(GCODE), name: "panneaux.pdf" }), { code: "WORKSHOP_CNC_FORMAT" });
   await assert.rejects(workshop.depositCncFile("171", { content: "", name: "vide.nc" }), { code: "WORKSHOP_CNC_EMPTY" });
 
-  const first = await workshop.depositCncFile("171", { content: `data:application/octet-stream;base64,${base64(GCODE)}`, name: "C:\\Plans\\panneaux-lit.nc", note: "MDF 18 mm", by: "karim" });
+  await assert.rejects(workshop.depositCncFile("171", { content: base64(GCODE), name: "premature.nc" }), { code: "WORKSHOP_DXF_NOT_VALIDATED" });
+  const first = await workshop.depositCncFile("171", { content: `data:application/octet-stream;base64,${base64(DXF)}`, name: "C:\\Plans\\panneaux-lit.dxf", note: "MDF 18 mm", by: "karim" });
   let current = await workshop.order("171");
   const drawing = current.steps.find((step) => step.id === "dessin_cnc");
   assert.deepEqual([drawing.status, drawing.responsible], ["en_cours", "Karim"], "the drawing is under way, by the draughtsman");
-  assert.deepEqual(current.cnc.map((file) => [file.name, file.format, file.status, file.note]), [["panneaux-lit.nc", "gcode", "a_valider", "MDF 18 mm"]]);
-  assert.ok(current.alerts.includes("Fichier CNC « panneaux-lit.nc » à valider par la direction avant la découpe"));
+  assert.deepEqual(current.cnc.map((file) => [file.name, file.format, file.status, file.note]), [["panneaux-lit.dxf", "dxf", "a_valider", "MDF 18 mm"]]);
+  assert.ok(current.alerts.includes("Fichier CNC « panneaux-lit.dxf » à valider par la direction avant la découpe"));
 
   await assert.rejects(workshop.advance("171", "decoupe_cnc", { status: "en_cours" }), { code: "WORKSHOP_CNC_NOT_VALIDATED" });
   await assert.rejects(workshop.advance("171", "dessin_cnc", { status: "terminee" }), { code: "WORKSHOP_CNC_NOT_VALIDATED" });
@@ -105,10 +106,9 @@ test("the draughtsman's G-code waits for the direction before the CNC cut can st
   assert.equal(current.steps.find((step) => step.id === "dessin_cnc").status, "terminee", "validated, the drawing is finished");
   assert.deepEqual(current.alerts, ["Découpe CNC bloquée : En attente du G-code validé"]);
 
-  const { order: cutting } = await workshop.advance("171", "decoupe_cnc", { status: "en_cours" });
-  assert.equal(cutting.steps.find((step) => step.id === "decoupe_cnc").status, "en_cours");
+  await assert.rejects(workshop.advance("171", "decoupe_cnc", { status: "en_cours" }), { code: "WORKSHOP_CNC_NOT_VALIDATED" }, "a DXF alone never authorises a CNC cut");
   assert.deepEqual((await workshop.readCncFile("171", second)).bytes.toString(), DXF);
-  assert.ok(current.journal.some((entry) => entry.text === "Dessin CNC : fichier « panneaux-lit.nc » refusé : Cote du montant fausse (1200 au lieu de 1250)."));
+  assert.ok(current.journal.some((entry) => entry.text === "Dessin CNC : fichier « panneaux-lit.dxf » refusé : Cote du montant fausse (1200 au lieu de 1250)."));
 });
 
 test("a cut already under way before the rule may still finish", async () => {
@@ -123,9 +123,9 @@ test("the machine files survive a restart", async (t) => {
   const path = join(await tempDir(t), "atelier.json");
   const store = createFileWorkshopStore({ path, clock });
   await store.updateStep("171", "etude_technique", { status: "terminee" });
-  const id = await store.addCncFile("171", { bytes: Buffer.from(GCODE), name: "panneaux.nc", format: "gcode" });
+  const id = await store.addCncFile("171", { bytes: Buffer.from(DXF), name: "panneaux.dxf", format: "dxf" });
   const reopened = createFileWorkshopStore({ path, clock });
-  assert.equal((await reopened.readCncFile("171", id)).bytes.toString(), GCODE);
+  assert.equal((await reopened.readCncFile("171", id)).bytes.toString(), DXF);
 });
 
 test("the draughtsman deposits from the cockpit; only the direction validates, and the file is always a download", async (t) => {
@@ -147,15 +147,15 @@ test("the draughtsman deposits from the cockpit; only the direction validates, a
   assert.equal(json(early).details.code, "WORKSHOP_STUDY_NOT_DONE");
   await leader.inject({ method: "PATCH", url: "/api/workshop/171/steps/etude_technique", payload: { status: "terminee" } });
 
-  const deposited = await operator.inject({ method: "POST", url: "/api/workshop/171/cnc", payload: { name: "panneaux.nc", content: base64(GCODE), note: "MDF 18 mm" } });
+  const deposited = await operator.inject({ method: "POST", url: "/api/workshop/171/cnc", payload: { name: "panneaux.dxf", content: base64(DXF), note: "MDF 18 mm" } });
   assert.equal(deposited.statusCode, 201);
   const { id } = json(deposited);
 
   const download = await leader.inject({ method: "GET", url: `/api/workshop/171/cnc/${id}` });
   assert.equal(download.statusCode, 200);
-  assert.equal(download.body, GCODE);
+  assert.equal(download.body, DXF);
   assert.equal(download.headers["content-type"], "application/octet-stream");
-  assert.match(download.headers["content-disposition"], /^attachment; filename="panneaux\.nc"$/);
+  assert.match(download.headers["content-disposition"], /^attachment; filename="panneaux\.dxf"$/);
   assert.equal(download.headers["x-content-type-options"], "nosniff");
   assert.equal((await leader.inject({ method: "GET", url: "/api/workshop/171/cnc/nope" })).statusCode, 404);
 
@@ -165,7 +165,7 @@ test("the draughtsman deposits from the cockpit; only the direction validates, a
   assert.equal(decided.statusCode, 200);
   assert.equal(json(decided).order.steps.find((step) => step.id === "dessin_cnc").status, "terminee");
   assert.equal((await leader.inject({ method: "POST", url: `/api/workshop/171/cnc/${id}/decision`, payload: { decision: "refuser", reason: "trop tard" } })).statusCode, 409);
-  assert.ok((await teamBook.activity({ agent: "production" })).some((entry) => entry.text.includes("fichier CNC « panneaux.nc » validé")));
+  assert.ok((await teamBook.activity({ agent: "production" })).some((entry) => entry.text.includes("fichier CNC « panneaux.dxf » validé")));
 });
 
 // The agents, with the model's answers written in advance.
@@ -250,7 +250,7 @@ test("the Director is told which orders have no chef de charge and which CNC fil
 
   await workshop.setTeam("171", { lead: "Samir" });
   await workshop.advance("171", "etude_technique", { status: "terminee" });
-  await workshop.depositCncFile("171", { content: base64(GCODE), name: "panneaux.nc" });
+  await workshop.depositCncFile("171", { content: base64(DXF), name: "panneaux.dxf" });
   lines = await directorBriefing({ books, workshop });
   assert.ok(!lines.some((line) => line.includes("sans chef de charge")));
   assert.ok(lines.includes("1 fichier(s) CNC attendent la validation de la direction dans le cockpit (BC n° 171) : la découpe ne peut pas commencer avant."));

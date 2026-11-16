@@ -7,12 +7,20 @@ import { DATA_DIR, createFileJsonBook, createMemoryJsonBook } from "./json-book.
 // by the Director, plus which Director conversation each number of the
 // direction is in. Meta may call the webhook twice for the same message; the
 // ids already seen are kept so it is handled once.
+//
+// What the Director prepared for a number of the direction and that waits for
+// its word on WhatsApp (« valide », « envoie », « annule ») is kept here too,
+// two days at most, so a restart between the question and the answer loses
+// nothing.
 
 export const DEFAULT_WHATSAPP_PATH = join(DATA_DIR, "whatsapp.json");
 const MAX_MESSAGES = 1000;
 const MAX_SEEN = 2000;
 
-const EMPTY = Object.freeze({ messages: [], conversations: {}, seen: [] });
+const MAX_PENDING = 8;
+const PENDING_HOURS = 48;
+
+const EMPTY = Object.freeze({ messages: [], conversations: {}, seen: [], pending: {} });
 
 export function createMemoryWhatsAppInbox({ clock = () => new Date() } = {}) {
   return createInbox({ book: createMemoryJsonBook(EMPTY), clock });
@@ -67,8 +75,39 @@ function createInbox({ book, clock }) {
       return book.change((state) => {
         state.conversations[number] = conversationId;
       });
+    },
+
+    // What waits for this number's word, oldest first. An item has a key (a
+    // newer one with the same key replaces it) and whatever is needed to act.
+    async pendingOf(number) {
+      return fresh((await book.load()).pending?.[number], clock());
+    },
+
+    async addPending(number, items) {
+      return book.change((state) => {
+        state.pending ??= {};
+        const kept = fresh(state.pending[number], clock()).filter((item) => !items.some((added) => added.key === item.key));
+        state.pending[number] = [...kept, ...items.map((item) => ({ ...item, at: clock().toISOString() }))].slice(-MAX_PENDING);
+      });
+    },
+
+    async removePending(number, keys) {
+      return book.change((state) => {
+        state.pending ??= {};
+        const left = fresh(state.pending[number], clock()).filter((item) => !keys.includes(item.key));
+        if (left.length > 0) {
+          state.pending[number] = left;
+        } else {
+          delete state.pending[number];
+        }
+      });
     }
   });
+}
+
+function fresh(items, now) {
+  const limit = now.getTime() - PENDING_HOURS * 60 * 60 * 1000;
+  return (Array.isArray(items) ? items : []).filter((item) => new Date(item.at).getTime() >= limit);
 }
 
 function push(state, entry) {

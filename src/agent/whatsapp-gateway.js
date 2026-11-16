@@ -1,14 +1,20 @@
 import { SPECIALISTS } from "./agent-team.js";
 import { TranscriptionError } from "./transcriber.js";
 import { MAX_CNC_FILE_BYTES, WorkshopError, isCncFileName } from "./workshop-book.js";
+import { DOCUMENT_LABELS } from "./document-register.js";
 import { MAX_TEXT_LENGTH, WhatsAppCloudError, parseWebhookMessages } from "../integrations/whatsapp-cloud.js";
 
 // What happens to a message written to the company's WhatsApp number, by who
 // wrote it:
 // - the direction (WHATSAPP_OWNER_NUMBERS): it is an order for the Director,
 //   exactly as if typed in the cockpit, and the Director's answer goes back on
-//   WhatsApp. What needs a validation (messages to send, documents) waits in
-//   the cockpit, as it does from the cockpit;
+//   WhatsApp, with its files: a document found in the register, a PDF or an
+//   Excel file it made. A document it prepared (a quote, an order, an
+//   invoice…) comes as a PDF marked as a preview, and is generated when the
+//   direction answers « valide » (« annule » drops it); a message prepared for
+//   a client leaves when it answers « envoie ». Nothing is generated or sent
+//   without that word, and what is sensitive (an expense to approve, a CNC
+//   file, a rule) is still decided in the cockpit;
 // - a team member linked to an agent: it is a report. It goes in the team
 //   feed, where the Director and that agent read it, and is acknowledged;
 // - anyone else (a client, a supplier): it is kept for the cockpit and nobody
@@ -44,9 +50,38 @@ const DOCUMENT_EXTENSIONS = Object.freeze({
   "text/csv": "csv"
 });
 // The Director's errors the sender can act on, told word for word.
-const TOLD_AS_IS = Object.freeze(["AGENT_NOT_CONFIGURED", "AGENT_MODEL_UNAVAILABLE", "AGENT_PHOTO_INVALID", "AGENT_FILE_INVALID"]);
+const TOLD_AS_IS = Object.freeze(["AGENT_NOT_CONFIGURED", "AGENT_MODEL_UNAVAILABLE", "AGENT_PHOTO_INVALID", "AGENT_FILE_INVALID", "AGENT_BUDGET_REACHED"]);
 
-export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, workshop = null, recordFollowUp = null, tasks = null, transcriber = null, log = () => {} }) {
+// The direction's word on what waits for it: « valide », « validé »,
+// « je valide le devis 172 », « annule », « envoie », « ok envoie le message ».
+// After « valide » or « annule » only the document may be named: « valide le
+// planning de demain » is a message for the Director. Returns null for
+// anything else.
+const NAMED = "(?:le|la|les|l|tout|tous|toutes|ce|ces|cette|devis|bons?|de|du|commande|livraison|factures?|avoirs?|re[çc]us?|paiement|documents?|bc|bl|n|no|num[ée]ro|stp|svp|merci|\\d+)";
+const AFTER_WORD = `((?:[\\s,.!'°-]+${NAMED})*)[\\s.!]*$`;
+const BEFORE_WORD = "^(?:(?:ok|oui|non|c'est bon|d'accord)[\\s,.!]*)?(?:je\\s+|tu peux\\s+)?";
+const VALIDATE_WORD = new RegExp(`${BEFORE_WORD}valid(?:ée|é|ez|er|ons|e)${AFTER_WORD}`, "i");
+const CANCEL_WORD = new RegExp(`${BEFORE_WORD}annul(?:ée|é|ez|er|e)${AFTER_WORD}`, "i");
+const SEND_WORD = new RegExp(`${BEFORE_WORD}envo(?:ie|yer|yez|ies)(?:\\s*-\\s*(?:le|les))?(?:\\s+(?:le|les|l'))?(?:\\s*messages?)?[\\s.!]*$`, "i");
+
+export function decisionWord(text) {
+  const said = String(text ?? "").trim();
+  const validate = VALIDATE_WORD.exec(said);
+  const cancel = validate ? null : CANCEL_WORD.exec(said);
+  if (validate || cancel) {
+    return { action: validate ? "valider" : "annuler", number: /\d+/.exec((validate ?? cancel)[1] ?? "")?.[0] ?? null };
+  }
+  return SEND_WORD.test(said) ? { action: "envoyer", number: null } : null;
+}
+
+// A document found in the register is sent as a file when the search was
+// precise; a longer list is told, for the direction to name the one it wants.
+const MAX_FOUND_SENT = 3;
+
+// documents: what the gateway needs to hand files over and to generate what
+// the direction validates: previewPdf(prepared), generate(item, { by }),
+// issuedPdf(found). Without it, documents wait in the cockpit as before.
+export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, workshop = null, recordFollowUp = null, tasks = null, transcriber = null, documents = null, log = () => {} }) {
   // One number's messages are handled in the order they came.
   const lanes = new Map();
   const inLane = (number, task) => {
@@ -95,6 +130,157 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
       }
       throw error;
     }
+  }
+
+  // A file for this number: a PDF, an Excel export, a G-code.
+  async function sendFile({ to, bytes, filename, mimeType = "application/pdf", caption = "", name = "", by = "director", kind = "fichier" }) {
+    const text = `[Fichier] ${filename}${caption ? ` — ${caption}` : ""}`;
+    try {
+      const result = await client.sendDocument(to, { bytes, filename, mimeType, caption });
+      return await inbox.sent({ number: result.to, name, text, by, kind, metaId: result.id });
+    } catch (error) {
+      if (error instanceof WhatsAppCloudError) {
+        await inbox.sent({ number: String(to), name, text, by, kind, status: "failed", error: error.message });
+      }
+      throw error;
+    }
+  }
+
+  // What the Director's answer brings besides its words: the files to send
+  // after it, what now waits for the direction's word, and the lines saying so.
+  async function deliveryOf(outcome) {
+    const lines = [];
+    const files = [];
+    const pending = [];
+    const prepared = outcome.documents ?? [];
+    if (prepared.length > 0 && documents) {
+      for (const entry of prepared) {
+        const document = entry.preview.document;
+        const label = `${DOCUMENT_LABELS[document.documentType] ?? "Document"} n° ${document.documentNumber}`;
+        const total = Number.isFinite(document.totals?.totalTtc) ? formatDh(document.totals.totalTtc) : "";
+        pending.push({ key: `document:${document.documentType}:${document.documentNumber}`, kind: "document", number: String(document.documentNumber), label, client: document.client?.name ?? "", total, input: entry.input, replaces: entry.replaces === true });
+        files.push({
+          load: () => documents.previewPdf(entry),
+          filename: `APERCU_${slugOf(label)}.pdf`,
+          caption: `Aperçu à valider — ${label}${document.client?.name ? ` — ${document.client.name}` : ""}${total ? ` — ${total} TTC` : ""}`
+        });
+      }
+      lines.push(prepared.length === 1
+        ? `${pending[0].label} préparé${pending[0].replaces ? " (correction : l'ancienne version sera archivée)" : ""} : l'aperçu PDF suit. Répondez « valide » pour le générer, ou « annule ».`
+        : `${prepared.length} documents préparés (${pending.map((item) => item.label).join(", ")}) : les aperçus PDF suivent. Répondez « valide » pour tout générer, « valide ${pending[0].number} » pour un seul, ou « annule ».`);
+    } else if (prepared.length > 0) {
+      lines.push(`${prepared.length} document(s) préparé(s) : à retrouver dans le cockpit.`);
+    }
+
+    const drafts = outcome.messages ?? [];
+    const sendable = drafts.filter((draft) => draft.phone);
+    for (const draft of sendable) {
+      pending.push({ key: `message:${draft.phone}:${draft.kind}`, kind: "message", label: `message pour ${draft.recipient}`, recipient: draft.recipient, phone: draft.phone, messageKind: draft.kind, text: draft.message });
+    }
+    if (sendable.length > 0) {
+      lines.push(...sendable.map((draft) => `Message préparé pour ${draft.recipient} (${draft.phone}) :\n« ${clip(draft.message, 900)} »`));
+      lines.push(sendable.length === 1 ? "Répondez « envoie » pour l'envoyer, ou « annule »." : "Répondez « envoie » pour les envoyer, ou « annule ».");
+    }
+    if (drafts.length > sendable.length) {
+      lines.push(`${drafts.length - sendable.length} message(s) préparé(s) sans numéro connu : à relire et envoyer depuis le cockpit.`);
+    }
+
+    const found = outcome.foundDocuments ?? [];
+    if (documents && found.length > 0 && found.length <= MAX_FOUND_SENT) {
+      for (const entry of found) {
+        files.push({
+          load: async () => (await documents.issuedPdf(entry))?.bytes ?? null,
+          filename: `${slugOf(`${entry.typeLabel} ${entry.number} ${entry.client}`)}.pdf`,
+          caption: `${entry.typeLabel} n° ${entry.number} — ${entry.client}${entry.date ? ` — ${entry.date}` : ""}`,
+          missing: `Le PDF du ${entry.typeLabel.toLowerCase()} n° ${entry.number} manque au registre.`
+        });
+      }
+    } else if (documents && found.length > MAX_FOUND_SENT) {
+      lines.push(`${found.length} documents trouvés : dites-moi lequel vous voulez en PDF (par exemple « envoie-moi le devis ${found[0].number} »).`);
+    }
+
+    for (const file of outcome.exports ?? []) {
+      files.push({ load: async () => Buffer.from(file.data, "base64"), filename: file.name, mimeType: file.mimeType, caption: file.title ?? "" });
+    }
+    return { lines, files, pending };
+  }
+
+  // The files of an answer, one by one after its words. One that cannot be
+  // sent is said, never dropped in silence.
+  async function sendFiles(message, files) {
+    for (const file of files) {
+      try {
+        const bytes = await file.load();
+        if (!bytes) {
+          await reply(message, file.missing ?? `Le fichier « ${file.filename} » est introuvable.`);
+          continue;
+        }
+        await sendFile({ to: message.from, bytes, filename: file.filename, mimeType: file.mimeType ?? "application/pdf", caption: file.caption, name: message.name });
+      } catch (error) {
+        log(error);
+        await reply(message, `Le fichier « ${file.filename} » n'a pas pu être envoyé${error instanceof WhatsAppCloudError ? ` : ${error.message}` : "."} Vous le retrouvez dans le cockpit.`);
+      }
+    }
+  }
+
+  // The direction's word on what waits for it: « valide », « valide 172 »,
+  // « envoie », « annule ». Null when the message is something else, or when
+  // nothing waits: it then goes to the Director like any other.
+  async function directionDecision(message) {
+    if (message.type !== "text") {
+      return null;
+    }
+    const word = decisionWord(message.text);
+    if (!word) {
+      return null;
+    }
+    const waitingItems = await inbox.pendingOf(message.from);
+    const { number } = word;
+    if (word.action === "annuler") {
+      const dropped = number ? waitingItems.filter((item) => item.number === number) : waitingItems;
+      if (dropped.length === 0) {
+        return null;
+      }
+      await inbox.removePending(message.from, dropped.map((item) => item.key));
+      return { text: `Abandonné : ${dropped.map((item) => item.label).join(", ")}. Rien n'a été généré ni envoyé.` };
+    }
+    if (word.action === "envoyer") {
+      const drafts = waitingItems.filter((item) => item.kind === "message");
+      if (drafts.length === 0) {
+        return null;
+      }
+      const lines = [];
+      for (const draft of drafts) {
+        try {
+          await send({ to: draft.phone, text: draft.text, name: draft.recipient, by: "direction (WhatsApp)", kind: draft.messageKind ?? "autre" });
+          lines.push(`Message envoyé à ${draft.recipient}.`);
+        } catch (error) {
+          log(error);
+          lines.push(`Message pour ${draft.recipient} non envoyé${error instanceof WhatsAppCloudError ? ` : ${error.message}` : "."}`);
+        }
+      }
+      await inbox.removePending(message.from, drafts.map((draft) => draft.key));
+      return { text: lines.join("\n") };
+    }
+    const waitingDocuments = waitingItems.filter((item) => item.kind === "document");
+    const chosen = number ? waitingDocuments.filter((item) => item.number === number) : waitingDocuments;
+    if (!documents || chosen.length === 0) {
+      return waitingDocuments.length > 0 && number ? { text: `Aucun document n° ${number} n'attend votre validation. En attente : ${waitingDocuments.map((item) => item.label).join(", ")}.` } : null;
+    }
+    const lines = [];
+    const files = [];
+    for (const item of chosen) {
+      const generated = await documents.generate(item, { by: `whatsapp:${message.from}` });
+      if (!generated.ok) {
+        lines.push(`${item.label} non généré : ${generated.erreur}`);
+        continue;
+      }
+      lines.push(`${item.label} généré${item.client ? ` pour ${item.client}` : ""}${item.total ? ` : ${item.total} TTC` : ""}.`);
+      files.push({ load: async () => generated.pdf.bytes, filename: generated.pdf.name, caption: `${item.label}${item.client ? ` — ${item.client}` : ""}${item.total ? ` — ${item.total} TTC` : ""}` });
+      await teamBook.log({ agent: "director", kind: "document", text: `${item.label}${item.client ? ` pour ${item.client}` : ""} validé par la direction sur WhatsApp et généré.`, ref: `${item.input?.documentType ?? "document"}:${item.number}`, by: "direction (WhatsApp)" }).catch(log);
+    }
+    await inbox.removePending(message.from, chosen.map((item) => item.key));
+    return { text: lines.join("\n"), files };
   }
 
   // What the file joined to a message brings: the words of a voice note, a
@@ -150,16 +336,22 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
       return reply(message, read.problem ?? "Je n'ai rien trouvé à lire dans ce message.");
     }
     let answer;
+    let delivery = { lines: [], files: [], pending: [] };
     try {
       const outcome = await agent.chat({
         message: typed,
         photos: read.photos ?? [],
         files: read.files ?? [],
         conversationId: await inbox.conversationOf(message.from),
-        userId: `whatsapp:${message.from}`
+        userId: `whatsapp:${message.from}`,
+        channel: "whatsapp"
       });
       await inbox.setConversation(message.from, outcome.conversationId);
-      answer = [forWhatsApp(outcome.reply), ...waiting(outcome)].join("\n\n");
+      delivery = await deliveryOf(outcome);
+      if (delivery.pending.length > 0) {
+        await inbox.addPending(message.from, delivery.pending);
+      }
+      answer = [forWhatsApp(outcome.reply), ...delivery.lines].join("\n\n");
     } catch (error) {
       log(error);
       answer = TOLD_AS_IS.includes(error.code)
@@ -167,11 +359,12 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
         : "Je n'ai pas pu traiter ce message. Réessayez dans un instant, ou passez par le cockpit.";
     }
     // What was heard comes first, so a misheard word is caught at once.
-    return reply(message, [
+    await reply(message, [
       read.heard ? `J'ai entendu : « ${clip(read.heard, 500)} »` : "",
       read.problem ?? "",
       answer
     ].filter(Boolean).join("\n\n"));
+    await sendFiles(message, delivery.files);
   }
 
   async function fromTeam(message, { agent: agentId, member }, recorded) {
@@ -216,7 +409,8 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
     let order;
     try {
       const file = await client.downloadMedia(message.media.id, { maxBytes: MAX_CNC_FILE_BYTES });
-      await workshop.depositCncFile(number, { content: file.bytes, name: message.media.filename, note: message.text, by: name });
+      const current = await workshop.order(number);
+      await workshop.depositCncFile(number, { content: file.bytes, name: message.media.filename, note: message.text, by: name, technicalSheetId: current?.technicalSheets?.at(-1)?.id, dossierId: current?.fabricationDossiers?.at(-1)?.id });
       order = await workshop.order(number);
     } catch (error) {
       if (error instanceof WorkshopError || error instanceof WhatsAppCloudError) {
@@ -310,7 +504,15 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
       await fromDrafting(message, { name: owner ? "La direction" : team?.member.name ?? drafter.name, orders: drafter?.orders ?? null });
     } else if (owner) {
       const word = await directionTaskWord(message);
-      await (word ? reply(message, word) : fromDirection(message, recorded));
+      const decision = word ? null : await directionDecision(message);
+      if (word) {
+        await reply(message, word);
+      } else if (decision) {
+        await reply(message, decision.text);
+        await sendFiles(message, decision.files ?? []);
+      } else {
+        await fromDirection(message, recorded);
+      }
     } else if (team) {
       await fromTeam(message, team, recorded);
     } else if (drafter) {
@@ -331,6 +533,9 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
     },
 
     send,
+
+    // A word for the direction's own numbers: a budget reached, for instance.
+    tellDirection: toDirection,
 
     // The anomalies just found in the workshop book, told to the chef de
     // charge of their order. One without a number is seen in the cockpit
@@ -461,16 +666,9 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
   });
 }
 
-// What waits in the cockpit after the Director's answer.
-function waiting(outcome) {
-  const lines = [];
-  if (outcome.messages?.length > 0) {
-    lines.push(`${outcome.messages.length} message(s) préparé(s) : à relire et envoyer depuis le cockpit.`);
-  }
-  if (outcome.documents?.length > 0) {
-    lines.push(`${outcome.documents.length} document(s) préparé(s) : à retrouver dans le cockpit.`);
-  }
-  return lines;
+// A file name from a label: « Devis n° 172 » → devis-n-172.
+function slugOf(label) {
+  return String(label).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "document";
 }
 
 // « BC 171 », « bon de commande n° 171 », « BC171_panneaux.nc ».

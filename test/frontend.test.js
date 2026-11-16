@@ -50,7 +50,7 @@ test("Director frontend assets connect only to existing Director and approval en
   assert.match(scriptResponse.body, /sourceId/);
   assert.match(scriptResponse.body, /Community Manager/);
   assert.match(scriptResponse.body, /prepared_offline/);
-  assert.doesNotMatch(scriptResponse.body, /openai|webhook|n8n/i);
+  assert.doesNotMatch(scriptResponse.body.replace(/^\s*\/\/.*$/gm, ""), /openai|webhook|n8n/i);
 
   assert.equal(styleResponse.statusCode, 200);
   assert.match(styleResponse.headers["content-type"], /text\/css/);

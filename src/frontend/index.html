@@ -676,15 +676,26 @@
           </header>
           <div class="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px] [&>*]:min-w-0">
             <div class="@container"><div id="agent-roster" class="team-grid" aria-label="Les agents et leurs responsables"></div></div>
-            <section class="panel xl:sticky xl:top-6" aria-labelledby="team-feed-title">
-              <div class="panel-heading mb-4!">
-                <div>
-                  <h2 id="team-feed-title"><svg class="i" aria-hidden="true"><use href="#i-history"/></svg>Fil de l'équipe</h2>
-                  <p>Missions, caisse, atelier, documents, amélioration.</p>
+            <div class="flex flex-col gap-6 xl:sticky xl:top-6">
+              <section class="panel" aria-labelledby="ai-usage-title">
+                <div class="panel-heading mb-4!">
+                  <div>
+                    <h2 id="ai-usage-title"><svg class="i" aria-hidden="true"><use href="#i-wallet"/></svg>Coût de l'IA ce mois</h2>
+                    <p>Estimation d'après le tarif public du modèle. La facture OpenAI fait foi.</p>
+                  </div>
                 </div>
-              </div>
-              <ol id="team-feed" class="team-feed"></ol>
-            </section>
+                <div id="ai-usage" class="team-block"></div>
+              </section>
+              <section class="panel" aria-labelledby="team-feed-title">
+                <div class="panel-heading mb-4!">
+                  <div>
+                    <h2 id="team-feed-title"><svg class="i" aria-hidden="true"><use href="#i-history"/></svg>Fil de l'équipe</h2>
+                    <p>Missions, caisse, atelier, documents, amélioration.</p>
+                  </div>
+                </div>
+                <ol id="team-feed" class="team-feed"></ol>
+              </section>
+            </div>
           </div>
         </section>
       </main>

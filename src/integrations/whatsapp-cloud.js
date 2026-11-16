@@ -4,7 +4,9 @@ import { normalizeWhatsAppNumber } from "../agent/whatsapp.js";
 // The official WhatsApp Business Platform (Meta's Cloud API), as the CDC asks
 // for phase 1. Two directions:
 // - in: Meta calls our webhook with each message written to the company number;
-// - out: a message validated in the cockpit leaves from that number.
+// - out: a message validated in the cockpit leaves from that number, and the
+//   Director answers the direction there, with its files (a PDF, an Excel
+//   export) sent as documents.
 //
 // Meta lets a business write freely only within 24 hours of the person's last
 // message. Outside that window it requires a template approved by Meta; this
@@ -18,6 +20,9 @@ export const MAX_TEXT_LENGTH = 4096;
 // WhatsApp's own limit for a voice note is 16 MB; a photo or a document the
 // Director reads is held to less by the Director itself.
 export const MAX_MEDIA_BYTES = 16 * 1024 * 1024;
+// Meta's limits for a document sent, and for the text under it.
+export const MAX_DOCUMENT_BYTES = 100 * 1024 * 1024;
+export const MAX_CAPTION_LENGTH = 1024;
 const MEDIA_TYPES = Object.freeze(["image", "audio", "document", "video", "sticker"]);
 const REQUIRED_KEYS = Object.freeze({
   accessToken: "WHATSAPP_ACCESS_TOKEN",
@@ -93,6 +98,56 @@ export function createWhatsAppCloudClient({ config, fetchImpl = globalThis.fetch
         throw metaError(payload?.error, response.status);
       }
       return Object.freeze({ id: payload?.messages?.[0]?.id ?? null, to: number });
+    },
+
+    // A file sent as a document (a PDF, an Excel file, a G-code): uploaded to
+    // Meta first, which gives it an id, then sent with its name and caption.
+    async sendDocument(to, { bytes, filename, mimeType = "application/pdf", caption = "" } = {}) {
+      const number = normalizeWhatsAppNumber(to);
+      if (!number) {
+        throw new WhatsAppCloudError("Numéro WhatsApp illisible.", "WHATSAPP_NUMBER_INVALID");
+      }
+      if (!Buffer.isBuffer(bytes) || bytes.length === 0) {
+        throw new WhatsAppCloudError("Le fichier est vide.", "WHATSAPP_MESSAGE_EMPTY");
+      }
+      if (bytes.length > MAX_DOCUMENT_BYTES) {
+        throw new WhatsAppCloudError("Le fichier dépasse 100 Mo : WhatsApp ne le prend pas.", "WHATSAPP_FILE_TOO_LARGE");
+      }
+      const name = String(filename ?? "document").replace(/[\\/]/g, "_").slice(-200) || "document";
+      const authorization = { authorization: `Bearer ${config.accessToken}` };
+      const base = `${GRAPH}/${config.apiVersion}/${encodeURIComponent(config.phoneNumberId)}`;
+      try {
+        const form = new FormData();
+        form.append("messaging_product", "whatsapp");
+        form.append("type", mimeType);
+        form.append("file", new Blob([bytes], { type: mimeType }), name);
+        const uploaded = await fetchImpl(`${base}/media`, { method: "POST", headers: authorization, body: form });
+        const media = await uploaded.json().catch(() => ({}));
+        if (!uploaded.ok || typeof media?.id !== "string") {
+          throw metaError(media?.error, uploaded.status);
+        }
+        const response = await fetchImpl(`${base}/messages`, {
+          method: "POST",
+          headers: { ...authorization, "content-type": "application/json" },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: number,
+            type: "document",
+            document: { id: media.id, filename: name, ...(caption ? { caption: String(caption).slice(0, MAX_CAPTION_LENGTH) } : {}) }
+          })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw metaError(payload?.error, response.status);
+        }
+        return Object.freeze({ id: payload?.messages?.[0]?.id ?? null, to: number, mediaId: media.id });
+      } catch (error) {
+        if (error instanceof WhatsAppCloudError) {
+          throw error;
+        }
+        throw new WhatsAppCloudError("WhatsApp est injoignable : vérifiez la connexion internet.", "WHATSAPP_UNREACHABLE", { cause: error.message });
+      }
     },
 
     // A photo, voice note or document received: Meta gives its address for a

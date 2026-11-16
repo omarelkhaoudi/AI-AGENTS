@@ -2868,7 +2868,22 @@ async function submitDirectorRequest(message) {
 
 const PUBLICATION_DECISION_LABELS = {
   approved: "Publication approuvée",
-  rejected: "Publication refusée"
+  rejected: "Publication refusée",
+  scheduled: "Publication approuvée : elle partira à l'heure prévue",
+  published: "Publication approuvée et publiée",
+  failed: "Publication approuvée, mais Meta l'a refusée"
+};
+
+// What an approval asks, in words, for the ones the agents raise.
+const APPROVAL_ACTION_LABELS = {
+  publish_social_publication: "Publication Instagram / Facebook",
+  reply_social_message: "Réponse Instagram / Facebook"
+};
+
+const SOCIAL_REPLY_LABELS = {
+  envoyee: "Réponse envoyée",
+  refusee: "Réponse refusée : rien n'est parti",
+  echec: "Réponse non envoyée"
 };
 
 async function refreshApprovals() {
@@ -2904,6 +2919,11 @@ function decisionResultLabel(response, decision) {
   if (response.publication) {
     return PUBLICATION_DECISION_LABELS[response.publication.status]
       ?? `Publication: ${response.publication.status}`;
+  }
+  if (response.socialReply) {
+    const reply = response.socialReply.reply;
+    const label = SOCIAL_REPLY_LABELS[reply?.status] ?? "Réponse : décision enregistrée";
+    return reply?.status === "echec" && reply.error ? `${label} : ${reply.error}` : label;
   }
 
   return decision === "approve"
@@ -3118,7 +3138,7 @@ function mergeApprovals(localApprovals, pendingApprovals) {
     })),
     ...pendingApprovals.map((approval) => ({
       id: approval.id,
-      action: approval.requestedAction,
+      action: APPROVAL_ACTION_LABELS[approval.requestedAction] ?? approval.requestedAction,
       reason: approval.reason,
       agent: approval.requestingAgent,
       risk: approval.risk,

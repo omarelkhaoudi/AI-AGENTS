@@ -18,6 +18,7 @@ import { createMemoryCashBook } from "./cash-book.js";
 import { createMemoryImprovementBook } from "./improvement-book.js";
 import { createMemoryTeamBook } from "./team-book.js";
 import { createMemoryFollowUpBook } from "./sales-book.js";
+import { socialTools } from "./social-tools.js";
 import {
   ANOMALIES_TOOL,
   CASH_BALANCE_TOOL,
@@ -658,7 +659,7 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, documentArchive = undefined, designProfileBook = null, aiUsage = null, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, documentArchive = undefined, designProfileBook = null, aiUsage = null, social = null, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
@@ -666,7 +667,7 @@ export function createDirectorAgentFromEnv({ env = process.env, documentService,
   // The dessinateur méthodes' engine runs with the Python of DESSINATEUR_PYTHON.
   const python = defaultPython(env);
   const designOffice = createDesignOffice({ book: designProfileBook ?? createMemoryDesignProfileBook(), engine: (request) => runEngine(request, { python }) });
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, documentArchive, designOffice, aiUsage, autoAnalyse, publicBaseUrl, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, documentArchive, designOffice, aiUsage, social, autoAnalyse, publicBaseUrl, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -695,6 +696,9 @@ export function createDirectorAgent({
   // Where each call to the model is counted (src/agent/ai-usage.js); none in
   // a test that does not ask for it.
   aiUsage = null,
+  // The Facebook Page and the Instagram account (src/social/social-service.js);
+  // without it, the CM and Marketing only write.
+  social = null,
   // A new anomaly found in the workshop book is handed to its agent at once,
   // in the background, for its cause and a rule. Off unless the server asks.
   autoAnalyse = false,
@@ -728,6 +732,7 @@ export function createDirectorAgent({
     workshop,
     designOffice,
     aiUsage,
+    social,
     books,
     onNewAnomalies: (found) => queueAnalyses(found)
   });
@@ -1974,6 +1979,7 @@ async function runAgent(agentId, mission, context) {
     mission,
     extraTools: [
       ...(books ? [...(agentId === "finance" ? cashTools(context, agentId) : []), ...(agentId === "commercial" ? salesTools(context, agentId) : []), ...improvementTools(context, agentId)] : []),
+      ...(context.social ? socialTools(context, agentId) : []),
       ...(SPECIALISTS[agentId].keepsRegister ? [{ tool: SEARCH_DOCUMENT_TOOL, run: (searchArgs) => searchDocument(searchArgs, context) }] : []),
       ...(SPECIALISTS[agentId].coordinatesDesign ? [{ tool: DESIGN_DELEGATE_TOOL, run: async (args) => {
         if (!["dessinateur_2d3d", "dessinateur_methodes"].includes(args.agent)) return { ok: false, erreur: "Ce rôle n'appartient pas au bureau d'études." };

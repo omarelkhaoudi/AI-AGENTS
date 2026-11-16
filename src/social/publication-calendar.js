@@ -152,6 +152,22 @@ export function assertFuturePublicationSlot(scheduledAt, { now = new Date().toIS
   return at.toISOString();
 }
 
+// A day and a time read in business time ("2026-11-20", "18:30") back to the
+// instant they name, as the agents and the direction give them.
+export function instantOfLocalSlot(date, time, timeZone = PUBLICATION_CALENDAR_TIME_ZONE) {
+  const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date ?? ""));
+  const clock = /^(\d{1,2}):(\d{2})$/.exec(String(time ?? ""));
+  if (!day || !clock || Number(clock[1]) > 23 || Number(clock[2]) > 59) {
+    throw new PublicationCalendarError("Date ou heure illisible.", "PUBLICATION_CALENDAR_DATE_INVALID", { date, time });
+  }
+  const [year, month, dayOfMonth] = [Number(day[1]), Number(day[2]), Number(day[3])];
+  const check = new Date(Date.UTC(year, month - 1, dayOfMonth));
+  if (check.getUTCMonth() !== month - 1 || check.getUTCDate() !== dayOfMonth) {
+    throw new PublicationCalendarError("Cette date n'existe pas.", "PUBLICATION_CALENDAR_DATE_INVALID", { date });
+  }
+  return instantFromLocalParts({ year, month, day: dayOfMonth, hour: Number(clock[1]), minute: Number(clock[2]), second: 0, ms: 0 }, timeZone).toISOString();
+}
+
 // The slot a publication occupies, in business time.
 export function localSlotOf(scheduledAt, timeZone = PUBLICATION_CALENDAR_TIME_ZONE) {
   const local = localPartsOf(instantOf(scheduledAt, "scheduledAt"), timeZone);

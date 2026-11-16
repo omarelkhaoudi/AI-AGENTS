@@ -228,6 +228,61 @@ voir [Importer les données réelles H-KIDS](#importer-les-données-réelles-h-k
 Tant qu'ils ne sont pas importés, les agents travaillent sur des **données de
 démonstration** et le disent.
 
+### Instagram et Facebook
+
+La Page Facebook H-KIDS et le compte Instagram professionnel qui lui est relié
+passent par l'API officielle de Meta (Graph API). Le parcours du cahier des
+charges : message Instagram → Community Manager → fiche prospect → Commercial →
+devis.
+
+- Les **messages privés** et les **commentaires** reçus arrivent par le webhook
+  `/webhooks/meta`, sans doublon, dans `data/reseaux.json`.
+- Le **Community Manager** les lit (`boite_reseaux`) et prépare la réponse
+  (`preparer_reponse_reseaux`). Il crée la **fiche prospect** P-001, P-002…
+  (`fiche_prospect`) d'une personne qui demande un prix ou un devis, puis la
+  transmet au **Commercial** (`transmettre_prospect`).
+- Le **Marketing** et le CM préparent les **publications** pour un jour et une
+  heure du Maroc (`preparer_publication`). Instagram exige une photo à une
+  adresse publique https (JPEG). Ils lisent les chiffres réels :
+  `statistiques_reseaux` donne les abonnés, likes et commentaires.
+- **Rien ne part sans la direction.** Chaque réponse et chaque publication
+  arrive dans « À valider ». « Approuver » envoie la réponse. Une publication
+  approuvée part à son heure : le serveur vérifie chaque minute.
+
+Meta n'autorise une réponse en message privé que dans les **24 heures** qui
+suivent le dernier message de la personne. Au-delà, le cockpit marque la réponse
+« non envoyée » avec la raison.
+
+Mise en route, une fois :
+
+1. Relier le compte Instagram professionnel à la Page Facebook H-KIDS (dans les
+   paramètres du compte Instagram ou de la Page).
+2. Sur [developers.facebook.com](https://developers.facebook.com), dans
+   l'application de l'entreprise, ajouter les produits **Instagram** (API avec
+   connexion Facebook) et **Messenger**. Demander les autorisations :
+   - `pages_show_list`, `pages_manage_metadata`, `pages_messaging` ;
+   - `pages_read_engagement`, `pages_read_user_engagement` ;
+   - `pages_manage_posts`, `pages_manage_engagement` ;
+   - `instagram_basic`, `instagram_manage_messages`, `instagram_manage_comments`,
+     `instagram_content_publish`.
+
+   Hors mode développement, Meta les accorde après examen de l'application
+   (*App Review*).
+3. Dans `.env`, remplir :
+   - `META_PAGE_ID` ;
+   - `META_PAGE_ACCESS_TOKEN` : un jeton de Page longue durée, d'un utilisateur
+     système du portefeuille ;
+   - `META_INSTAGRAM_ID` : l'identifiant du compte Instagram professionnel ;
+   - `META_APP_SECRET` ;
+   - `META_VERIFY_TOKEN` : une longue chaîne au choix.
+4. Dans Webhooks, déclarer l'URL de rappel `https://<votre-domaine>/webhooks/meta`
+   avec le même `META_VERIFY_TOKEN`. Abonner l'objet **Page** aux champs
+   `messages` et `feed`, et l'objet **Instagram** aux champs `messages` et
+   `comments`.
+
+Sans ces clés, tout fonctionne dans le cockpit (boîte, prospects, publications à
+valider), mais rien n'est envoyé.
+
 ### Documents H-KIDS
 
 Toutes les pièces H-KIDS — **devis, bon de commande, facture et bon de livraison** —

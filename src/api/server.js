@@ -24,6 +24,9 @@ import {
   rejectApprovalRequest
 } from "../security/approval-flow.js";
 import { applyPublicationApprovalDecision, isPublicationApproval } from "../social/publication-service.js";
+import { createSocialService, isSocialReplyApproval } from "../social/social-service.js";
+import { createMemorySocialInbox } from "../agent/social-inbox.js";
+import { createMetaSocialClient, loadMetaSocialConfig } from "../integrations/meta-social.js";
 import { ToolExecutionService, ToolExecutionServiceError } from "../tools/execution-service.js";
 import { createMvpToolRegistry } from "../tools/mvp-tools.js";
 import { CONSISTENCY_DOMAINS, checkConsistency } from "../agent/consistency.js";
@@ -128,6 +131,12 @@ export function buildApi({
   whatsAppFetch = null,
   // Turns voice notes into text; from OPENAI_API_KEY when not given, null for none.
   whatsAppTranscriber = undefined,
+  // The company's Facebook Page and Instagram account, the same way: settings
+  // (from .env when not given), the inbox of messages and prospects
+  // (data/reseaux.json for the server process) and the fetch Meta is called with.
+  socialConfig = null,
+  socialStore = null,
+  socialFetch = null,
   // The site's own address, for the links sent to clients. Left empty, a link
   // made from the cockpit takes the address the cockpit was opened at.
   publicBaseUrl = process.env.PUBLIC_BASE_URL ?? "",
@@ -287,6 +296,17 @@ export function buildApi({
       await whatsApp.tellDirection(alert.text);
     }
   });
+  // Instagram and Facebook: what people write comes in by /webhooks/meta, and
+  // a reply or a post leaves only once the direction approved it.
+  const socialSettings = socialConfig ?? loadMetaSocialConfig();
+  const social = createSocialService({
+    inbox: socialStore ?? createMemorySocialInbox({ clock }),
+    client: createMetaSocialClient({ config: socialSettings, ...(socialFetch ? { fetchImpl: socialFetch } : {}) }),
+    config: socialSettings,
+    repository,
+    teamBook: teamFeed,
+    clock
+  });
   const agent = directorAgent ?? createDirectorAgentFromEnv({
     documentService: hkidsDocuments,
     runDirectorRequest,
@@ -304,6 +324,7 @@ export function buildApi({
     documentArchive: archive,
     designProfileBook,
     aiUsage: usage,
+    social,
     autoAnalyse: autoAnalyseAnomalies,
     publicBaseUrl,
     client: agentClient
@@ -432,7 +453,19 @@ export function buildApi({
     }
   });
 
+  // The posts the direction approved go out at their time: checked every
+  // minute while Meta is connected.
+  const publishTimer = social.connected
+    ? setInterval(() => {
+        social.publishDue().catch((error) => app.log.error(error));
+      }, 60_000)
+    : null;
+  publishTimer?.unref();
+
   app.addHook("onClose", async () => {
+    if (publishTimer) {
+      clearInterval(publishTimer);
+    }
     await repository.disconnect();
   });
 
@@ -648,7 +681,17 @@ export function buildApi({
         // previous path.
         if (isPublicationApproval(approval)) {
           const publication = await applyPublicationApprovalDecision(repository, approval.id);
-          return { approval: await repository.getApproval(approval.id), publication };
+          // A post whose time has already come leaves now rather than at the
+          // next minute; a later one waits for its time.
+          const due = social.connected ? await social.publishDue().catch(() => null) : null;
+          const sent = due?.published.find((entry) => entry.id === publication.id) ?? due?.failed.find((entry) => entry.id === publication.id);
+          return { approval: await repository.getApproval(approval.id), publication: sent ?? publication };
+        }
+        // A reply to a message or a comment on Instagram or Facebook: the
+        // direction's approval is what sends it.
+        if (isSocialReplyApproval(approval)) {
+          const socialReply = await social.decideReply(approval);
+          return { approval: await repository.getApproval(approval.id), socialReply };
         }
 
         const execution = await executeApprovedApproval({
@@ -680,6 +723,9 @@ export function buildApi({
         // does: the decision is Hiba's, and the publication must follow it.
         if (isPublicationApproval(approval)) {
           return { approval, publication: await applyPublicationApprovalDecision(repository, approval.id) };
+        }
+        if (isSocialReplyApproval(approval)) {
+          return { approval, socialReply: await social.decideReply(approval) };
         }
 
         return { approval };
@@ -1336,6 +1382,48 @@ export function buildApi({
         }
         // Meta is answered at once; the Director may take a while to reply.
         whatsApp.receive(body).catch((error) => app.log.error(error));
+        return reply.code(200).send({ ok: true });
+      });
+    });
+
+    // --- Instagram and Facebook: the Page and the account, in and out -------
+    app.get("/api/social", readRouteOptions(), async () => ({
+      ...social.status(),
+      // Where Meta calls us ("Callback URL" in the app's Webhooks settings).
+      callbackPath: "/webhooks/meta",
+      items: await social.inbox({ limit: 100 }),
+      replies: await social.replies({ limit: 100 }),
+      prospects: await social.prospects({ limit: 200 })
+    }));
+
+    // Meta's webhook for the Page (messages, feed) and the Instagram account
+    // (messages, comments), checked as the WhatsApp one is.
+    app.get("/webhooks/meta", async (request, reply) => {
+      const query = request.query ?? {};
+      if (!socialSettings.configured || query["hub.mode"] !== "subscribe" || !sameSecret(query["hub.verify_token"], socialSettings.verifyToken)) {
+        return reply.code(403).send({ error: "Forbidden." });
+      }
+      return reply.code(200).type("text/plain").send(String(query["hub.challenge"] ?? ""));
+    });
+
+    app.register(async (scope) => {
+      scope.addContentTypeParser("application/json", { parseAs: "buffer" }, (_request, body, done) => done(null, body));
+      scope.post("/webhooks/meta", async (request, reply) => {
+        if (!socialSettings.configured) {
+          return reply.code(404).send({ error: "Not found." });
+        }
+        const raw = Buffer.isBuffer(request.body) ? request.body : Buffer.from("");
+        if (!verifyWebhookSignature(raw, request.headers["x-hub-signature-256"], socialSettings.appSecret)) {
+          await auditSecurityEvent(repository, { type: "authentication_failed", resourceType: "endpoint", resourceId: "/webhooks/meta", metadata: { method: "POST", code: "META_SIGNATURE_INVALID" } });
+          return reply.code(401).send({ error: "Invalid signature." });
+        }
+        let body;
+        try {
+          body = JSON.parse(raw.toString("utf8"));
+        } catch {
+          return reply.code(400).send({ error: "Invalid JSON." });
+        }
+        await social.receive(body).catch((error) => app.log.error(error));
         return reply.code(200).send({ ok: true });
       });
     });

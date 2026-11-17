@@ -2614,6 +2614,64 @@
     @apply mt-3 w-full;
   }
 
+  /* An agent's settings: instructions, tools, documents, notes. */
+  .agent-settings > summary {
+    @apply flex cursor-pointer list-none flex-wrap items-baseline justify-between gap-2;
+  }
+
+  .agent-settings > summary h4 {
+    @apply mb-0;
+  }
+
+  .agent-settings[open] > summary {
+    @apply mb-3;
+  }
+
+  .agent-settings textarea {
+    @apply w-full bg-surface py-2 text-[13.5px];
+  }
+
+  .agent-settings .agent-documents,
+  .agent-settings .agent-memory {
+    @apply mt-4 border-t border-line pt-3;
+  }
+
+  .agent-tools {
+    @apply m-0 flex max-h-72 flex-col gap-1.5 overflow-y-auto border-0 p-0;
+  }
+
+  .agent-tools legend {
+    @apply mb-1.5 text-[12.5px] text-muted;
+  }
+
+  .agent-tool {
+    @apply flex! flex-row! items-start gap-2;
+  }
+
+  .agent-tool input {
+    @apply mt-1 w-auto! shrink-0;
+  }
+
+  .agent-tool > span {
+    @apply min-w-0 flex-1;
+  }
+
+  .agent-tool code {
+    @apply text-[12.5px] text-ink;
+  }
+
+  .agent-tool small {
+    @apply block text-[12px] text-muted;
+  }
+
+  .agent-documents li.is-retired span strong {
+    @apply text-muted line-through;
+  }
+
+  .document-reading {
+    @apply mt-2 max-h-64 overflow-auto rounded-lg bg-surface p-2.5 text-[12px] whitespace-pre-wrap break-words text-ink;
+  }
+
   .team-feed {
     @apply flex max-h-[70vh] list-none flex-col gap-0 overflow-y-auto p-0 max-xl:max-h-none;
   }

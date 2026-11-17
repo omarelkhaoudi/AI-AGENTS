@@ -283,6 +283,34 @@ Mise en route, une fois :
 Sans ces clés, tout fonctionne dans le cockpit (boîte, prospects, publications à
 valider), mais rien n'est envoyé.
 
+### Régler les agents sans programmer
+
+Dans **Équipe IA**, chaque agent a son bloc « Réglages de l'agent ». La
+direction seule peut le modifier (rôle `leader`). Il contient :
+
+- **Consignes de la direction** : un texte que l'agent lit avant chaque
+  mission, par exemple « toujours proposer la livraison et le montage ». Elles
+  ne lèvent jamais une règle de sécurité ou de validation.
+- **Outils autorisés** : décocher un outil le retire à l'agent dès sa prochaine
+  mission. Deux outils restent toujours actifs : `documents_reference` et
+  `memoriser`.
+- **Documents de référence** : catalogue, grille tarifaire, procédure, fiche
+  technique, en PDF, Word (.docx), Excel (.xlsx), texte ou CSV, 8 Mo au plus.
+  - Le texte est lu une fois, à l'import. Un PDF est lu par l'IA
+    (`OPENAI_API_KEY`). « Voir ce que l'agent lit » montre ce qui a été retenu.
+  - L'agent y cherche avec `documents_reference`. Il cite la source (titre et
+    version).
+  - Importer un document sous le même titre crée la **version suivante** et
+    rend l'ancienne **périmée**. Un document périmé ne sert plus que
+    d'historique.
+  - Si deux documents en vigueur se contredisent, l'agent ne choisit pas : il
+    pose la question à la direction.
+- **Mémoire de travail** : les notes que l'agent garde d'une mission à l'autre
+  (`memoriser`, 40 au plus par agent). La direction peut en effacer une.
+
+Les réglages sont gardés dans `data/agents.json`, et le texte des documents
+dans `data/agents-documents/`.
+
 ### Documents H-KIDS
 
 Toutes les pièces H-KIDS — **devis, bon de commande, facture et bon de livraison** —

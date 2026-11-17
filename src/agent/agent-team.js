@@ -16,6 +16,35 @@
 import { WHATSAPP_MESSAGE_TOOL } from "./whatsapp.js";
 
 export const MAX_SPECIALIST_ROUNDS = 5;
+// What every agent keeps whatever its settings: reading its own reference
+// documents and keeping its notes.
+export const LOCKED_TOOLS = Object.freeze(["documents_reference", "memoriser"]);
+
+// The read tools of the registry, in words the direction reads in the agents'
+// settings (the registry describes them for developers).
+export const READ_TOOL_LABELS = Object.freeze({
+  get_company_overview: "Vue d'ensemble de l'entreprise.",
+  get_pending_payments: "Paiements en attente.",
+  get_pending_quotes: "Devis en attente de suite.",
+  get_delayed_production_orders: "Commandes en retard de fabrication.",
+  get_purchase_needs: "Besoins d'achat.",
+  get_hr_overview: "Vue RH (présences, absences, sans salaires).",
+  get_after_sales_overview: "SAV et qualité : réclamations en cours.",
+  get_marketing_overview: "Campagnes et performances marketing.",
+  get_community_overview: "Calendrier éditorial et interactions des réseaux.",
+  get_legal_overview: "Contrats et documents juridiques à surveiller.",
+  get_customer_overview: "Clients : étape commerciale et solde dû.",
+  get_order_book_summary: "Carnet de commandes : nombre et état.",
+  get_product_datasheet: "Fiche produit par sa référence.",
+  get_customer_orders: "Commandes clients avec statut et risque.",
+  get_overdue_invoices: "Factures impayées et échues.",
+  get_supplier_catalog: "Fournisseurs et délais.",
+  get_receivables_summary: "Créances clients : totaux.",
+  get_revenue_summary: "Chiffre d'affaires facturé.",
+  get_quote_follow_ups: "Devis sans réponse depuis 5 jours, à relancer.",
+  get_production_schedule: "Planning de production : à l'heure, à surveiller, en retard.",
+  get_material_requirements: "Matières manquantes pour les commandes ouvertes."
+});
 // The complete workshop profile includes the fields to ask for (about 14 kB).
 // Truncating it hid CNC/tool questions from the methods agent.
 const MAX_TOOL_OUTPUT_CHARS = 24000;
@@ -256,39 +285,15 @@ export async function runSpecialist({
   extraTools = [],
   // What the agent is told before it starts: the person it answers to, what
   // the rest of the team did lately, the rules the direction validated.
-  briefing = []
+  briefing = [],
+  // The tools the direction took from this agent (its settings, section 9).
+  forbiddenTools = []
 }) {
   const specialist = SPECIALISTS[agentId];
-  const readTools = readToolsFor(agentId, toolRegistry);
-  const documentTypes = specialist.documentTypes ?? [];
-  const readableTypes = specialist.readableDocumentTypes ?? documentTypes;
-  const documentTool = documentTypes.length > 0 && prepareDocumentTool ? restrictDocumentTypes(prepareDocumentTool, documentTypes) : null;
-  // Whoever prepares a type of document can read back the ones already issued,
-  // to correct one under its own number, and follow the sale it belongs to.
-  // Production reads the orders it makes.
-  const consultTool = readableTypes.length > 0 && consultDocumentTool && consultDocument ? restrictDocumentTypes(consultDocumentTool, readableTypes) : null;
-  const dossierTool = documentTool && followDossierTool && followDossier ? followDossierTool : null;
-  const bookTool = specialist.workshop && workshopBookTool && readWorkshopBook ? workshopBookTool : null;
-  const advanceTool = specialist.workshop === "write" && advanceOrderTool && advanceOrder ? advanceOrderTool : null;
-  const linkTool = specialist.clientLink && clientLinkTool && clientLink ? clientLinkTool : null;
-  const catalogue = specialist.usesCatalogue && catalogueTool && lookUpCatalogue ? catalogueTool : null;
-  const tools = [
-    ...readTools.map((tool) => ({
-      type: "function",
-      name: tool.id,
-      description: tool.description,
-      parameters: { type: "object", additionalProperties: false, properties: {} }
-    })),
-    ...(documentTool ? [documentTool] : []),
-    ...(consultTool ? [consultTool] : []),
-    ...(dossierTool ? [dossierTool] : []),
-    ...(bookTool ? [bookTool] : []),
-    ...(advanceTool ? [advanceTool] : []),
-    ...(linkTool ? [linkTool] : []),
-    ...(catalogue ? [catalogue] : []),
-    ...extraTools.map((entry) => entry.tool),
-    ...(prepareMessage ? [WHATSAPP_MESSAGE_TOOL] : [])
-  ];
+  const {
+    tools, readTools, documentTypes, readableTypes, documentTool, consultTool, dossierTool, bookTool, advanceTool, linkTool, catalogue
+  } = specialistToolset({ agentId, toolRegistry, prepareDocumentTool, catalogueTool, lookUpCatalogue, consultDocumentTool, consultDocument, followDossierTool, followDossier, workshopBookTool, readWorkshopBook, advanceOrderTool, advanceOrder, clientLinkTool, clientLink, prepareMessage, extraTools, forbiddenTools });
+  const allowed = new Set(tools.map((tool) => tool.name));
 
   const items = [{ role: "user", content: mission }];
   const used = [];
@@ -313,7 +318,9 @@ export async function runSpecialist({
     for (const call of calls) {
       used.push(call.name);
       let result;
-      if (call.name === WHATSAPP_MESSAGE_TOOL.name && prepareMessage) {
+      if (!allowed.has(call.name)) {
+        result = { ok: false, erreur: `Outil non autorisé pour l'agent ${specialist.label}.` };
+      } else if (call.name === WHATSAPP_MESSAGE_TOOL.name && prepareMessage) {
         result = prepareMessage(parseArguments(call.arguments), agentId);
       } else if (documentTool && call.name === documentTool.name) {
         const args = parseArguments(call.arguments);
@@ -353,6 +360,63 @@ export async function runSpecialist({
     tools: Object.freeze([...new Set(used)]),
     answer: answer || "Je n'ai pas pu terminer cette mission."
   });
+}
+
+// The tools an agent works with: those of its trade, those the Director gives
+// it, less those the direction took from it. Used to run the agent and to show
+// the direction what each agent can do.
+export function specialistToolset({
+  agentId,
+  toolRegistry,
+  prepareDocumentTool = null,
+  catalogueTool = null,
+  lookUpCatalogue = null,
+  consultDocumentTool = null,
+  consultDocument = null,
+  followDossierTool = null,
+  followDossier = null,
+  workshopBookTool = null,
+  readWorkshopBook = null,
+  advanceOrderTool = null,
+  advanceOrder = null,
+  clientLinkTool = null,
+  clientLink = null,
+  prepareMessage = null,
+  extraTools = [],
+  forbiddenTools = []
+}) {
+  const specialist = SPECIALISTS[agentId];
+  const readTools = readToolsFor(agentId, toolRegistry);
+  const documentTypes = specialist.documentTypes ?? [];
+  const readableTypes = specialist.readableDocumentTypes ?? documentTypes;
+  const documentTool = documentTypes.length > 0 && prepareDocumentTool ? restrictDocumentTypes(prepareDocumentTool, documentTypes) : null;
+  // Whoever prepares a type of document can read back the ones already issued,
+  // to correct one under its own number, and follow the sale it belongs to.
+  // Production reads the orders it makes.
+  const consultTool = readableTypes.length > 0 && consultDocumentTool && consultDocument ? restrictDocumentTypes(consultDocumentTool, readableTypes) : null;
+  const dossierTool = documentTool && followDossierTool && followDossier ? followDossierTool : null;
+  const bookTool = specialist.workshop && workshopBookTool && readWorkshopBook ? workshopBookTool : null;
+  const advanceTool = specialist.workshop === "write" && advanceOrderTool && advanceOrder ? advanceOrderTool : null;
+  const linkTool = specialist.clientLink && clientLinkTool && clientLink ? clientLinkTool : null;
+  const catalogue = specialist.usesCatalogue && catalogueTool && lookUpCatalogue ? catalogueTool : null;
+  const tools = [
+    ...readTools.map((tool) => ({
+      type: "function",
+      name: tool.id,
+      description: tool.description,
+      parameters: { type: "object", additionalProperties: false, properties: {} }
+    })),
+    ...(documentTool ? [documentTool] : []),
+    ...(consultTool ? [consultTool] : []),
+    ...(dossierTool ? [dossierTool] : []),
+    ...(bookTool ? [bookTool] : []),
+    ...(advanceTool ? [advanceTool] : []),
+    ...(linkTool ? [linkTool] : []),
+    ...(catalogue ? [catalogue] : []),
+    ...extraTools.map((entry) => entry.tool),
+    ...(prepareMessage ? [WHATSAPP_MESSAGE_TOOL] : [])
+  ].filter((tool) => !LOCKED_TOOLS.includes(tool.name) ? !forbiddenTools.includes(tool.name) : true);
+  return { tools, readTools, documentTypes, readableTypes, documentTool, consultTool, dossierTool, bookTool, advanceTool, linkTool, catalogue };
 }
 
 // The same document tool, narrowed to the documents of this agent's trade.

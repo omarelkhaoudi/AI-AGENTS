@@ -110,7 +110,7 @@ export function readWordText(bytes) {
 }
 
 // Each sheet as a table: its header row, then one line per row.
-function excelText(bytes) {
+export function excelText(bytes) {
   return Object.entries(readXlsxSheets(bytes))
     .map(([sheet, rows]) => {
       const headers = [...new Set(rows.flatMap((row) => Object.keys(row.values)))];

@@ -1508,9 +1508,21 @@ function taskBlock(anomaly) {
 const ACTIVITY_LABELS = Object.freeze({ mission: "Mission", caisse: "Caisse", atelier: "Atelier", document: "Document", amelioration: "Amélioration", equipe: "Équipe", compte_rendu: "Compte rendu", alerte: "Alerte" });
 const aiUsagePanel = document.querySelector("#ai-usage");
 const teamFeed = document.querySelector("#team-feed");
-const teamView = { data: null, responded: new Set() };
+const teamView = { data: null, config: new Map(), open: new Set(), responded: new Set() };
 document.querySelector("#refresh-team").addEventListener("click", () => refreshTeam());
 agentRoster.addEventListener("submit", async (event) => {
+  const settingsForm = event.target.closest?.("[data-agent-settings]");
+  if (settingsForm) {
+    event.preventDefault();
+    await saveAgentSettings(settingsForm);
+    return;
+  }
+  const documentForm = event.target.closest?.("[data-agent-document]");
+  if (documentForm) {
+    event.preventDefault();
+    await uploadAgentDocument(documentForm);
+    return;
+  }
   const formNode = event.target.closest?.("[data-member-form]");
   if (!formNode) {
     return;
@@ -1519,7 +1531,29 @@ agentRoster.addEventListener("submit", async (event) => {
   const read = (name) => formNode.querySelector(`[name='${name}']`)?.value ?? "";
   await saveMember(formNode.dataset.memberForm, { name: read("name"), role: read("role"), phone: read("phone") });
 });
+// Which settings blocks are open survives a refresh of the cards.
+agentRoster.addEventListener("toggle", (event) => {
+  const block = event.target.closest?.("[data-settings-of]");
+  if (block === event.target) {
+    teamView.open[block.open ? "add" : "delete"](block.dataset.settingsOf);
+  }
+}, true);
 agentRoster.addEventListener("click", async (event) => {
+  const status = event.target.closest?.("[data-document-status]");
+  if (status) {
+    await agentRequest(`/api/agents/${encodeURIComponent(status.dataset.agent)}/documents/${encodeURIComponent(status.dataset.documentStatus)}/status`, { method: "POST", body: { status: status.dataset.status } }, status.dataset.status === "perime" ? "Document marqué périmé : l'agent ne l'applique plus." : "Document remis en vigueur.");
+    return;
+  }
+  const reading = event.target.closest?.("[data-document-text]");
+  if (reading) {
+    await showDocumentText(reading.dataset.agent, reading.dataset.documentText);
+    return;
+  }
+  const forget = event.target.closest?.("[data-memory-forget]");
+  if (forget && globalThis.confirm?.("Effacer cette note de la mémoire de l'agent ?")) {
+    await agentRequest(`/api/agents/${encodeURIComponent(forget.dataset.agent)}/memory/${encodeURIComponent(forget.dataset.memoryForget)}`, { method: "DELETE" }, "Note effacée.");
+    return;
+  }
   const unlink = event.target.closest?.("[data-member-unlink]");
   if (unlink && globalThis.confirm?.("Défaire le lien entre cet agent et cette personne ?")) {
     await saveMember(unlink.dataset.memberUnlink, { name: "", role: "", phone: "" });
@@ -1550,11 +1584,155 @@ async function refreshTeam() {
       throw new Error("Impossible de charger l'équipe.");
     }
     teamView.data = await response.json();
+    await loadAgentSettings();
     renderTeam();
   } catch (error) {
     teamFeed.innerHTML = `<li class="muted">${escapeHtml(error.message)}</li>`;
   }
   await refreshAiUsage();
+}
+
+// --- Each agent's settings (CDC section 9) -----------------------------------
+// Instructions, tools, reference documents and notes, set by the direction
+// without programming.
+const DOCUMENT_KINDS = Object.freeze({ pdf: "PDF", word: "Word", excel: "Excel", texte: "Texte" });
+
+async function loadAgentSettings() {
+  try {
+    const response = await fetch("/api/agents/config", { headers: await authHeaders() });
+    if (!response.ok) {
+      return;
+    }
+    const payload = await response.json();
+    teamView.config = new Map((payload.agents ?? []).map((agent) => [agent.id, agent]));
+  } catch {
+    // The cards show without their settings.
+  }
+}
+
+async function agentRequest(url, { method = "POST", body = undefined } = {}, success = "") {
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), ...(await authHeaders()) },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error ?? "La demande a été refusée.");
+    }
+    if (success) {
+      showToast(success);
+    }
+    await loadAgentSettings();
+    renderTeam();
+    return payload;
+  } catch (error) {
+    showToast(error.message, "warn");
+    return null;
+  }
+}
+
+async function saveAgentSettings(formNode) {
+  const agentId = formNode.dataset.agentSettings;
+  const forbiddenTools = [...formNode.querySelectorAll("input[name='tool']")].filter((box) => !box.checked).map((box) => box.value);
+  const instructions = formNode.querySelector("[name='instructions']")?.value ?? "";
+  await agentRequest(`/api/agents/${encodeURIComponent(agentId)}/config`, { method: "PUT", body: { instructions, forbiddenTools } }, `Réglages de l'agent ${formatAgent(agentId)} enregistrés : ils s'appliquent dès sa prochaine mission.`);
+}
+
+async function uploadAgentDocument(formNode) {
+  const agentId = formNode.dataset.agentDocument;
+  const file = formNode.querySelector("input[type='file']")?.files?.[0];
+  if (!file) {
+    showToast("Choisissez un fichier.", "warn");
+    return;
+  }
+  const button = formNode.querySelector("button[type='submit']");
+  button.disabled = true;
+  button.textContent = file.name.toLowerCase().endsWith(".pdf") ? "Lecture du PDF…" : "Import…";
+  try {
+    const data = await readAsDataUrl(file);
+    const read = (name) => formNode.querySelector(`[name='${name}']`)?.value ?? "";
+    const result = await agentRequest(`/api/agents/${encodeURIComponent(agentId)}/documents`, { body: { name: file.name, data, title: read("title"), validFrom: read("validFrom") } });
+    if (result?.document) {
+      const document = result.document;
+      showToast(`« ${document.title} » v${document.version} ajouté${document.replaces ? " ; l'ancienne version est périmée" : ""}${document.truncated ? " (tronqué : document très long)" : ""}.`);
+    }
+  } finally {
+    button.disabled = false;
+    button.textContent = "Importer";
+  }
+}
+
+async function showDocumentText(agentId, documentId) {
+  try {
+    const response = await fetch(`/api/agents/${encodeURIComponent(agentId)}/documents/${encodeURIComponent(documentId)}/text`, { headers: await authHeaders() });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error ?? "Texte introuvable.");
+    }
+    const target = agentRoster.querySelector(`[data-document-reading="${CSS.escape(documentId)}"]`);
+    if (target) {
+      target.hidden = !target.hidden;
+      target.textContent = payload.text;
+    }
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+}
+
+function agentSettingsBlock(agentId) {
+  const settings = teamView.config.get(agentId);
+  if (!settings) {
+    return "";
+  }
+  const current = settings.documents.filter((entry) => entry.status === "en_vigueur").length;
+  const forbidden = settings.tools.filter((tool) => tool.forbidden).length;
+  const summary = [`${current} document${current > 1 ? "s" : ""}`, settings.instructions ? "consignes" : "", forbidden > 0 ? `${forbidden} outil${forbidden > 1 ? "s" : ""} retiré${forbidden > 1 ? "s" : ""}` : "", settings.memory.length > 0 ? `${settings.memory.length} note${settings.memory.length > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ");
+  const id = escapeHtml(agentId);
+  return `
+    <details class="team-block agent-settings" data-settings-of="${id}" ${teamView.open.has(agentId) ? "open" : ""}>
+      <summary><h4>Réglages de l'agent</h4><small class="muted">${escapeHtml(summary)}</small></summary>
+      <form data-agent-settings="${id}" class="team-edit-form">
+        <label>Consignes de la direction
+          <textarea name="instructions" rows="4" maxlength="4000" placeholder="Ex. : toujours proposer la livraison et le montage ; vouvoyer le client ; jamais de remise au-delà de 5 % sans accord.">${escapeHtml(settings.instructions)}</textarea>
+        </label>
+        <fieldset class="agent-tools">
+          <legend>Outils autorisés</legend>
+          ${settings.tools.length === 0 ? '<p class="muted text-[13px]">Liste indisponible pour le moment.</p>' : settings.tools.map((tool) => `
+            <label class="agent-tool" title="${escapeHtml(tool.description)}">
+              <input type="checkbox" name="tool" value="${escapeHtml(tool.name)}" ${tool.forbidden ? "" : "checked"} ${tool.locked ? "disabled" : ""}>
+              <span><code>${escapeHtml(tool.name)}</code><small>${escapeHtml(tool.description)}${tool.locked ? " (toujours actif)" : ""}</small></span>
+            </label>`).join("")}
+        </fieldset>
+        <div class="flex flex-wrap gap-2"><button type="submit" class="primary">${icon("check")}Enregistrer les réglages</button></div>
+      </form>
+      <div class="agent-documents">
+        <h4>Documents de référence</h4>
+        ${settings.documents.length === 0 ? '<p class="muted text-[13px]">Aucun document : l\'agent ne s\'appuie que sur ses données.</p>' : `<ul>${settings.documents.map((entry) => `
+          <li class="${entry.status === "perime" ? "is-retired" : ""}">
+            <span><strong>${escapeHtml(entry.title)}</strong> v${escapeHtml(String(entry.version))} <span class="tag ${entry.status === "en_vigueur" ? "ok" : "warning"}">${entry.status === "en_vigueur" ? "en vigueur" : "périmé"}</span></span>
+            <small>${escapeHtml(DOCUMENT_KINDS[entry.kind] ?? entry.kind)} · ${escapeHtml(entry.fileName || "")} · ${escapeHtml(Number(entry.chars).toLocaleString("fr-FR"))} caractères${entry.validFrom ? ` · en vigueur depuis le ${escapeHtml(formatIsoDay(entry.validFrom))}` : ""} · importé ${escapeHtml(formatStamp(entry.importedAt))}</small>
+            <span class="flex flex-wrap gap-2">
+              <button type="button" class="link-button" data-agent="${id}" data-document-text="${escapeHtml(entry.id)}">Voir ce que l'agent lit</button>
+              <button type="button" class="link-button" data-agent="${id}" data-document-status="${escapeHtml(entry.id)}" data-status="${entry.status === "en_vigueur" ? "perime" : "en_vigueur"}">${entry.status === "en_vigueur" ? "Marquer périmé" : "Remettre en vigueur"}</button>
+            </span>
+            <pre class="document-reading" data-document-reading="${escapeHtml(entry.id)}" hidden></pre>
+          </li>`).join("")}</ul>`}
+        <form data-agent-document="${id}" class="team-edit-form">
+          <label>Fichier (PDF, Word, Excel, texte)<input type="file" accept=".pdf,.docx,.xlsx,.txt,.csv,.md" required></label>
+          <label>Titre<input name="title" placeholder="Ex. : Grille tarifaire 2026 (même titre = nouvelle version)"></label>
+          <label>En vigueur depuis<input name="validFrom" type="date"></label>
+          <div class="flex flex-wrap gap-2"><button type="submit" class="secondary">Importer</button></div>
+        </form>
+      </div>
+      <div class="agent-memory">
+        <h4>Mémoire de travail</h4>
+        ${settings.memory.length === 0 ? '<p class="muted text-[13px]">Aucune note. L\'agent en garde quand une information doit servir à ses prochaines missions.</p>' : `<ul>${settings.memory.map((note) => `
+          <li><span>${escapeHtml(note.text)}</span><small>${escapeHtml(formatStamp(note.at))} · <button type="button" class="link-button" data-agent="${id}" data-memory-forget="${escapeHtml(note.id)}">Effacer</button></small></li>`).join("")}</ul>`}
+      </div>
+    </details>
+  `;
 }
 
 // What the AI cost this month: the total, the budget when one is set, and
@@ -1675,6 +1853,7 @@ function teamCard(agent) {
           <h4>Dernière activité</h4>
           <ul>${agent.activity.slice(0, 3).map((entry) => `<li><span>${escapeHtml(entry.text)}</span><small>${escapeHtml(formatStamp(entry.at))} · ${escapeHtml(ACTIVITY_LABELS[entry.kind] ?? entry.kind)}</small></li>`).join("")}</ul>
         </div>` : ""}
+      ${agentSettingsBlock(agent.id)}
     </article>
   `;
 }

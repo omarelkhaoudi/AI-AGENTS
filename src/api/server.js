@@ -27,6 +27,8 @@ import { applyPublicationApprovalDecision, isPublicationApproval } from "../soci
 import { createSocialService, isSocialReplyApproval } from "../social/social-service.js";
 import { createMemorySocialInbox } from "../agent/social-inbox.js";
 import { createMetaSocialClient, loadMetaSocialConfig } from "../integrations/meta-social.js";
+import { AgentConfigError, createMemoryAgentConfig } from "../agent/agent-config.js";
+import { MAX_REFERENCE_BYTES, ReferenceReadError, readReferenceFile } from "../agent/reference-reader.js";
 import { ToolExecutionService, ToolExecutionServiceError } from "../tools/execution-service.js";
 import { createMvpToolRegistry } from "../tools/mvp-tools.js";
 import { CONSISTENCY_DOMAINS, checkConsistency } from "../agent/consistency.js";
@@ -137,6 +139,9 @@ export function buildApi({
   socialConfig = null,
   socialStore = null,
   socialFetch = null,
+  // Each agent's settings: instructions, reference documents, forbidden
+  // tools and notes (data/agents.json for the server process).
+  agentConfigStore = null,
   // The site's own address, for the links sent to clients. Left empty, a link
   // made from the cockpit takes the address the cockpit was opened at.
   publicBaseUrl = process.env.PUBLIC_BASE_URL ?? "",
@@ -307,6 +312,7 @@ export function buildApi({
     teamBook: teamFeed,
     clock
   });
+  const agentSettings = agentConfigStore ?? createMemoryAgentConfig({ clock, agents: SPECIALIST_IDS });
   const agent = directorAgent ?? createDirectorAgentFromEnv({
     documentService: hkidsDocuments,
     runDirectorRequest,
@@ -325,6 +331,7 @@ export function buildApi({
     designProfileBook,
     aiUsage: usage,
     social,
+    agentConfig: agentSettings,
     autoAnalyse: autoAnalyseAnomalies,
     publicBaseUrl,
     client: agentClient
@@ -1325,6 +1332,118 @@ export function buildApi({
         return reply.code(200).send({ member });
       } catch (error) {
         return sendBookError(reply, error, "Team update failed.");
+      }
+    });
+
+    // --- Each agent's settings, without programming (CDC section 9) --------
+    // Read by the team; changed by the direction only.
+    const agentConfigRefused = async (request, reply) => {
+      if (seesConfidential(request)) {
+        return false;
+      }
+      await auditSecurityEvent(repository, { type: "authorization_denied", actorUserId: request.principal.userId, resourceType: "agent_config", resourceId: String(request.params.agent ?? ""), metadata: { method: request.method, code: "DIRECTION_ONLY" } });
+      reply.code(403).send({ error: "Réservé à la direction : seule la direction règle les agents." });
+      return true;
+    };
+    const knownAgent = (request, reply) => {
+      if (SPECIALIST_IDS.includes(request.params.agent)) {
+        return true;
+      }
+      reply.code(404).send({ error: "Agent inconnu.", details: { code: "AGENT_UNKNOWN" } });
+      return false;
+    };
+    const sendAgentConfigError = (reply, error) => {
+      if (error instanceof AgentConfigError || error instanceof ReferenceReadError) {
+        const status = /NOT_FOUND|UNKNOWN_AGENT/.test(error.code) ? 404 : error.code === "AGENT_DOCUMENT_DUPLICATE" ? 409 : error.code === "AGENT_DOCUMENT_TOO_LARGE" ? 413 : 400;
+        return reply.code(status).send({ error: error.message, details: { code: error.code } });
+      }
+      if (error?.code === "AGENT_NOT_CONFIGURED" || error?.code === "AGENT_MODEL_UNAVAILABLE") {
+        return reply.code(503).send({ error: error.message, details: { code: error.code } });
+      }
+      return sendDomainError(reply, "Agent settings failed.", error);
+    };
+    const agentSettingsOf = async (id) => {
+      const [settings, documents, memory, tools] = await Promise.all([
+        agentSettings.settings(id),
+        agentSettings.documents(id),
+        agentSettings.memory(id),
+        typeof agent.agentTools === "function" ? agent.agentTools(id).catch(() => []) : []
+      ]);
+      return { id, label: SPECIALISTS[id].label, mission: SPECIALISTS[id].mission, ...settings, tools, documents: documents.slice().reverse(), memory: memory.slice().reverse() };
+    };
+
+    app.get("/api/agents/config", readRouteOptions(), async () => ({
+      agents: await Promise.all(SPECIALIST_IDS.map(agentSettingsOf)),
+      canEdit: true
+    }));
+
+    app.put("/api/agents/:agent/config", writeRouteOptions(), async (request, reply) => {
+      if (!knownAgent(request, reply) || await agentConfigRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        const known = new Set((typeof agent.agentTools === "function" ? await agent.agentTools(request.params.agent) : []).map((tool) => tool.name));
+        const forbidden = Array.isArray(request.body?.forbiddenTools) ? request.body.forbiddenTools.filter((name) => known.size === 0 || known.has(name)) : undefined;
+        await agentSettings.save(request.params.agent, {
+          instructions: typeof request.body?.instructions === "string" ? request.body.instructions : undefined,
+          forbiddenTools: forbidden,
+          by: request.principal.userId ?? "direction"
+        });
+        await teamFeed.log({ agent: request.params.agent, kind: "equipe", text: "Réglages de l'agent modifiés par la direction (consignes ou outils).", by: request.principal.userId ?? "direction" });
+        return { agent: await agentSettingsOf(request.params.agent) };
+      } catch (error) {
+        return sendAgentConfigError(reply, error);
+      }
+    });
+
+    app.post("/api/agents/:agent/documents", { ...writeRouteOptions(), bodyLimit: Math.max(securityConfig.bodyLimitBytes, Math.ceil(MAX_REFERENCE_BYTES * 1.4) + 4096) }, async (request, reply) => {
+      if (!knownAgent(request, reply) || await agentConfigRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        const read = await readReferenceFile({ name: request.body?.name, data: request.body?.data }, { readPdf: typeof agent.readPdfText === "function" ? (file) => agent.readPdfText(file) : null });
+        const title = typeof request.body?.title === "string" && request.body.title.trim() ? request.body.title : read.fileName.replace(/\.[^.]+$/, "");
+        const validFrom = typeof request.body?.validFrom === "string" && request.body.validFrom.trim() ? request.body.validFrom.trim() : null;
+        const document = await agentSettings.addDocument(request.params.agent, { title, fileName: read.fileName, kind: read.kind, text: read.text, validFrom, by: request.principal.userId ?? "direction" });
+        await teamFeed.log({ agent: request.params.agent, kind: "equipe", text: `Document de référence « ${document.title} » v${document.version} ajouté${document.replaces ? " (l'ancienne version est périmée)" : ""}.`, by: request.principal.userId ?? "direction" });
+        return reply.code(201).send({ document });
+      } catch (error) {
+        return sendAgentConfigError(reply, error);
+      }
+    });
+
+    app.post("/api/agents/:agent/documents/:id/status", writeRouteOptions(), async (request, reply) => {
+      if (!knownAgent(request, reply) || await agentConfigRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        return { document: await agentSettings.setDocumentStatus(request.params.agent, request.params.id, String(request.body?.status ?? ""), { by: request.principal.userId ?? "direction" }) };
+      } catch (error) {
+        return sendAgentConfigError(reply, error);
+      }
+    });
+
+    // What the agent reads of a document: the direction checks the reading.
+    app.get("/api/agents/:agent/documents/:id/text", readRouteOptions(), async (request, reply) => {
+      if (!knownAgent(request, reply)) {
+        return reply;
+      }
+      const document = (await agentSettings.documents(request.params.agent)).find((entry) => entry.id === request.params.id);
+      if (!document) {
+        return reply.code(404).send({ error: "Document introuvable." });
+      }
+      return { document, text: await agentSettings.documentText(document.id) };
+    });
+
+    app.delete("/api/agents/:agent/memory/:id", writeRouteOptions(), async (request, reply) => {
+      if (!knownAgent(request, reply) || await agentConfigRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        await agentSettings.forget(request.params.agent, request.params.id);
+        return { ok: true };
+      } catch (error) {
+        return sendAgentConfigError(reply, error);
       }
     });
 

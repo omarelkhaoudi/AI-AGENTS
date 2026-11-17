@@ -6,7 +6,7 @@ import { HKIDS_FIXED_IDENTITY } from "../documents/hkids-template.js";
 import { parseReferenceImage } from "../documents/purchase-order.js";
 import { ChatAttachmentError, readAttachments } from "./chat-attachments.js";
 import { createCatalogueLoader, searchCatalogue } from "./catalogue.js";
-import { SPECIALISTS, SPECIALIST_IDS, runSpecialist } from "./agent-team.js";
+import { LOCKED_TOOLS, READ_TOOL_LABELS, SPECIALISTS, SPECIALIST_IDS, runSpecialist, specialistToolset } from "./agent-team.js";
 import { draftWhatsAppMessage } from "./whatsapp.js";
 import { STEP_LABELS, createMemoryPlanStore } from "./plan-store.js";
 import { createMemoryConversationStore } from "./conversation-store.js";
@@ -19,6 +19,7 @@ import { createMemoryImprovementBook } from "./improvement-book.js";
 import { createMemoryTeamBook } from "./team-book.js";
 import { createMemoryFollowUpBook } from "./sales-book.js";
 import { socialTools } from "./social-tools.js";
+import { configTools } from "./config-tools.js";
 import {
   ANOMALIES_TOOL,
   CASH_BALANCE_TOOL,
@@ -659,7 +660,7 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, documentArchive = undefined, designProfileBook = null, aiUsage = null, social = null, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, documentArchive = undefined, designProfileBook = null, aiUsage = null, social = null, agentConfig = null, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
@@ -667,7 +668,7 @@ export function createDirectorAgentFromEnv({ env = process.env, documentService,
   // The dessinateur méthodes' engine runs with the Python of DESSINATEUR_PYTHON.
   const python = defaultPython(env);
   const designOffice = createDesignOffice({ book: designProfileBook ?? createMemoryDesignProfileBook(), engine: (request) => runEngine(request, { python }) });
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, documentArchive, designOffice, aiUsage, social, autoAnalyse, publicBaseUrl, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, documentArchive, designOffice, aiUsage, social, agentConfig, autoAnalyse, publicBaseUrl, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -699,6 +700,9 @@ export function createDirectorAgent({
   // The Facebook Page and the Instagram account (src/social/social-service.js);
   // without it, the CM and Marketing only write.
   social = null,
+  // Each agent as the direction configured it: instructions, reference
+  // documents, forbidden tools, notes (src/agent/agent-config.js).
+  agentConfig = null,
   // A new anomaly found in the workshop book is handed to its agent at once,
   // in the background, for its cause and a rule. Off unless the server asks.
   autoAnalyse = false,
@@ -733,6 +737,7 @@ export function createDirectorAgent({
     designOffice,
     aiUsage,
     social,
+    agentConfig,
     books,
     onNewAnomalies: (found) => queueAnalyses(found)
   });
@@ -797,6 +802,38 @@ export function createDirectorAgent({
     // For tests and for a clean shutdown: resolves once queued analyses ran.
     idle() {
       return analyses;
+    },
+
+    // What an agent can do, as its settings show it: each tool with what it
+    // does, whether the direction took it away, and whether it is one every
+    // agent keeps.
+    async agentTools(agentId) {
+      if (!SPECIALISTS[agentId]) {
+        throw new DirectorAgentError(`Agent inconnu : ${agentId}.`, "AGENT_UNKNOWN");
+      }
+      const context = baseContext(freshOutcome());
+      const forbidden = agentConfig ? (await agentConfig.settings(agentId)).forbiddenTools : [];
+      const { tools } = specialistToolset({ ...agentToolParams(agentId, context), forbiddenTools: [] });
+      return tools.map((tool) => ({
+        name: tool.name,
+        description: READ_TOOL_LABELS[tool.name] ?? String(tool.description ?? "").split(/(?<=\.)\s/)[0].slice(0, 220),
+        locked: LOCKED_TOOLS.includes(tool.name),
+        forbidden: !LOCKED_TOOLS.includes(tool.name) && forbidden.includes(tool.name)
+      }));
+    },
+
+    // A reference PDF read into text by the model, once, at import.
+    async readPdfText({ name, base64 }) {
+      if (!configured()) {
+        throw new DirectorAgentError("La lecture d'un PDF passe par l'IA : renseignez OPENAI_API_KEY dans .env.", "AGENT_NOT_CONFIGURED");
+      }
+      resolvedClient ??= await clientFactory({ apiKey });
+      const response = await askModel(resolvedClient, {
+        model,
+        instructions: "Tu recopies le texte d'un document d'entreprise pour une base documentaire. Recopie fidèlement tout le texte, dans l'ordre, sans résumer ni commenter ni corriger ; les tableaux, une ligne par rangée avec les colonnes séparées par « | ». Une page sans texte lisible : [page sans texte].",
+        input: [{ role: "user", content: [{ type: "input_file", filename: name, file_data: `data:application/pdf;base64,${base64}` }, { type: "input_text", text: "Recopie le texte de ce document." }] }]
+      }, { aiUsage, agent: "director" });
+      return outputText(response);
     },
 
     // confidential: false when the person asking may not see salaries and
@@ -1973,11 +2010,32 @@ async function delegate(args, context) {
 // answers to, what the team did lately and the rules in force. What it was
 // asked and what it answered go to the team's feed.
 async function runAgent(agentId, mission, context) {
-  const { team, clock, outcome, books } = context;
+  const { team, clock, outcome, books, agentConfig } = context;
+  // The direction's settings for this agent: its instructions, documents and
+  // notes are told to it, the tools it was refused are taken from it.
+  const settings = agentConfig ? await agentConfig.settings(agentId) : null;
   const run = await runSpecialist({
-    agentId,
+    ...agentToolParams(agentId, context),
     mission,
+    forbiddenTools: settings?.forbiddenTools ?? [],
+    briefing: [...(books ? await agentBriefing(agentId, context) : []), ...(agentConfig ? await agentConfig.briefing(agentId) : [])],
+    callModel: (payload) => askModel(team.client, payload, { aiUsage: context.aiUsage, agent: agentId }),
+    model: team.model,
+    today: formatDate(clock())
+  });
+  outcome.agentRuns.push(run);
+  await books?.team.log({ agent: agentId, kind: "mission", text: mission, detail: run.answer, by: "director" });
+  return run;
+}
+
+// Everything an agent works with, apart from its mission: what runs it, and
+// what the direction sees of its tools in its settings.
+function agentToolParams(agentId, context) {
+  const { team, outcome, books } = context;
+  return {
+    agentId,
     extraTools: [
+      ...(context.agentConfig ? configTools(context, agentId) : []),
       ...(books ? [...(agentId === "finance" ? cashTools(context, agentId) : []), ...(agentId === "commercial" ? salesTools(context, agentId) : []), ...improvementTools(context, agentId)] : []),
       ...(context.social ? socialTools(context, agentId) : []),
       ...(SPECIALISTS[agentId].keepsRegister ? [{ tool: SEARCH_DOCUMENT_TOOL, run: (searchArgs) => searchDocument(searchArgs, context) }] : []),
@@ -1998,10 +2056,6 @@ async function runAgent(agentId, mission, context) {
           { tool: WORKSHOP_PROFILE_TOOL, run: (profileArgs, by) => workshopProfile(profileArgs, context, by) }
       ] : [])
     ],
-    briefing: books ? await agentBriefing(agentId, context) : [],
-    callModel: (payload) => askModel(team.client, payload, { aiUsage: context.aiUsage, agent: agentId }),
-    model: team.model,
-    today: formatDate(clock()),
     toolRegistry: team.toolRegistry,
     executeTool: team.executeTool,
     prepareDocumentTool: DOCUMENT_TOOL,
@@ -2019,10 +2073,7 @@ async function runAgent(agentId, mission, context) {
     clientLinkTool: CLIENT_LINK_TOOL,
     clientLink: (linkArgs, agentId) => clientLink(linkArgs, context, agentId),
     prepareMessage: (messageArgs, agentId) => recordMessage(messageArgs, agentId, outcome)
-  });
-  outcome.agentRuns.push(run);
-  await books?.team.log({ agent: agentId, kind: "mission", text: mission, detail: run.answer, by: "director" });
-  return run;
+  };
 }
 
 function planSteps(steps) {

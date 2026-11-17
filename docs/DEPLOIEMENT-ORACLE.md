@@ -227,6 +227,81 @@ cd deploy && docker compose up -d --build
 Les données, les documents et les dossiers clients sont dans des volumes
 Docker : une mise à jour ne les touche pas.
 
+S'il y a des entreprises clientes (section 10), passez-les aussi à la nouvelle
+version :
+
+```bash
+cd /opt/hkids && sh scripts/tenant.sh upgrade
+```
+
+## 10. Entreprises clientes (SaaS)
+
+Chaque entreprise cliente a son propre cockpit sur le même serveur, à côté de
+celui d'H-KIDS. Il est entièrement séparé : sa propre base de données, ses
+documents, ses données, ses réglages et sa propre adresse. Seuls l'image de
+l'application et le Caddy d'H-KIDS (le HTTPS) sont communs. Chaque cockpit
+client prend environ 110 Mo de mémoire.
+
+**Créer une entreprise**, depuis `/opt/hkids` :
+
+```bash
+sh scripts/tenant.sh create atelier-exemple --name="Atelier Exemple" --plan=starter --city="Fès" --leaders="Sara" --activity="menuiserie sur mesure" --address="12 rue Exemple|Fès" --email=contact@exemple.ma --phone=0500000000 --legal="ICE ... - IF ... - RC ..."
+```
+
+- L'adresse est `atelier-exemple.<domaine d'H-KIDS>` (les sous-adresses DuckDNS
+  pointent déjà sur le serveur). Une autre adresse se donne avec
+  `--domain=...`.
+- Le certificat HTTPS est obtenu automatiquement à la première visite.
+- Les réglages sont dans `deploy/tenants/atelier-exemple/.env`, lisible par ce
+  compte uniquement. Les clés WhatsApp et Meta propres à l'entreprise y vont
+  aussi. Après une modification, relancez avec
+  `sh scripts/tenant.sh start atelier-exemple`.
+- Ce qui n'est pas donné reste vide sur les documents : rien d'H-KIDS n'est
+  repris (ni adresse, ni ICE, ni logo, ni règles commerciales).
+- Logo : déposez un JPEG dans le volume de données de l'entreprise et
+  décommentez `HKIDS_LOGO_PATH=/app/data/logo.jpg` dans son `.env`.
+
+**Créer le compte de sa direction.** Le mot de passe est tapé au clavier
+(connexion `ssh -t`) :
+
+```bash
+sh scripts/tenant.sh user atelier-exemple --id=sara --email=sara@exemple.ma --name="Sara" --role=leader
+```
+
+**Les offres** (`--plan`). Les prix sont les hypothèses du cahier des charges,
+à tester :
+
+| Offre | Prix indicatif | Utilisateurs | Budget IA inclus |
+| --- | --- | --- | --- |
+| `starter` | 499 DH / mois | 3 | 15 $ / mois, le Director s'arrête au-delà |
+| `business` | 1 499 DH / mois | 10 | 60 $ / mois, le Director s'arrête au-delà |
+| `enterprise` | à partir de 3 999 DH / mois | illimités | aucun plafond |
+
+- Un compte de plus que l'offre ne le permet est refusé.
+- `HKIDS_AI_BUDGET_USD` dans le `.env` de l'entreprise remplace le budget de
+  l'offre.
+- L'offre est affichée dans **Équipe IA**, au-dessus du coût de l'IA.
+
+**Les autres commandes :**
+
+- `sh scripts/tenant.sh list` : les entreprises, leur adresse, leur offre et
+  si elles tournent.
+- `sh scripts/tenant.sh export atelier-exemple` : toutes ses données (base,
+  documents, données, dossiers) en une archive, dans `deploy/exports/`.
+- `sh scripts/tenant.sh stop atelier-exemple` : le cockpit s'arrête, ses données
+  sont gardées. `start` le relance.
+
+**Sauvegardes.** La sauvegarde de nuit (section 8) prend aussi chaque
+entreprise en marche, dans `backups/<date>/tenants/<entreprise>/`.
+
+**Limites actuelles.**
+
+- Les échéanciers de paiement acceptés sur les documents restent ceux
+  d'H-KIDS (60/20/20 et ses exceptions).
+- Les noms des fichiers générés gardent le préfixe `HKIDS`.
+- L'IA passe par la clé OpenAI du service. Son coût est plafonné par le budget
+  de l'offre.
+
 ## Ce qui change pour Hiba
 
 - Elle ouvre le cockpit à son adresse (`https://…duckdns.org`) avec son email

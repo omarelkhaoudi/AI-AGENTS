@@ -1993,11 +1993,18 @@ function agentSettingsBlock(agentId) {
 // each agent's share. An estimate; OpenAI's invoice is the reference.
 async function refreshAiUsage() {
   try {
-    const response = await fetch("/api/ai-usage", { headers: await authHeaders() });
+    const headers = await authHeaders();
+    const [response, companyResponse] = await Promise.all([fetch("/api/ai-usage", { headers }), fetch("/api/company", { headers }).catch(() => null)]);
     if (!response.ok) {
       throw new Error("Le coût de l'IA n'a pas pu être chargé.");
     }
     renderAiUsage(await response.json());
+    // The subscription of this cockpit, when it has one (not the pilot).
+    const plan = companyResponse?.ok ? (await companyResponse.json()).plan : null;
+    if (plan) {
+      const seats = plan.maxUsers ? `${plan.usersUsed ?? "?"} / ${plan.maxUsers} utilisateurs` : "utilisateurs illimités";
+      aiUsagePanel.insertAdjacentHTML("afterbegin", `<p class="progress-label mb-2!"><span class="tag ok">Offre ${escapeHtml(plan.label)}</span> ${escapeHtml(seats)}${plan.aiBudgetUsd ? ` · budget IA inclus ${escapeHtml(String(plan.aiBudgetUsd))} $ / mois` : ""}</p>`);
+    }
   } catch (error) {
     aiUsagePanel.innerHTML = `<p class="muted text-[13px]">${escapeHtml(error.message)}</p>`;
   }

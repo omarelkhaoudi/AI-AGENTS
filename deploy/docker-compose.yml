@@ -60,6 +60,8 @@ services:
       DOMAIN: ${DOMAIN:?set DOMAIN in deploy/.env}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # One file per client company (scripts/tenant.sh).
+      - ./tenants-caddy:/etc/caddy/tenants:ro
       - caddy_data:/data
       - caddy_config:/config
 

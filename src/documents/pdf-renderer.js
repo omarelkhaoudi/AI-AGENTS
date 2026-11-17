@@ -5,7 +5,7 @@ import fontkit from "@pdf-lib/fontkit";
 import { DELIVERY_NOTE_PROFILES, HKIDS_DOCUMENT_TYPES } from "./document-schema.js";
 import {
   HKIDS_FIXED_IDENTITY,
-  HKIDS_LOGO_PATH,
+  companyLogoPath,
   deliveryNoteReferences,
   documentTitleFor,
   invoiceUpstreamReference,
@@ -641,8 +641,7 @@ function wrapText(value, font, size, width) {
 // An override that is set to an empty string is not an override, as for the
 // Word renderer.
 export function logoPath() {
-  const configured = typeof process.env.HKIDS_LOGO_PATH === "string" ? process.env.HKIDS_LOGO_PATH.trim() : "";
-  return configured === "" ? HKIDS_LOGO_PATH : configured;
+  return companyLogoPath();
 }
 
 function titleCase(value) {

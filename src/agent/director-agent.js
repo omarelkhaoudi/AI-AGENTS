@@ -20,6 +20,7 @@ import { createMemoryTeamBook } from "./team-book.js";
 import { createMemoryFollowUpBook } from "./sales-book.js";
 import { socialTools } from "./social-tools.js";
 import { configTools } from "./config-tools.js";
+import { brandPayload } from "../company/company-profile.js";
 import { AUTOMATION_TOOL_NAMES, CREATE_AUTOMATION_TOOL, LIST_AUTOMATIONS_TOOL, runAutomationTool } from "./automation-tools.js";
 import {
   ANOMALIES_TOOL,
@@ -1025,7 +1026,7 @@ async function askModel(client, payload, { aiUsage = null, agent = "director" } 
 
 async function callModel(client, payload) {
   try {
-    return await client.responses.create(withReasoning(payload));
+    return await client.responses.create(withReasoning(brandPayload(payload)));
   } catch (cause) {
     const status = cause?.status ?? null;
     // No answer at all, as when the internet is down: saying so tells Hiba what

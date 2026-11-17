@@ -1,7 +1,10 @@
 # HTTPS in front of the cockpit. Caddy obtains the certificate from Let's
 # Encrypt for the domain in deploy/.env and renews it by itself; the domain's DNS
 # must point at this server first.
-{$DOMAIN} {
+#
+# The client companies of the SaaS (scripts/tenant.sh) each add one file in
+# deploy/tenants-caddy/, with the same protections.
+(cockpit) {
 	encode zstd gzip
 
 	# Photos and documents joined to the Director can weigh up to 40 MB.
@@ -16,6 +19,11 @@
 		Referrer-Policy "same-origin"
 		-Server
 	}
+}
 
+import /etc/caddy/tenants/*.caddy
+
+{$DOMAIN} {
+	import cockpit
 	reverse_proxy app:3000
 }

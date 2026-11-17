@@ -3,6 +3,7 @@ import { USER_ROLES, normalizeUserRole } from "../src/security/authorization.js"
 import { hashPassword } from "../src/security/password.js";
 import { loadDotEnvIfPresent } from "../src/load-dotenv.js";
 import { createRepository } from "../src/persistence/repository-factory.js";
+import { assertSeatAvailable, planFromEnv } from "../src/company/plans.js";
 
 // Creates a person who signs in to the hosted cockpit, or changes their
 // password. The password is typed at the prompt, never passed on the command
@@ -67,10 +68,18 @@ const passwordHash = await hashPassword(password).catch((error) => {
 
 const repository = await createRepository();
 try {
-  const existing = await repository.getUser(id);
-  const user = await repository.upsertUser({ id, name, email: email.trim().toLowerCase(), role, status: "active", metadata: { ...(existing?.metadata ?? {}), companyId } });
-  await repository.setUserPassword(user.id, passwordHash);
-  console.log(`Compte prêt : ${user.name} <${user.email}> (rôle ${user.role}, société ${companyId}).`);
+  // A subscription counts its users (HKIDS_PLAN): a new person past the
+  // number is refused, an existing account can always be changed.
+  const refused = await assertSeatAvailable(repository, { userId: id, plan: planFromEnv() }).then(() => null, (error) => error);
+  if (refused) {
+    console.error(refused.message);
+    process.exitCode = 1;
+  } else {
+    const existing = await repository.getUser(id);
+    const user = await repository.upsertUser({ id, name, email: email.trim().toLowerCase(), role, status: "active", metadata: { ...(existing?.metadata ?? {}), companyId } });
+    await repository.setUserPassword(user.id, passwordHash);
+    console.log(`Compte prêt : ${user.name} <${user.email}> (rôle ${user.role}, société ${companyId}).`);
+  }
 } finally {
   await repository.disconnect();
 }

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { DATA_DIR, createFileJsonBook, createMemoryJsonBook } from "./json-book.js";
+import { aiBudgetOf } from "../company/plans.js";
 
 // What the AI costs (CDC sections 11 and 14: « contrôle des coûts d'utilisation
 // des modèles IA »). Every call to the model is counted for the agent that made
@@ -52,7 +53,9 @@ export function createAiUsageFromEnv({ env = process.env, book = createMemoryAiU
   } catch {
     prices = {};
   }
-  return createAiUsage({ book, clock, onAlert, prices, budgetUsd: positive("HKIDS_AI_BUDGET_USD"), usdToMad: positive("HKIDS_USD_MAD"), stopAtBudget: String(env.HKIDS_AI_BUDGET_STOP ?? "").trim().toLowerCase() === "on" });
+  // The budget set for this instance, or the one its subscription includes.
+  const { budgetUsd, stopAtBudget } = aiBudgetOf(env);
+  return createAiUsage({ book, clock, onAlert, prices, budgetUsd, usdToMad: positive("HKIDS_USD_MAD"), stopAtBudget });
 }
 
 export function createAiUsage({ book = createMemoryAiUsageBook(), clock = () => new Date(), prices = {}, budgetUsd = null, usdToMad = null, stopAtBudget = false, onAlert = null } = {}) {

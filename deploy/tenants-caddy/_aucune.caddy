@@ -1,0 +1,3 @@
+# The client companies' addresses are added here by scripts/tenant.sh, one
+# file each (<slug>.caddy). This file only keeps the folder, so Caddy's import
+# always finds something.

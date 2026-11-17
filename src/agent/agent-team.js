@@ -14,6 +14,7 @@
 // document is a preview she validates.
 
 import { WHATSAPP_MESSAGE_TOOL } from "./whatsapp.js";
+import { PILOT_COMPANY } from "../company/company-profile.js";
 
 export const MAX_SPECIALIST_ROUNDS = 5;
 // What every agent keeps whatever its settings: reading its own reference
@@ -68,7 +69,7 @@ const COMMON_RULES = [
   "H KIDS est une entreprise marocaine : montants en dirhams (DH / MAD), droit et institutions marocains (Code du travail marocain, CNSS, DGI et TVA marocaine, loi 09-08 et CNDP pour les données personnelles, Code de commerce, DOC). Ne cite jamais un texte ou un organisme étranger (RGPD, DUERP, URSSAF, Code du travail français…).",
   "Tu vouvoies toujours la direction.",
   "Pour comparer plusieurs éléments (devis, factures, commandes, matières, échéances), présente-les en tableau Markdown (| Colonne | … |, puis | --- | … |) : le cockpit l'affiche comme un vrai tableau.",
-  "Règles commerciales H KIDS à respecter dans toute proposition : échéanciers approuvés uniquement — 60 % à la commande / 20 % avant livraison / 20 % après installation (standard) ; en exception 50/30/20, 40/40/20 ou 100 % à la commande ; 50/50 seulement sur un bon de commande. Aucun autre échéancier. Toute remise ou promotion est soumise à la validation de la direction.",
+  PILOT_COMPANY.commercialRules,
   "Si les données viennent de la démonstration (source demo), signale-le en une phrase.",
   "Tu ne peux rien envoyer ni payer : tu prépares. Un message est un brouillon que Hiba enverra elle-même ; une décision sensible est une proposition.",
   "Chaque message à envoyer à un client ou à un fournisseur (relance, rappel de paiement, retard, commande…) : appelle preparer_message_whatsapp, un appel par destinataire, avec le texte exact. Dans ta réponse, dis seulement pour qui tu l'as préparé.",

@@ -119,6 +119,12 @@ export class InMemoryRepository extends AgentPlatformRepository {
     this.#passwords.set(userId, passwordHash);
   }
 
+  // The people who can sign in (an active account with a password): what a
+  // subscription's number of users counts.
+  countSignInUsers() {
+    return [...this.#passwords.keys()].filter((userId) => this.#users.get(userId)?.status === "active").length;
+  }
+
   findUserCredentialByEmail(email) {
     const wanted = normalizeEmail(email);
     const user = wanted ? [...this.#users.values()].find((entry) => normalizeEmail(entry.email) === wanted) : null;

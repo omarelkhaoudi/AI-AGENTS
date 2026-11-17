@@ -34,6 +34,8 @@ import { createMvpToolRegistry } from "../tools/mvp-tools.js";
 import { CONSISTENCY_DOMAINS, checkConsistency } from "../agent/consistency.js";
 import { PlanStoreError, createMemoryPlanStore } from "../agent/plan-store.js";
 import { ORDER_ROLE_IDS, WORKSHOP_STEPS, WorkshopError, createMemoryWorkshopStore, createWorkshop } from "../agent/workshop-book.js";
+import { COMPANY, brandPage } from "../company/company-profile.js";
+import { planFromEnv } from "../company/plans.js";
 import { AUTOMATION_ACTIONS, AUTOMATION_EVENTS, AutomationError, MAX_RUNS_PER_RULE_PER_DAY, createAutomation, createMemoryAutomationBook } from "../agent/automation.js";
 import { CASH_CATEGORIES, CASH_METHODS, CONFIDENTIAL_CATEGORIES, CashBookError, EXPENSE_STATUSES, OPENING_CATEGORY, createMemoryCashBook } from "../agent/cash-book.js";
 
@@ -161,6 +163,8 @@ export function buildApi({
   // The direction's automations and their waiting actions
   // (data/automatisations.json for the server process).
   automationBook = null,
+  // The subscription of this instance (HKIDS_PLAN); null for the pilot.
+  subscription = planFromEnv(),
   // The site's own address, for the links sent to clients. Left empty, a link
   // made from the cockpit takes the address the cockpit was opened at.
   publicBaseUrl = process.env.PUBLIC_BASE_URL ?? "",
@@ -977,6 +981,14 @@ export function buildApi({
     // What the AI cost this month (or the month asked): an estimate, by agent
     // and by day, with the budget when one is set.
     app.get("/api/ai-usage", readRouteOptions(), async (request) => usage.summary({ month: typeof request.query?.month === "string" ? request.query.month : "" }));
+
+    // The company of this instance and its subscription (none for the pilot).
+    app.get("/api/company", readRouteOptions(), async () => ({
+      name: COMPANY.name,
+      shortName: COMPANY.shortName,
+      city: COMPANY.city,
+      plan: subscription ? { ...subscription, usersUsed: typeof repository.countSignInUsers === "function" ? await repository.countSignInUsers() : null } : null
+    }));
 
     app.get("/api/agent/status", readRouteOptions(), async () => ({
       configured: agent.isConfigured(),
@@ -2463,7 +2475,8 @@ async function serveFrontendAsset(reply, route) {
   }
 
   try {
-    const content = await readFile(join(FRONTEND_DIR, asset.file), "utf8");
+    // Another company's instance shows its own name, not the pilot's.
+    const content = brandPage(await readFile(join(FRONTEND_DIR, asset.file), "utf8"));
     // Asked again each time: after an update (git pull), the browser must not
     // keep running the old cockpit with the new server.
     return reply.type(asset.type).header("Cache-Control", "no-cache").send(content);

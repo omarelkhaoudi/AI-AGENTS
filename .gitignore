@@ -21,6 +21,13 @@ data/
 
 !deploy/.env.production.example
 
+# The SaaS client companies (scripts/tenant.sh): their settings carry keys and
+# passwords, their sites and exports carry their names and data.
+deploy/tenants/
+deploy/exports/
+deploy/tenants-caddy/*
+!deploy/tenants-caddy/_aucune.caddy
+
 # Python caches of the dessinateur méthodes' engine.
 __pycache__/
 .pytest_cache/

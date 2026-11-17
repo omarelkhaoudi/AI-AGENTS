@@ -3,7 +3,7 @@ import yazl from "yazl";
 import { DELIVERY_NOTE_PROFILES, HKIDS_DOCUMENT_TYPES } from "./document-schema.js";
 import {
   HKIDS_FIXED_IDENTITY,
-  HKIDS_LOGO_PATH,
+  companyLogoPath,
   deliveryNoteReferences,
   documentTitleFor,
   referenceLabelFor
@@ -331,8 +331,7 @@ function logo() {
 // HKIDS_LOGO_PATH="" through, and readFile("") fails: a variable left blank in a
 // copied .env would have broken every Word document.
 async function extractLogoBytes() {
-  const configured = typeof process.env.HKIDS_LOGO_PATH === "string" ? process.env.HKIDS_LOGO_PATH.trim() : "";
-  return readFile(configured === "" ? HKIDS_LOGO_PATH : configured);
+  return readFile(companyLogoPath());
 }
 
 function contentTypes() {

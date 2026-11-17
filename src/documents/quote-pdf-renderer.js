@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { PDFDocument, rgb } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
-import { HKIDS_LOGO_PATH } from "./hkids-template.js";
+import { companyLogoPath } from "./hkids-template.js";
 import { resolveDocumentFontPath } from "./pdf-renderer.js";
 import { createQuotePresentation } from "./quote-presentation.js";
 
@@ -35,9 +35,8 @@ const ROW_HEIGHT = 18;
 const BOTTOM_LIMIT = 96;
 
 async function embedLogo(pdf) {
-  const configured = typeof process.env.HKIDS_LOGO_PATH === "string" ? process.env.HKIDS_LOGO_PATH.trim() : "";
   try {
-    return await pdf.embedJpg(await readFile(configured === "" ? HKIDS_LOGO_PATH : configured));
+    return await pdf.embedJpg(await readFile(companyLogoPath()));
   } catch {
     // A missing logo is not a reason to refuse a quote. Everything else on the
     // page is still true.

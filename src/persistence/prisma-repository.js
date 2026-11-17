@@ -54,6 +54,12 @@ export class PrismaRepository extends AgentPlatformRepository {
     return this.prisma.user.findUnique({ where: { id: userId } });
   }
 
+  // The people who can sign in (an active account with a password): what a
+  // subscription's number of users counts.
+  async countSignInUsers() {
+    return this.prisma.user.count({ where: { status: "active", credential: { isNot: null } } });
+  }
+
   async setUserPassword(userId, passwordHash) {
     await this.prisma.userCredential.upsert({
       where: { userId },

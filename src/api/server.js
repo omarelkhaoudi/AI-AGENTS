@@ -33,7 +33,8 @@ import { ToolExecutionService, ToolExecutionServiceError } from "../tools/execut
 import { createMvpToolRegistry } from "../tools/mvp-tools.js";
 import { CONSISTENCY_DOMAINS, checkConsistency } from "../agent/consistency.js";
 import { PlanStoreError, createMemoryPlanStore } from "../agent/plan-store.js";
-import { ORDER_ROLE_IDS, WorkshopError, createMemoryWorkshopStore, createWorkshop } from "../agent/workshop-book.js";
+import { ORDER_ROLE_IDS, WORKSHOP_STEPS, WorkshopError, createMemoryWorkshopStore, createWorkshop } from "../agent/workshop-book.js";
+import { AUTOMATION_ACTIONS, AUTOMATION_EVENTS, AutomationError, MAX_RUNS_PER_RULE_PER_DAY, createAutomation, createMemoryAutomationBook } from "../agent/automation.js";
 import { CASH_CATEGORIES, CASH_METHODS, CONFIDENTIAL_CATEGORIES, CashBookError, EXPENSE_STATUSES, OPENING_CATEGORY, createMemoryCashBook } from "../agent/cash-book.js";
 
 export const DEFAULT_COMPANY_ID = "hkids";
@@ -75,6 +76,21 @@ import { createCommercialFileService, normalizeCommercialFileError } from "../do
 const DELAY_ALERT_TOOL_ID = "notify_delay_alert";
 const PRODUCT_DATASHEET_TOOL_ID = "get_product_datasheet";
 const DATASHEET_QUOTE_TOOL_ID = "prepare_quote_from_datasheet";
+
+// A document generated for good, as the automations name it.
+const DOCUMENT_EVENTS = Object.freeze({
+  quote: "devis_emis",
+  purchase_order: "devis_accepte",
+  invoice: "facture_emise",
+  delivery_note: "bl_emis",
+  credit_note: "avoir_emis",
+  payment_receipt: "recu_emis"
+});
+
+function dirhams(amount) {
+  const value = Number(amount);
+  return Number.isFinite(value) ? `${value.toFixed(2).replace(".", ",").replace(/\B(?=(\d{3})+(?!\d))/g, " ")} DH` : "";
+}
 
 const FRONTEND_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "frontend");
 const FRONTEND_ASSETS = Object.freeze({
@@ -142,6 +158,9 @@ export function buildApi({
   // Each agent's settings: instructions, reference documents, forbidden
   // tools and notes (data/agents.json for the server process).
   agentConfigStore = null,
+  // The direction's automations and their waiting actions
+  // (data/automatisations.json for the server process).
+  automationBook = null,
   // The site's own address, for the links sent to clients. Left empty, a link
   // made from the cockpit takes the address the cockpit was opened at.
   publicBaseUrl = process.env.PUBLIC_BASE_URL ?? "",
@@ -234,9 +253,118 @@ export function buildApi({
   };
   const measured = (plan) => withObjectiveMeasure(plan, { loadObjectiveRecords });
   const plans = planStore ?? createMemoryPlanStore();
-  const workshopBook = workshopStore ?? createMemoryWorkshopStore();
+  // The direction's automations (« quand un devis est accepté, prévenir la
+  // production »). The events come from the books below; the actions go to
+  // the team feed, to an agent's mission, to the direction or to a person on
+  // WhatsApp, never to a client and never past a validation.
+  const automation = createAutomation({
+    book: automationBook ?? createMemoryAutomationBook(),
+    agents: SPECIALIST_IDS,
+    clock,
+    log: (error) => app.log.error(error),
+    executors: {
+      async informer({ agent: agentId, text, rule }) {
+        await teamFeed.log({ agent: agentId, kind: "automatisation", text, detail: `Règle n° ${rule.number} : ${rule.name}`, by: "automatisation" });
+        return "noté au fil de l'équipe";
+      },
+      async mission({ agent: agentId, text, rule }) {
+        if (typeof agent.runMission !== "function") {
+          throw new Error("Le Director de ce serveur ne prend pas de mission automatique.");
+        }
+        return agent.runMission(agentId, text, { rule: `règle n° ${rule.number}, ${rule.name}` });
+      },
+      async direction({ text, rule }) {
+        await teamFeed.log({ agent: "director", kind: "automatisation", text, detail: `Règle n° ${rule.number} : ${rule.name}`, by: "automatisation" });
+        if (!whatsApp.configured) {
+          return "noté au fil ; WhatsApp n'est pas configuré";
+        }
+        await whatsApp.tellDirection(text);
+        return "envoyé à la direction sur WhatsApp";
+      },
+      async task({ agent: agentId, text, dueDays, rule }) {
+        const due = new Date(clock().getTime() + dueDays * 86_400_000).toISOString().slice(0, 10).split("-").reverse().join("/");
+        const line = `${text} (avant le ${due})`;
+        await teamFeed.log({ agent: agentId, kind: "automatisation", text: `Tâche : ${line}`, detail: `Règle n° ${rule.number} : ${rule.name}`, by: "automatisation" });
+        const member = await teamFeed.member(agentId);
+        if (!member?.phone) {
+          return "notée au fil ; personne n'est reliée à cet agent";
+        }
+        if (!whatsApp.configured) {
+          return `notée au fil ; WhatsApp n'est pas configuré pour prévenir ${member.name}`;
+        }
+        await whatsApp.send({ to: member.phone, text: `Bonjour ${member.name}, tâche de la direction : ${line}`, name: member.name, by: "director", kind: "tache" });
+        return `envoyée à ${member.name} sur WhatsApp`;
+      }
+    }
+  });
+  const automate = (event, payload) => {
+    automation.emit(event, payload).catch((error) => app.log.error(error));
+  };
+  const stopDocumentEvents = hkidsDocuments.onGenerated?.(({ document, replaced }) => {
+    const event = DOCUMENT_EVENTS[document.documentType];
+    if (!event || replaced) {
+      return;
+    }
+    automate(event, {
+      numero: String(document.documentNumber),
+      client: document.client?.name ?? "",
+      montant: dirhams(document.totals?.totalTtc),
+      montant_valeur: Number(document.totals?.totalTtc ?? 0),
+      reference_devis: String(document.quoteReference ?? ""),
+      reference_facture: String(document.invoiceReference ?? ""),
+      objet: String(document.object ?? "")
+    });
+  });
+  const workshopRecords = workshopStore ?? createMemoryWorkshopStore();
+  // Every step moved, by the cockpit, the Director or WhatsApp, goes through
+  // here: a step finished or blocked starts the rules that wait for it.
+  const workshopBook = Object.freeze({
+    ...workshopRecords,
+    async updateStep(number, stepId, fields) {
+      const result = await workshopRecords.updateStep(number, stepId, fields);
+      const event = { terminee: "etape_terminee", bloquee: "etape_bloquee" }[result?.statusChange?.to];
+      if (event) {
+        orderClient(number).then((client) => automate(event, {
+          commande: String(number),
+          etape: WORKSHOP_STEPS.find((step) => step.id === stepId)?.label ?? stepId,
+          etape_id: stepId,
+          client,
+          raison: result.statusChange.note ?? ""
+        }));
+      }
+      return result;
+    }
+  });
+  async function orderClient(number) {
+    try {
+      const order = (await hkidsDocuments.listIssued()).find((entry) => entry.type === "purchase_order" && String(entry.number) === String(number));
+      return order?.client ?? "";
+    } catch {
+      return "";
+    }
+  }
   const workshop = createWorkshop({ store: workshopBook, documentService: hkidsDocuments, clock, publicBaseUrl });
-  const cash = cashBook ?? createMemoryCashBook({ clock });
+  const cashRecords = cashBook ?? createMemoryCashBook({ clock });
+  // A confidential expense (salaries) never starts a rule: what a rule writes
+  // is read by the team.
+  const cash = Object.freeze({
+    ...cashRecords,
+    async record(input) {
+      const entry = await cashRecords.record(input);
+      if (!entry.confidential) {
+        automate(entry.kind === "entree" ? "encaissement" : "depense", {
+          montant: dirhams(entry.amount),
+          montant_valeur: Number(entry.amount),
+          libelle: entry.label ?? "",
+          ...(entry.kind === "entree" ? { client: entry.party ?? "" } : { fournisseur: entry.party ?? "" }),
+          reference_devis: String(entry.quoteNumber ?? ""),
+          commande: String(entry.orderNumber ?? ""),
+          moyen: entry.method ?? ""
+        });
+      }
+      return entry;
+    }
+  });
   const followUps = followUpBook ?? createMemoryFollowUpBook({ clock });
   const improvementRecords = improvementBook ?? createMemoryImprovementBook({ clock });
   // Wherever the workshop book is read (the Director, the cockpit, the timer),
@@ -249,6 +377,15 @@ export function buildApi({
       const found = await improvementRecords.sync(orders);
       await whatsApp.alertLeads(found, orders);
       await whatsApp.alertSevere(found);
+      for (const anomaly of found.filter((entry) => entry.kind === "retard")) {
+        automate("retard_atelier", {
+          commande: String(anomaly.orderNumber ?? ""),
+          etape: WORKSHOP_STEPS.find((step) => step.id === anomaly.step)?.label ?? anomaly.step ?? "",
+          etape_id: anomaly.step ?? "",
+          client: anomaly.client ?? "",
+          fait: anomaly.fact ?? ""
+        });
+      }
       return found;
     },
     async report(input) {
@@ -304,13 +441,21 @@ export function buildApi({
   // Instagram and Facebook: what people write comes in by /webhooks/meta, and
   // a reply or a post leaves only once the direction approved it.
   const socialSettings = socialConfig ?? loadMetaSocialConfig();
-  const social = createSocialService({
+  const socialService = createSocialService({
     inbox: socialStore ?? createMemorySocialInbox({ clock }),
     client: createMetaSocialClient({ config: socialSettings, ...(socialFetch ? { fetchImpl: socialFetch } : {}) }),
     config: socialSettings,
     repository,
     teamBook: teamFeed,
     clock
+  });
+  const social = Object.freeze({
+    ...socialService,
+    async handOver(input) {
+      const prospect = await socialService.handOver(input);
+      automate("nouveau_prospect", { prospect: String(prospect.id), nom: prospect.nom || prospect.compte || "", ville: prospect.ville ?? "", besoin: prospect.besoin ?? "", reseau: prospect.reseau ?? "" });
+      return prospect;
+    }
   });
   const agentSettings = agentConfigStore ?? createMemoryAgentConfig({ clock, agents: SPECIALIST_IDS });
   const agent = directorAgent ?? createDirectorAgentFromEnv({
@@ -332,6 +477,7 @@ export function buildApi({
     aiUsage: usage,
     social,
     agentConfig: agentSettings,
+    automation,
     autoAnalyse: autoAnalyseAnomalies,
     publicBaseUrl,
     client: agentClient
@@ -468,11 +614,19 @@ export function buildApi({
       }, 60_000)
     : null;
   publishTimer?.unref();
+  // The automations' actions set for a later day leave when it comes.
+  const automationTimer = setInterval(() => {
+    automation.tick().catch((error) => app.log.error(error));
+  }, 5 * 60_000);
+  automationTimer.unref();
+  app.decorate("automation", automation);
 
   app.addHook("onClose", async () => {
     if (publishTimer) {
       clearInterval(publishTimer);
     }
+    clearInterval(automationTimer);
+    stopDocumentEvents?.();
     await repository.disconnect();
   });
 
@@ -1447,6 +1601,88 @@ export function buildApi({
       }
     });
 
+    // --- The direction's automations (CDC section 10.A) --------------------
+    // Read by the team; written by the direction only.
+    const automationRefused = async (request, reply) => {
+      if (seesConfidential(request)) {
+        return false;
+      }
+      await auditSecurityEvent(repository, { type: "authorization_denied", actorUserId: request.principal.userId, resourceType: "automation", resourceId: String(request.params.id ?? ""), metadata: { method: request.method, code: "DIRECTION_ONLY" } });
+      reply.code(403).send({ error: "Réservé à la direction : seule la direction écrit les automatisations." });
+      return true;
+    };
+    const sendAutomationError = (reply, error) => {
+      if (error instanceof AutomationError) {
+        return reply.code(error.code === "AUTOMATION_RULE_NOT_FOUND" ? 404 : 400).send({ error: error.message, details: { code: error.code } });
+      }
+      return sendDomainError(reply, "Automation failed.", error);
+    };
+    const logAutomation = (request, text) => teamFeed.log({ agent: "director", kind: "automatisation", text, by: request.principal.userId ?? "direction" });
+
+    app.get("/api/automations", readRouteOptions(), async (request) => ({
+      rules: await automation.rules(),
+      queue: (await automation.queue()).map((entry) => ({ id: entry.id, ruleId: entry.ruleId, kind: entry.action.kind, agent: entry.action.agent ?? null, dueAt: entry.dueAt })),
+      runs: await automation.runs({ limit: 40 }),
+      events: Object.entries(AUTOMATION_EVENTS).map(([id, event]) => ({ id, label: event.label, fields: event.fields })),
+      actions: Object.entries(AUTOMATION_ACTIONS).map(([id, label]) => ({ id, label })),
+      agents: SPECIALIST_IDS.map((id) => ({ id, label: SPECIALISTS[id].label })),
+      steps: WORKSHOP_STEPS.map((step) => ({ id: step.id, label: step.label })),
+      dailyLimit: MAX_RUNS_PER_RULE_PER_DAY,
+      canEdit: seesConfidential(request)
+    }));
+
+    app.post("/api/automations", writeRouteOptions(), async (request, reply) => {
+      if (await automationRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        const rule = await automation.create(request.body ?? {}, { by: request.principal.userId ?? "direction" });
+        await logAutomation(request, `Automatisation n° ${rule.number} créée : ${rule.name}.`);
+        return reply.code(201).send({ rule });
+      } catch (error) {
+        return sendAutomationError(reply, error);
+      }
+    });
+
+    app.put("/api/automations/:id", writeRouteOptions(), async (request, reply) => {
+      if (await automationRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        const rule = await automation.update(request.params.id, request.body ?? {}, { by: request.principal.userId ?? "direction" });
+        await logAutomation(request, `Automatisation n° ${rule.number} modifiée : ${rule.name}.`);
+        return { rule };
+      } catch (error) {
+        return sendAutomationError(reply, error);
+      }
+    });
+
+    app.post("/api/automations/:id/active", writeRouteOptions(), async (request, reply) => {
+      if (await automationRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        const rule = await automation.setActive(request.params.id, request.body?.active === true, { by: request.principal.userId ?? "direction" });
+        await logAutomation(request, `Automatisation n° ${rule.number} ${rule.active ? "activée" : "mise en pause"} : ${rule.name}.`);
+        return { rule };
+      } catch (error) {
+        return sendAutomationError(reply, error);
+      }
+    });
+
+    app.delete("/api/automations/:id", writeRouteOptions(), async (request, reply) => {
+      if (await automationRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        await automation.remove(request.params.id);
+        await logAutomation(request, `Automatisation n° ${request.params.id} supprimée.`);
+        return { ok: true };
+      } catch (error) {
+        return sendAutomationError(reply, error);
+      }
+    });
+
     // --- WhatsApp Business: the company's number, in and out ---------------
     app.get("/api/whatsapp", readRouteOptions(), async () => ({
       configured: whatsApp.configured,
@@ -1586,6 +1822,7 @@ export function buildApi({
         const line = `BC ${signed.order.number} (${signed.order.client}) — bon de livraison n° ${signed.signature.number} signé en ligne par ${signed.signature.name}.`;
         await teamFeed.log({ agent: "commercial", kind: "document", text: line, ref: `bc:${signed.order.number}`, by: "client" });
         whatsApp.tellDirection(line).catch((error) => app.log.error(error));
+        automate("bl_signe", { numero: String(signed.signature.number), commande: String(signed.order.number), client: signed.order.client ?? "", signataire: signed.signature.name ?? "" });
         return reply.code(201).send({ signature: { number: signed.signature.number, name: signed.signature.name, signedAt: signed.signature.signedAt } });
       } catch (error) {
         if (error instanceof WorkshopError) {

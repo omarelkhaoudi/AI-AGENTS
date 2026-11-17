@@ -1505,7 +1505,7 @@ function taskBlock(anomaly) {
 // --- Team view ------------------------------------------------------------------
 // Each agent with the person it answers to, the missions it carries, the rules
 // it applies and what it did lately; beside it, the whole team's feed.
-const ACTIVITY_LABELS = Object.freeze({ mission: "Mission", caisse: "Caisse", atelier: "Atelier", document: "Document", amelioration: "Amélioration", equipe: "Équipe", compte_rendu: "Compte rendu", alerte: "Alerte" });
+const ACTIVITY_LABELS = Object.freeze({ mission: "Mission", caisse: "Caisse", atelier: "Atelier", document: "Document", amelioration: "Amélioration", equipe: "Équipe", compte_rendu: "Compte rendu", alerte: "Alerte", automatisation: "Automatisation", reseaux: "Réseaux" });
 const aiUsagePanel = document.querySelector("#ai-usage");
 const teamFeed = document.querySelector("#team-feed");
 const teamView = { data: null, config: new Map(), open: new Set(), responded: new Set() };
@@ -1589,7 +1589,256 @@ async function refreshTeam() {
   } catch (error) {
     teamFeed.innerHTML = `<li class="muted">${escapeHtml(error.message)}</li>`;
   }
-  await refreshAiUsage();
+  await Promise.all([refreshAiUsage(), refreshAutomations()]);
+}
+
+// --- The direction's automations (CDC section 10.A) --------------------------
+// Each rule: an event, optional filters, and one to five actions, now or some
+// days later. Built here or said to the Director in words.
+const automationsPanel = document.querySelector("#automations");
+const automationView = { data: null, draftOpen: false };
+// The spec's own example, ready to adjust.
+const AUTOMATION_TEMPLATE = Object.freeze({
+  name: "Devis accepté : lancer la commande",
+  event: "devis_accepte",
+  actions: [
+    { kind: "informer_agent", agent: "production", text: "BC {numero} ({client}, {montant}) : commande acceptée, à planifier en production.", delayDays: 0 },
+    { kind: "mission_agent", agent: "purchasing", text: "Le BC {numero} ({client}) vient d'être accepté : vérifie les matières à commander pour cette commande et dis ce qui manque.", delayDays: 0 },
+    { kind: "tache_equipe", agent: "finance", text: "Premier rappel de paiement au client {client} pour le BC {numero} ({montant}).", delayDays: 30, dueDays: 3 }
+  ]
+});
+
+automationsPanel.addEventListener("click", async (event) => {
+  const toggle = event.target.closest?.("[data-automation-toggle]");
+  if (toggle) {
+    await automationRequest(`/api/automations/${encodeURIComponent(toggle.dataset.automationToggle)}/active`, { body: { active: toggle.dataset.active === "true" } }, toggle.dataset.active === "true" ? "Règle activée." : "Règle mise en pause ; ses actions en attente sont annulées.");
+    return;
+  }
+  const remove = event.target.closest?.("[data-automation-remove]");
+  if (remove && globalThis.confirm?.("Supprimer cette automatisation ? Ses actions en attente sont annulées.")) {
+    await automationRequest(`/api/automations/${encodeURIComponent(remove.dataset.automationRemove)}`, { method: "DELETE" }, "Règle supprimée.");
+    return;
+  }
+  const form = automationsPanel.querySelector("[data-automation-form]");
+  if (event.target.closest?.("[data-automation-template]")) {
+    fillAutomationForm(form, AUTOMATION_TEMPLATE);
+    return;
+  }
+  if (event.target.closest?.("[data-automation-add]")) {
+    const list = form.querySelector("[data-automation-actions]");
+    if (list.children.length < 5) {
+      list.insertAdjacentHTML("beforeend", automationActionRow({ kind: "informer_agent", agent: "", text: "", delayDays: 0 }, list.children.length));
+    }
+    syncAutomationForm(form);
+    return;
+  }
+  const drop = event.target.closest?.("[data-automation-drop]");
+  if (drop) {
+    const list = form.querySelector("[data-automation-actions]");
+    if (list.children.length > 1) {
+      drop.closest("[data-automation-action]").remove();
+    }
+    syncAutomationForm(form);
+  }
+});
+automationsPanel.addEventListener("change", (event) => {
+  const form = event.target.closest?.("[data-automation-form]");
+  if (form) {
+    syncAutomationForm(form);
+  }
+});
+automationsPanel.addEventListener("toggle", (event) => {
+  if (event.target.matches?.("[data-automation-draft]")) {
+    automationView.draftOpen = event.target.open;
+  }
+}, true);
+automationsPanel.addEventListener("submit", async (event) => {
+  const form = event.target.closest?.("[data-automation-form]");
+  if (!form) {
+    return;
+  }
+  event.preventDefault();
+  const read = (node, name) => node.querySelector(`[name='${name}']`)?.value ?? "";
+  const body = {
+    name: read(form, "name"),
+    event: read(form, "event"),
+    filters: { minAmount: read(form, "minAmount"), step: read(form, "step"), contains: read(form, "contains") },
+    actions: [...form.querySelectorAll("[data-automation-action]")].map((row) => ({
+      kind: read(row, "kind"),
+      agent: read(row, "agent"),
+      text: read(row, "text"),
+      delayDays: Number(read(row, "delayDays")) || 0,
+      dueDays: Number(read(row, "dueDays")) || 3
+    }))
+  };
+  const created = await automationRequest("/api/automations", { body }, "");
+  if (created?.rule) {
+    showToast(`Automatisation n° ${created.rule.number} créée : elle se déclenchera à chaque « ${automationEventLabel(created.rule.event).toLowerCase()} ».`);
+    automationView.draftOpen = false;
+    renderAutomations();
+  }
+});
+
+async function refreshAutomations() {
+  try {
+    const response = await fetch("/api/automations", { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("Les automatisations n'ont pas pu être chargées.");
+    }
+    automationView.data = await response.json();
+    renderAutomations();
+  } catch (error) {
+    automationsPanel.innerHTML = `<p class="muted text-[13px]">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function automationRequest(url, { method = "POST", body = undefined } = {}, success = "") {
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), ...(await authHeaders()) },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error ?? "La demande a été refusée.");
+    }
+    if (success) {
+      showToast(success);
+    }
+    await refreshAutomations();
+    return payload;
+  } catch (error) {
+    showToast(error.message, "warn");
+    return null;
+  }
+}
+
+function automationEventLabel(id) {
+  return automationView.data?.events?.find((event) => event.id === id)?.label ?? id;
+}
+
+function automationAgentLabel(id) {
+  return automationView.data?.agents?.find((agent) => agent.id === id)?.label ?? formatAgent(id);
+}
+
+function automationDelay(days) {
+  return days > 0 ? `${days} jour${days > 1 ? "s" : ""} après` : "aussitôt";
+}
+
+function renderAutomations() {
+  const data = automationView.data;
+  if (!data) {
+    return;
+  }
+  const waiting = (ruleId) => data.queue.filter((entry) => entry.ruleId === ruleId).length;
+  const rules = data.rules.length === 0
+    ? '<p class="muted text-[13px]">Aucune automatisation. Créez-en une ci-dessous, ou dites-la au Director : « quand un devis est accepté, préviens la production ».</p>'
+    : `<ul class="automation-rules">${data.rules.map((rule) => `
+      <li class="${rule.active ? "" : "is-paused"}">
+        <div class="automation-rule-head">
+          <span><strong>n° ${escapeHtml(String(rule.number))} — ${escapeHtml(rule.name)}</strong> <span class="tag ${rule.active ? "ok" : "warning"}">${rule.active ? "active" : "en pause"}</span></span>
+          ${data.canEdit ? `<span class="flex flex-wrap gap-2">
+            <button type="button" class="link-button" data-automation-toggle="${escapeHtml(rule.id)}" data-active="${rule.active ? "false" : "true"}">${rule.active ? "Mettre en pause" : "Activer"}</button>
+            <button type="button" class="link-button" data-automation-remove="${escapeHtml(rule.id)}">Supprimer</button>
+          </span>` : ""}
+        </div>
+        <p><span class="muted">Quand</span> ${escapeHtml(automationEventLabel(rule.event).toLowerCase())}${automationFilters(rule.filters)}</p>
+        <ol>${rule.actions.map((action) => `<li><span class="muted">${escapeHtml(automationDelay(action.delayDays))} :</span> ${escapeHtml(data.actions.find((entry) => entry.id === action.kind)?.label ?? action.kind)}${action.agent ? ` — ${escapeHtml(automationAgentLabel(action.agent))}` : ""}<small>${escapeHtml(action.text)}${action.dueDays ? ` (à faire en ${escapeHtml(String(action.dueDays))} j)` : ""}</small></li>`).join("")}</ol>
+        <small class="muted">${rule.lastFiredAt ? `Dernier déclenchement ${escapeHtml(formatStamp(rule.lastFiredAt))}` : "Jamais déclenchée"}${waiting(rule.id) > 0 ? ` · ${waiting(rule.id)} action${waiting(rule.id) > 1 ? "s" : ""} en attente de son jour` : ""}</small>
+      </li>`).join("")}</ul>`;
+  const runs = data.runs.length === 0
+    ? '<p class="muted text-[13px]">Rien n\'a encore été exécuté.</p>'
+    : `<ul class="automation-runs">${data.runs.slice(0, 15).map((run) => `
+      <li><span><span class="tag ${run.ok ? "ok" : "warning"}">${run.ok ? "fait" : run.action === "limite" ? "limite" : "échec"}</span> n° ${escapeHtml(String(run.rule))} — ${escapeHtml(run.text)}</span><small>${escapeHtml(formatStamp(run.at))}${run.agent ? ` · ${escapeHtml(automationAgentLabel(run.agent))}` : ""}${run.detail ? ` · ${escapeHtml(run.detail)}` : ""}</small></li>`).join("")}</ul>`;
+  automationsPanel.innerHTML = `
+    <div class="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px] [&>*]:min-w-0">
+      <div class="flex flex-col gap-4">
+        ${rules}
+        ${data.canEdit ? automationForm() : '<p class="muted text-[13px]">Seule la direction crée ou modifie une automatisation.</p>'}
+      </div>
+      <div class="team-block">
+        <h4>Dernières exécutions</h4>
+        ${runs}
+        <p class="muted text-[12px] mt-2!">Une règle s'arrête d'elle-même après ${escapeHtml(String(data.dailyLimit))} déclenchements dans la journée.</p>
+      </div>
+    </div>`;
+  const form = automationsPanel.querySelector("[data-automation-form]");
+  if (form) {
+    syncAutomationForm(form);
+  }
+}
+
+function automationFilters(filters = {}) {
+  const parts = [
+    filters.minAmount ? `à partir de ${formatDh(filters.minAmount)}` : "",
+    filters.step ? `étape « ${automationView.data.steps.find((step) => step.id === filters.step)?.label ?? filters.step} »` : "",
+    filters.contains ? `contenant « ${filters.contains} »` : ""
+  ].filter(Boolean);
+  return parts.length > 0 ? ` <span class="muted">(${escapeHtml(parts.join(", "))})</span>` : "";
+}
+
+function automationForm() {
+  const data = automationView.data;
+  return `
+    <details class="team-block agent-settings automation-draft" data-automation-draft ${automationView.draftOpen ? "open" : ""}>
+      <summary><h4>Nouvelle automatisation</h4><small class="muted">quand … alors …</small></summary>
+      <form data-automation-form class="team-edit-form">
+        <div class="flex flex-wrap gap-2"><button type="button" class="secondary" data-automation-template>Partir de l'exemple : devis accepté → production, achats, rappel de paiement</button></div>
+        <label>Nom<input name="name" maxlength="120" placeholder="Ex. : Devis accepté : lancer la commande"></label>
+        <label>Quand<select name="event">${data.events.map((event) => `<option value="${escapeHtml(event.id)}">${escapeHtml(event.label)}</option>`).join("")}</select></label>
+        <div class="automation-filters">
+          <label>Montant minimum (DH)<input name="minAmount" type="number" min="0" step="1" placeholder="tous"></label>
+          <label data-automation-step>Étape<select name="step"><option value="">toutes</option>${data.steps.map((step) => `<option value="${escapeHtml(step.id)}">${escapeHtml(step.label)}</option>`).join("")}</select></label>
+          <label>Contient le mot<input name="contains" maxlength="80" placeholder="client, objet…"></label>
+        </div>
+        <p class="muted text-[12px]" data-automation-fields></p>
+        <ol class="automation-actions" data-automation-actions>${automationActionRow({ kind: "informer_agent", agent: "", text: "", delayDays: 0 }, 0)}</ol>
+        <div class="flex flex-wrap gap-2">
+          <button type="button" class="secondary" data-automation-add>${icon("plus")}Ajouter une action</button>
+          <button type="submit" class="primary">${icon("check")}Créer l'automatisation</button>
+        </div>
+      </form>
+    </details>`;
+}
+
+function automationActionRow(action, index) {
+  const data = automationView.data;
+  return `
+    <li data-automation-action>
+      <div class="automation-filters">
+        <label>Action ${index + 1}<select name="kind">${data.actions.map((entry) => `<option value="${escapeHtml(entry.id)}" ${entry.id === action.kind ? "selected" : ""}>${escapeHtml(entry.label)}</option>`).join("")}</select></label>
+        <label data-automation-agent>Agent<select name="agent"><option value="">—</option>${data.agents.map((agent) => `<option value="${escapeHtml(agent.id)}" ${agent.id === action.agent ? "selected" : ""}>${escapeHtml(agent.label)}</option>`).join("")}</select></label>
+        <label>Délai (jours)<input name="delayDays" type="number" min="0" max="365" step="1" value="${escapeHtml(String(action.delayDays ?? 0))}"></label>
+        <label data-automation-due>Échéance (jours)<input name="dueDays" type="number" min="1" max="60" step="1" value="${escapeHtml(String(action.dueDays ?? 3))}"></label>
+      </div>
+      <label>Texte<textarea name="text" rows="2" maxlength="1000" required placeholder="Ex. : BC {numero} ({client}, {montant}) : commande à planifier.">${escapeHtml(action.text ?? "")}</textarea></label>
+      <button type="button" class="link-button" data-automation-drop>Retirer cette action</button>
+    </li>`;
+}
+
+// Shows what the chosen event lets the texts quote, and only the fields each
+// action needs.
+function syncAutomationForm(form) {
+  const event = automationView.data.events.find((entry) => entry.id === form.querySelector("[name='event']").value);
+  form.querySelector("[data-automation-fields]").textContent = event ? `Les textes peuvent citer : ${event.fields.map((field) => `{${field}}`).join(", ")}.` : "";
+  form.querySelector("[data-automation-step]").hidden = !["etape_terminee", "etape_bloquee", "retard_atelier"].includes(event?.id);
+  const rows = [...form.querySelectorAll("[data-automation-action]")];
+  rows.forEach((row, index) => {
+    const kind = row.querySelector("[name='kind']").value;
+    row.querySelector("[data-automation-agent]").hidden = kind === "prevenir_direction";
+    row.querySelector("[data-automation-due]").hidden = kind !== "tache_equipe";
+    row.querySelector("[name='kind']").closest("label").firstChild.textContent = `Action ${index + 1}`;
+    row.querySelector("[data-automation-drop]").hidden = rows.length === 1;
+  });
+  form.querySelector("[data-automation-add]").hidden = rows.length >= 5;
+}
+
+function fillAutomationForm(form, template) {
+  form.querySelector("[name='name']").value = template.name;
+  form.querySelector("[name='event']").value = template.event;
+  form.querySelector("[data-automation-actions]").innerHTML = template.actions.map((action, index) => automationActionRow(action, index)).join("");
+  syncAutomationForm(form);
 }
 
 // --- Each agent's settings (CDC section 9) -----------------------------------

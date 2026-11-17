@@ -2672,6 +2672,56 @@
     @apply mt-2 max-h-64 overflow-auto rounded-lg bg-surface p-2.5 text-[12px] whitespace-pre-wrap break-words text-ink;
   }
 
+  .automation-rules {
+    @apply m-0 flex list-none flex-col gap-3 p-0;
+  }
+
+  .automation-rules > li {
+    @apply flex flex-col gap-1.5 rounded-xl border border-line p-3.5 text-[13.5px];
+  }
+
+  .automation-rules > li.is-paused {
+    @apply opacity-70;
+  }
+
+  .automation-rule-head {
+    @apply flex flex-wrap items-center justify-between gap-2;
+  }
+
+  .automation-rules ol {
+    @apply m-0 flex flex-col gap-1 pl-5;
+  }
+
+  .automation-rules ol small,
+  .automation-runs small {
+    @apply block text-[12px] text-muted;
+  }
+
+  .automation-runs {
+    @apply m-0 flex max-h-96 list-none flex-col gap-2 overflow-y-auto p-0 text-[13px];
+  }
+
+  .automation-filters {
+    @apply grid grid-cols-[repeat(auto-fit,minmax(170px,1fr))] gap-3;
+  }
+
+  .automation-filters input,
+  .automation-filters select {
+    @apply w-full!;
+  }
+
+  .automation-actions {
+    @apply m-0 flex list-none flex-col gap-3 p-0;
+  }
+
+  .automation-actions > li {
+    @apply flex flex-col gap-2 rounded-xl border border-dashed border-line p-3;
+  }
+
+  .automation-actions > li > button {
+    @apply self-start;
+  }
+
   .team-feed {
     @apply flex max-h-[70vh] list-none flex-col gap-0 overflow-y-auto p-0 max-xl:max-h-none;
   }

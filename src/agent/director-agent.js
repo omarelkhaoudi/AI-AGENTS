@@ -20,6 +20,7 @@ import { createMemoryTeamBook } from "./team-book.js";
 import { createMemoryFollowUpBook } from "./sales-book.js";
 import { socialTools } from "./social-tools.js";
 import { configTools } from "./config-tools.js";
+import { AUTOMATION_TOOL_NAMES, CREATE_AUTOMATION_TOOL, LIST_AUTOMATIONS_TOOL, runAutomationTool } from "./automation-tools.js";
 import {
   ANOMALIES_TOOL,
   CASH_BALANCE_TOOL,
@@ -562,6 +563,8 @@ const TOOLS = Object.freeze([
   ANOMALIES_TOOL,
   REPORT_ANOMALY_TOOL,
   LINK_MEMBER_TOOL,
+  CREATE_AUTOMATION_TOOL,
+  LIST_AUTOMATIONS_TOOL,
   {
     type: "function",
     name: "point_entreprise",
@@ -660,7 +663,7 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, documentArchive = undefined, designProfileBook = null, aiUsage = null, social = null, agentConfig = null, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, documentArchive = undefined, designProfileBook = null, aiUsage = null, social = null, agentConfig = null, automation = null, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
@@ -668,7 +671,7 @@ export function createDirectorAgentFromEnv({ env = process.env, documentService,
   // The dessinateur méthodes' engine runs with the Python of DESSINATEUR_PYTHON.
   const python = defaultPython(env);
   const designOffice = createDesignOffice({ book: designProfileBook ?? createMemoryDesignProfileBook(), engine: (request) => runEngine(request, { python }) });
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, documentArchive, designOffice, aiUsage, social, agentConfig, autoAnalyse, publicBaseUrl, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, documentArchive, designOffice, aiUsage, social, agentConfig, automation, autoAnalyse, publicBaseUrl, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -703,6 +706,9 @@ export function createDirectorAgent({
   // Each agent as the direction configured it: instructions, reference
   // documents, forbidden tools, notes (src/agent/agent-config.js).
   agentConfig = null,
+  // The direction's automations (src/agent/automation.js), which the Director
+  // writes when the direction says one in words.
+  automation = null,
   // A new anomaly found in the workshop book is handed to its agent at once,
   // in the background, for its cause and a rule. Off unless the server asks.
   autoAnalyse = false,
@@ -738,6 +744,7 @@ export function createDirectorAgent({
     aiUsage,
     social,
     agentConfig,
+    automation,
     books,
     onNewAnomalies: (found) => queueAnalyses(found)
   });
@@ -797,6 +804,26 @@ export function createDirectorAgent({
       const found = await books.improvement.sync(orders);
       queueAnalyses(found);
       return found;
+    },
+
+    // A mission given by one of the direction's automations: the agent works
+    // with its usual tools and settings, its answer goes to the team feed.
+    // Nothing is generated or sent from here: what needs the direction waits
+    // for it in the cockpit, as for any other mission.
+    async runMission(agentId, text, { rule = "" } = {}) {
+      if (!SPECIALISTS[agentId]) {
+        throw new DirectorAgentError(`Agent inconnu : ${agentId}.`, "AGENT_UNKNOWN");
+      }
+      if (!configured()) {
+        throw new DirectorAgentError("L'agent IA n'est pas configuré : renseignez OPENAI_API_KEY dans .env.", "AGENT_NOT_CONFIGURED");
+      }
+      resolvedClient ??= await clientFactory({ apiKey });
+      const mission = [
+        `Mission confiée par une automatisation de la direction${rule ? ` (${rule})` : ""} : ${text}`,
+        "Tu travailles avec tes outils habituels. Tu ne génères aucun document définitif et n'écris à aucun client : ce qui demande la direction, tu le prépares et tu le dis clairement dans ton compte rendu, qui va au fil de l'équipe."
+      ].join("\n");
+      const run = await runAgent(agentId, mission, baseContext(freshOutcome()));
+      return run.answer;
     },
 
     // For tests and for a clean shutdown: resolves once queued analyses ran.
@@ -1050,6 +1077,9 @@ async function runTool(call, context) {
     return { ok: false, erreur: "Arguments illisibles." };
   }
   try {
+    if (AUTOMATION_TOOL_NAMES.includes(call.name)) {
+      return await runAutomationTool(call.name, args, context, context.userId ?? "director");
+    }
     if (call.name === MEASURE_TOOL.name) {
       return await measure(args, context);
     }

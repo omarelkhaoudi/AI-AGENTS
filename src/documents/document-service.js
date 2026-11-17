@@ -25,10 +25,17 @@ export class HkidsDocumentService {
   // What an issued document says, read once per file name. A correction that
   // keeps the date is written under the same name, so generate forgets it.
   #summaries = new Map();
+  #listeners = new Set();
 
   constructor({ repository, outputDir = null } = {}) {
     this.repository = repository;
     this.outputDir = outputDir ?? join(process.cwd(), "assets", "documents", "generated");
+  }
+
+  // Called after each document generated for good, with the document.
+  onGenerated(listener) {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
   }
 
   // replaceExisting: the document corrects one already issued under the same
@@ -115,6 +122,15 @@ export class HkidsDocumentService {
     });
 
     this.#previewTokens.delete(document.previewToken);
+    // Whoever follows the documents (the automations) hears of it; their
+    // trouble never undoes a document already written.
+    for (const listener of this.#listeners) {
+      try {
+        await listener({ document, replaced: replaceExisting, createdById });
+      } catch {
+        // A listener reports its own failures.
+      }
+    }
     return Object.freeze({
       status: "generated",
       template: publicTemplateInfo(template),

@@ -311,6 +311,48 @@ direction seule peut le modifier (rôle `leader`). Il contient :
 Les réglages sont gardés dans `data/agents.json`, et le texte des documents
 dans `data/agents-documents/`.
 
+### Automatisations « quand … alors … »
+
+En bas de **Équipe IA**, le panneau **Automatisations** permet à la direction
+d'écrire ses propres règles sans programmer. La direction seule les crée, les
+met en pause ou les supprime (rôle `leader`) ; l'équipe les lit. On peut aussi
+les dire au Director, dans le cockpit ou sur WhatsApp : « quand un devis est
+accepté, préviens la production ». Il utilise alors `creer_automatisation`.
+
+Une règle se compose de trois parties :
+
+- **Un événement.**
+  - Documents émis : devis, bon de commande (« devis accepté »), facture, bon
+    de livraison, avoir, reçu de paiement.
+  - Caisse : encaissement ou dépense. Les dépenses confidentielles ne
+    déclenchent rien.
+  - Atelier : étape terminée, étape bloquée ou étape en retard.
+  - Bon de livraison signé par le client.
+  - Prospect transmis par le Community Manager.
+- **Des filtres facultatifs** : un montant minimum, une étape d'atelier, ou un
+  mot contenu dans l'événement.
+- **Une à cinq actions**, chacune immédiate ou décalée de quelques jours.
+  - Prévenir un agent, dans le fil de l'équipe.
+  - Confier une mission à un agent. Il ne génère rien de définitif et n'écrit à
+    aucun client.
+  - Écrire à la direction sur WhatsApp.
+  - Donner une tâche à la personne reliée à un agent, sur WhatsApp, avec une
+    échéance.
+
+Les textes peuvent citer l'événement entre accolades : `{numero}`, `{client}`,
+`{montant}`, `{commande}`, `{etape}`… Le bouton « Partir de l'exemple » remplit
+l'exemple du cahier des charges : devis accepté, puis production prévenue,
+mission aux achats et rappel de paiement à 30 jours.
+
+Fonctionnement :
+
+- Les actions décalées attendent leur jour. Le serveur les vérifie toutes les
+  5 minutes.
+- Une règle mise en pause ou supprimée annule ses actions en attente.
+- Une règle s'arrête d'elle-même après 20 déclenchements dans la même journée.
+- Chaque exécution, réussie ou non, est listée dans « Dernières exécutions ».
+- Tout est gardé dans `data/automatisations.json`.
+
 ### Documents H-KIDS
 
 Toutes les pièces H-KIDS — **devis, bon de commande, facture et bon de livraison** —

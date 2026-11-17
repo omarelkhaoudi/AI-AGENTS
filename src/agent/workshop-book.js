@@ -524,6 +524,7 @@ function createWorkshopStore({ load, save, clock, photoFiles, cncFiles, signatur
         const at = clock().toISOString();
         const today = at.slice(0, 10);
         const changes = [];
+        const previousStatus = current.status;
         if (status && status !== current.status) {
           changes.push(`${WORKSHOP_STATUS_LABELS[current.status]} → ${WORKSHOP_STATUS_LABELS[status]}`);
           // What blocked the step no longer describes it once it moves on.
@@ -563,7 +564,8 @@ function createWorkshopStore({ load, save, clock, photoFiles, cncFiles, signatur
         order.journal.push({ at, by, text: `${step.label} : ${changes.join(" ; ")}.` });
         orders[key] = order;
         await save(orders);
-        return { order, changed: true };
+        // What moved, for whoever follows the steps (the automations).
+        return { order, changed: true, statusChange: previousStatus !== current.status ? { step: stepId, from: previousStatus, to: current.status, note: current.note } : null };
       });
     }
   });

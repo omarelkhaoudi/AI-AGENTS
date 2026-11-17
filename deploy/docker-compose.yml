@@ -5,7 +5,8 @@
 #   docker compose up -d --build
 #
 # Only Caddy is reachable from outside (ports 80 and 443). The application and
-# the database talk on a private network.
+# the database talk on a private network; Caddy reaches the application on the
+# edge network, which never carries a database.
 
 services:
   db:
@@ -47,6 +48,9 @@ services:
       - documents:/app/assets/documents/generated
       - appdata:/app/data
       - archive:/app/archive
+    networks:
+      - default
+      - edge
 
   caddy:
     image: caddy:2-alpine
@@ -64,6 +68,16 @@ services:
       - ./tenants-caddy:/etc/caddy/tenants:ro
       - caddy_data:/data
       - caddy_config:/config
+    # Caddy sees the cockpits only, never a database.
+    networks:
+      - edge
+
+networks:
+  default: {}
+  # Caddy and the cockpits: H-KIDS' and the client companies'
+  # (deploy/tenant/). The databases are not on it.
+  edge:
+    name: hkids-edge
 
 volumes:
   pgdata:

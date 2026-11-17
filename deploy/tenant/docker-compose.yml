@@ -8,9 +8,13 @@
 # HTTPS front (the Caddy of deploy/docker-compose.yml): each company has its own
 # database, documents, data and archive volumes, its own settings
 # (deploy/tenants/<slug>/.env) and its own address.
+#
+# The services are named « cockpit » and « company-db », never « app » or « db »:
+# on the shared edge network a name H-KIDS uses would make Caddy, or a
+# cockpit, reach the wrong one.
 
 services:
-  db:
+  company-db:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
@@ -24,16 +28,17 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    # Its own company's cockpit only.
     networks:
       - private
 
-  app:
+  cockpit:
     # The image H-KIDS' deployment builds (docker compose up -d --build in
     # deploy/): every company runs the same version.
     image: deploy-app:latest
     restart: unless-stopped
     depends_on:
-      db:
+      company-db:
         condition: service_healthy
     env_file: ${TENANT_ENV_FILE:?set TENANT_ENV_FILE}
     environment:
@@ -42,7 +47,7 @@ services:
       TRUST_PROXY: "true"
       HOST: 0.0.0.0
       PORT: "3000"
-      DATABASE_URL: postgresql://cockpit:${POSTGRES_PASSWORD}@db:5432/cockpit?schema=public
+      DATABASE_URL: postgresql://cockpit:${POSTGRES_PASSWORD}@company-db:5432/cockpit?schema=public
       PUBLIC_BASE_URL: https://${DOMAIN:?set DOMAIN}
       HKIDS_ARCHIVE_DIR: /app/archive
     volumes:
@@ -51,15 +56,15 @@ services:
       - archive:/app/archive
     networks:
       private: {}
-      # Caddy reaches the cockpit by this name; the database stays private.
-      front:
+      # Caddy reaches the cockpit by this name.
+      edge:
         aliases:
           - ${TENANT:?set TENANT}-app
 
 networks:
   private: {}
-  front:
-    name: deploy_default
+  edge:
+    name: hkids-edge
     external: true
 
 volumes:

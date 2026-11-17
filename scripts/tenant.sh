@@ -48,9 +48,10 @@ check_slug() {
   [ "$1" != "hkids" ] || fail "« hkids » est l'entreprise pilote."
 }
 
-# One value of an .env, never shown.
+# One value of an .env, never shown, without the quotes around it
+# (DOMAIN="x.duckdns.org" is x.duckdns.org).
 env_value() {
-  grep -E "^$2=" "$1" 2>/dev/null | head -n 1 | cut -d= -f2-
+  grep -E "^$2=" "$1" 2>/dev/null | head -n 1 | cut -d= -f2- | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
 }
 
 compose() {
@@ -131,14 +132,14 @@ user() {
   check_slug "$slug"
   # The password is typed at the prompt, inside the company's cockpit: it never
   # goes through a command line or a file.
-  compose "$slug" exec app node scripts/create-user.mjs "$@"
+  compose "$slug" exec cockpit node scripts/create-user.mjs "$@"
 }
 
 list() {
   for env_file in "$TENANTS"/*/.env; do
     [ -f "$env_file" ] || { echo "Aucune entreprise cliente."; return; }
     slug=$(env_value "$env_file" TENANT)
-    state=$(TENANT_ENV_FILE="$env_file" docker compose -p "tenant-$slug" --env-file "$env_file" -f "$COMPOSE_FILE" ps --status running -q app | grep -q . && echo "en marche" || echo "arrêtée")
+    state=$(TENANT_ENV_FILE="$env_file" docker compose -p "tenant-$slug" --env-file "$env_file" -f "$COMPOSE_FILE" ps --status running -q cockpit | grep -q . && echo "en marche" || echo "arrêtée")
     echo "$slug — $(env_value "$env_file" COMPANY_NAME) — https://$(env_value "$env_file" DOMAIN) — offre $(env_value "$env_file" HKIDS_PLAN) — $state"
   done
 }
@@ -172,10 +173,10 @@ export_data() {
   stamp=$(date +%Y-%m-%d_%H%M)
   out="$ROOT/deploy/exports/$slug-$stamp"
   mkdir -p "$out"
-  compose "$slug" exec -T db pg_dump -U cockpit -d cockpit --format=custom > "$out/base.dump"
-  compose "$slug" exec -T app tar -czf - -C /app/assets/documents generated > "$out/documents.tar.gz"
-  compose "$slug" exec -T app tar -czf - -C /app data > "$out/data.tar.gz"
-  compose "$slug" exec -T app tar -czf - -C /app archive > "$out/archive.tar.gz"
+  compose "$slug" exec -T company-db pg_dump -U cockpit -d cockpit --format=custom > "$out/base.dump"
+  compose "$slug" exec -T cockpit tar -czf - -C /app/assets/documents generated > "$out/documents.tar.gz"
+  compose "$slug" exec -T cockpit tar -czf - -C /app data > "$out/data.tar.gz"
+  compose "$slug" exec -T cockpit tar -czf - -C /app archive > "$out/archive.tar.gz"
   tar -czf "$out.tar.gz" -C "$ROOT/deploy/exports" "$slug-$stamp"
   rm -rf "$out"
   echo "Export complet : $out.tar.gz ($(du -sh "$out.tar.gz" | cut -f1))."

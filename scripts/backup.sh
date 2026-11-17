@@ -36,14 +36,14 @@ for env_file in tenants/*/.env; do
   tenant() {
     TENANT_ENV_FILE="$PWD/$env_file" docker compose -p "tenant-$slug" --env-file "$env_file" -f tenant/docker-compose.yml "$@"
   }
-  if ! tenant ps --status running -q app | grep -q .; then
+  if ! tenant ps --status running -q cockpit | grep -q .; then
     continue
   fi
   mkdir -p "$partial/tenants/$slug"
-  tenant exec -T db pg_dump -U cockpit -d cockpit --format=custom > "$partial/tenants/$slug/base.dump"
-  tenant exec -T app tar -czf - -C /app/assets/documents generated > "$partial/tenants/$slug/documents.tar.gz"
-  tenant exec -T app tar -czf - -C /app data > "$partial/tenants/$slug/data.tar.gz"
-  tenant exec -T app tar -czf - -C /app archive > "$partial/tenants/$slug/archive.tar.gz"
+  tenant exec -T company-db pg_dump -U cockpit -d cockpit --format=custom > "$partial/tenants/$slug/base.dump"
+  tenant exec -T cockpit tar -czf - -C /app/assets/documents generated > "$partial/tenants/$slug/documents.tar.gz"
+  tenant exec -T cockpit tar -czf - -C /app data > "$partial/tenants/$slug/data.tar.gz"
+  tenant exec -T cockpit tar -czf - -C /app archive > "$partial/tenants/$slug/archive.tar.gz"
 done
 
 mv "$partial" "backups/$stamp"

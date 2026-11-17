@@ -1609,6 +1609,13 @@ const AUTOMATION_TEMPLATE = Object.freeze({
 });
 
 automationsPanel.addEventListener("click", async (event) => {
+  const openOrClose = event.target.closest?.("[data-automation-open], [data-automation-close]");
+  if (openOrClose) {
+    automationView.draftOpen = openOrClose.matches("[data-automation-open]");
+    renderAutomations();
+    automationsPanel.querySelector(automationView.draftOpen ? "[data-automation-form] [name='name']" : "[data-automation-open]")?.focus();
+    return;
+  }
   const toggle = event.target.closest?.("[data-automation-toggle]");
   if (toggle) {
     await automationRequest(`/api/automations/${encodeURIComponent(toggle.dataset.automationToggle)}/active`, { body: { active: toggle.dataset.active === "true" } }, toggle.dataset.active === "true" ? "Règle activée." : "Règle mise en pause ; ses actions en attente sont annulées.");
@@ -1647,11 +1654,6 @@ automationsPanel.addEventListener("change", (event) => {
     syncAutomationForm(form);
   }
 });
-automationsPanel.addEventListener("toggle", (event) => {
-  if (event.target.matches?.("[data-automation-draft]")) {
-    automationView.draftOpen = event.target.open;
-  }
-}, true);
 automationsPanel.addEventListener("submit", async (event) => {
   const form = event.target.closest?.("[data-automation-form]");
   if (!form) {
@@ -1780,9 +1782,12 @@ function automationFilters(filters = {}) {
 
 function automationForm() {
   const data = automationView.data;
+  if (!automationView.draftOpen) {
+    return `<div class="flex flex-wrap gap-2"><button type="button" class="primary" data-automation-open>${icon("plus")}Nouvelle automatisation</button></div>`;
+  }
   return `
-    <details class="team-block agent-settings automation-draft" data-automation-draft ${automationView.draftOpen ? "open" : ""}>
-      <summary><h4>Nouvelle automatisation</h4><small class="muted">quand … alors …</small></summary>
+    <div class="team-block agent-settings automation-draft">
+      <div class="automation-rule-head mb-3!"><h4 class="mb-0!">Nouvelle automatisation <small class="muted font-normal">quand … alors …</small></h4><button type="button" class="link-button" data-automation-close>Fermer</button></div>
       <form data-automation-form class="team-edit-form">
         <div class="flex flex-wrap gap-2"><button type="button" class="secondary" data-automation-template>Partir de l'exemple : devis accepté → production, achats, rappel de paiement</button></div>
         <label>Nom<input name="name" maxlength="120" placeholder="Ex. : Devis accepté : lancer la commande"></label>
@@ -1799,7 +1804,7 @@ function automationForm() {
           <button type="submit" class="primary">${icon("check")}Créer l'automatisation</button>
         </div>
       </form>
-    </details>`;
+    </div>`;
 }
 
 function automationActionRow(action, index) {

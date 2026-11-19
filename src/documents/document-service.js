@@ -314,6 +314,9 @@ export class HkidsDocumentService {
     if (document.documentType === HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT) {
       return this.#checkReceipt(document, { replaceExisting });
     }
+    if (document.documentType === HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER) {
+      return this.#checkOrder(document);
+    }
     if (document.documentType !== HKIDS_DOCUMENT_TYPES.INVOICE) {
       return {};
     }
@@ -329,6 +332,29 @@ export class HkidsDocumentService {
       });
     }
     return check;
+  }
+
+  // An accepted quote makes one order (CDC section 13). A second purchase order
+  // on the same quote is refused, naming the first; correcting that order is a
+  // replacement of it, under its own number.
+  async #checkOrder(document) {
+    const quote = String(document.quoteReference ?? "").trim();
+    if (!quote) {
+      return {};
+    }
+    const existing = (await this.listIssued()).find((entry) => entry.type === HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER
+      && String(entry.quoteReference ?? "").trim() === quote
+      && String(entry.number) !== String(document.documentNumber));
+    if (existing) {
+      throw new DocumentGenerationError("This quote already has its purchase order.", "QUOTE_ALREADY_ORDERED", {
+        field: "quoteReference",
+        quoteReference: quote,
+        orderNumber: String(existing.number),
+        orderDate: existing.date ?? "",
+        client: existing.client ?? ""
+      });
+    }
+    return {};
   }
 
   // A credit note corrects an invoice the cockpit issued, and the credit notes on

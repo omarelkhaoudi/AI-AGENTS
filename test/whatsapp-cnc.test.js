@@ -44,11 +44,14 @@ const quote = {
   totals: { totalHt: 3750, tva: 750, totalTtc: 4500 },
   payment: { method: "virement bancaire", termsRule: "hkids-60-20-20-2026" }
 };
-const order = (number) => ({ ...quote, documentType: "purchase_order", documentNumber: number, date: "03/11/2026", payment: { termsRule: "hkids-po-50-50" }, specifications: ["Bois clair"], quoteReference: "170" });
+// Each order accepts its own quote (one order per quote): BC 171 on devis 170, BC 172 on devis 171…
+const quoteOf = (number) => String(Number(number) - 1);
+const order = (number) => ({ ...quote, documentType: "purchase_order", documentNumber: number, date: "03/11/2026", payment: { termsRule: "hkids-po-50-50" }, specifications: ["Bois clair"], quoteReference: quoteOf(number) });
+const issueOrder = (number) => [{ ...quote, documentNumber: quoteOf(number) }, order(number)];
 
 async function documentsWith(t, ...numbers) {
   const documents = new HkidsDocumentService({ repository: new InMemoryRepository(), outputDir: await tempDir(t) });
-  for (const input of [quote, ...numbers.map(order)]) {
+  for (const input of numbers.flatMap(issueOrder)) {
     const preview = await documents.preview(input);
     await documents.generate({ ...input, previewToken: preview.previewToken, userConfirmation: true });
   }

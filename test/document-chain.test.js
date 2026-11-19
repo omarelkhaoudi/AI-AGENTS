@@ -333,3 +333,21 @@ test("Finance prepares a receipt for a payment and a credit note on an invoice, 
   assert.deepEqual(result.documents.map((entry) => entry.input.documentType), ["payment_receipt", "credit_note"]);
   assert.equal(result.documents[1].input.invoiceReference, "166");
 });
+
+test("an accepted quote makes one order: a second purchase order on it is refused, its own correction is not", async (t) => {
+  const { documents } = await service(t);
+  await issue(documents, quote());
+  await issue(documents, order());
+  await assert.rejects(documents.preview(order({ documentNumber: "172" })), (error) => {
+    assert.equal(error.code, "QUOTE_ALREADY_ORDERED");
+    assert.deepEqual([error.details.quoteReference, error.details.orderNumber, error.details.client], ["170", "171", "Client Exemple"]);
+    return true;
+  });
+  // The order itself is corrected under its own number.
+  const corrected = await documents.preview(order({ specifications: ["Bois foncé"] }), { replaceExisting: true });
+  assert.equal(corrected.status, "ready_for_confirmation");
+  // Another quote still makes its own order.
+  await issue(documents, quote({ documentNumber: "173" }));
+  await issue(documents, order({ documentNumber: "172", quoteReference: "173" }));
+  assert.equal(await documents.nextPurchaseOrderNumber(), "173");
+});

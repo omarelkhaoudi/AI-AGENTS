@@ -1287,6 +1287,10 @@ async function prepareDocument(args, { documentService, clock, outcome, books },
         erreur: `Facture refusée : elle ferait facturer cette vente deux fois. Montant de la vente : ${ceiling} DH TTC (selon le ${ceilingFrom}) ; déjà facturé : ${invoicedBefore} DH (factures n° ${previousInvoices.map((entry) => entry.number).join(", ")}) ; reste à facturer : ${remainingBefore} DH. Ne prépare pas de facture au-delà de ce reste ; dis-le à la direction.`
       };
     }
+    if (error?.code === "QUOTE_ALREADY_ORDERED") {
+      const { quoteReference, orderNumber, orderDate, client } = error.details;
+      return { ok: false, erreur: `Bon de commande refusé : le devis n° ${quoteReference} a déjà son bon de commande, le BC n° ${orderNumber}${client ? ` (${client}` : ""}${orderDate ? `${client ? ", " : " ("}du ${orderDate}` : ""}${client || orderDate ? ")" : ""}. Un devis accepté ne fait qu'une commande. Pour corriger ce BC, le relire avec consulter_document puis remplace = true sous le n° ${orderNumber} ; pour une commande en plus, il faut un nouveau devis. Dis-le à la direction.` };
+    }
     if (error?.code === "CREDITED_INVOICE_NOT_FOUND") {
       return { ok: false, erreur: `Avoir refusé : aucune facture n° ${error.details.invoiceReference} n'a été générée par le cockpit. Vérifie le numéro avec chercher_document, ou dis à la direction que la facture n'est pas dans le cockpit.` };
     }

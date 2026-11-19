@@ -2458,6 +2458,7 @@ const WHATSAPP_DOCUMENT_REFUSALS = Object.freeze({
   PURCHASE_ORDER_NUMBER_USED: "ce numéro de bon de commande a été pris entre-temps ; redemandez-le.",
   DOCUMENT_TO_REPLACE_NOT_FOUND: "le document à corriger n'existe plus sous ce numéro.",
   INVOICE_EXCEEDS_SALE: "il ferait facturer plus que le montant de la vente.",
+  QUOTE_ALREADY_ORDERED: "ce devis a déjà son bon de commande : un devis accepté ne fait qu'une commande.",
   CREDITED_INVOICE_NOT_FOUND: "la facture que cet avoir corrige n'a pas été générée par le cockpit.",
   CREDIT_NOTE_EXCEEDS_INVOICE: "il rendrait plus que la facture qu'il corrige.",
   RECEIPT_EXCEEDS_SALE: "il ferait encaisser plus que la vente."

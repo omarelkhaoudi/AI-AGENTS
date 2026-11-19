@@ -4201,6 +4201,9 @@ function describeDocumentError(error) {
   if (details.code === "PURCHASE_ORDER_NUMBER_USED") {
     lines.push(`Le numéro ${details.documentNumber} est déjà attribué. Prochain numéro libre : ${details.nextNumber}.`);
   }
+  if (details.code === "QUOTE_ALREADY_ORDERED") {
+    lines.push(`Le devis n° ${details.quoteReference} a déjà son bon de commande : le BC n° ${details.orderNumber}${details.orderDate ? ` du ${details.orderDate}` : ""}. Un devis accepté ne fait qu'une commande ; pour corriger ce BC, remplacez-le sous son numéro.`);
+  }
   return [escapeHtml(error.message), ...lines.map(escapeHtml)].join("<br>");
 }
 

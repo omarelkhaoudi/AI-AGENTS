@@ -251,6 +251,15 @@ sh scripts/tenant.sh create atelier-exemple --name="Atelier Exemple" --plan=star
 - L'adresse est `atelier-exemple.<domaine d'H-KIDS>` (les sous-adresses DuckDNS
   pointent déjà sur le serveur). Une autre adresse se donne avec
   `--domain=...`.
+- Ses échéanciers de paiement se donnent avec `--payment-plans`, le premier
+  étant le standard, les échéanciers séparés par « | », les versements par
+  « ; » : `--payment-plans="50 % à la commande ; 50 % à la livraison | 100 % à
+  la commande"`. Les déclencheurs reconnus sont « à la commande », « avant
+  livraison », « à la livraison » et « après installation ». Un échéancier qui
+  ne fait pas 100 % empêche le cockpit de démarrer, avec la raison. Sans
+  l'option, l'entreprise reçoit ceux d'H-KIDS (60/20/20 et ses exceptions).
+- Ses fichiers de documents portent son nom court en capitales
+  (`devis_ATELIEREX_1_….pdf`) au lieu de `HKIDS`.
 - Le certificat HTTPS est obtenu automatiquement à la première visite.
 - Les réglages sont dans `deploy/tenants/atelier-exemple/.env`, lisible par ce
   compte uniquement. Les clés WhatsApp et Meta propres à l'entreprise y vont

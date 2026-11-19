@@ -14,6 +14,7 @@ import {
   isDeliveryNoteProfile,
   requiredFieldsFor
 } from "./document-schema.js";
+import { COMPANY } from "../company/company-profile.js";
 import { computeInstalments, parseReferenceImage, purchaseOrderPaymentPlan } from "./purchase-order.js";
 import {
   SUPPORTED_PAYMENT_PLANS,
@@ -423,7 +424,9 @@ function validatePayment(payment, errors) {
   if (payment.termsRule && !isKnownPaymentScheduleRule(payment.termsRule)) {
     errors.push(error("payment.termsRule", "UNKNOWN_PAYMENT_TERMS_RULE", "payment.termsRule is not an active H-KIDS payment rule."));
   }
-  if (payment.terms && /50\s*%.*50\s*%|50\/50/i.test(payment.terms)) {
+  // The pilot's old 50/50 is refused on a quote; a company that chose 50/50
+  // as its own plan prints it.
+  if (!COMPANY.paymentPlans && payment.terms && /50\s*%.*50\s*%|50\/50/i.test(payment.terms)) {
     errors.push(error("payment.terms", "OLD_PAYMENT_TERMS_FORBIDDEN", "Old 50/50 payment terms must not be reused automatically."));
   }
   if (payment.terms && !isSupportedPaymentTerms(payment.terms)) {

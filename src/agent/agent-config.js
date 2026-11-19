@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DATA_DIR, createFileJsonBook, createMemoryJsonBook } from "./json-book.js";
+import { queryTerms, rankPassages } from "./passage-search.js";
 
 // Each agent as the direction configures it, without programming (CDC V2,
 // section 9): five things of its own.
@@ -195,28 +196,18 @@ function createAgentConfig({ book, texts, clock, agents }) {
     // The passages of an agent's documents that best answer a search, with
     // their source. Current versions only, unless history is asked for.
     async search(agent, query, { includeRetired = false, limit = 5 } = {}) {
-      const terms = termsOf(query);
       const documents = (await book.load()).documents.filter((entry) => entry.agent === agent && (includeRetired || entry.status === "en_vigueur"));
-      if (terms.length === 0 || documents.length === 0) {
+      if (queryTerms(query).length === 0 || documents.length === 0) {
         return [];
       }
-      const scored = [];
+      const candidates = [];
       for (const document of documents) {
         const text = await texts.read(document.id);
-        const titleHits = terms.filter((term) => fold(document.title).includes(term)).length;
         for (const passage of passagesOf(text)) {
-          const folded = fold(passage);
-          const hits = terms.map((term) => occurrences(folded, term));
-          const matched = hits.filter((count) => count > 0).length;
-          if (matched === 0 && titleHits === 0) {
-            continue;
-          }
-          scored.push({ document, passage, score: matched * 10 + hits.reduce((sum, count) => sum + Math.min(count, 5), 0) + titleHits * 3 });
+          candidates.push({ document, title: document.title, passage });
         }
       }
-      return scored
-        .sort((left, right) => right.score - left.score)
-        .slice(0, limit)
+      return rankPassages(query, candidates, { limit })
         .map(({ document, passage }) => ({ document: { ...document }, passage }));
     },
 
@@ -286,26 +277,6 @@ function sameTitle(left, right) {
 
 function fold(value) {
   return String(value ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-}
-
-const STOP_WORDS = new Set(["les", "des", "une", "est", "pour", "dans", "avec", "sur", "par", "que", "qui", "quel", "quelle", "quels", "quelles", "son", "ses", "aux", "pas", "plus", "the", "and", "combien", "prix"]);
-
-function termsOf(query) {
-  const words = fold(query).split(/[^a-z0-9]+/).filter((word) => word.length >= 3 && !STOP_WORDS.has(word));
-  // A price question is still about prices: the word is kept when it is all
-  // there is.
-  const kept = words.length > 0 ? words : fold(query).split(/[^a-z0-9]+/).filter((word) => word.length >= 3);
-  return [...new Set(kept)].slice(0, 12);
-}
-
-function occurrences(text, term) {
-  let count = 0;
-  let index = text.indexOf(term);
-  while (index !== -1) {
-    count += 1;
-    index = text.indexOf(term, index + term.length);
-  }
-  return count;
 }
 
 // Paragraphs gathered into passages of about PASSAGE_CHARS; a longer paragraph

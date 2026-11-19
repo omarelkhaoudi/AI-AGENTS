@@ -1,4 +1,5 @@
 import { roundMoney, percentOfMoney, sumMoney } from "./document-calculations.js";
+import { COMPANY } from "../company/company-profile.js";
 import { HKIDS_ACTIVE_PAYMENT_TERMS } from "./hkids-template.js";
 
 export class PaymentScheduleError extends Error {
@@ -33,7 +34,7 @@ function rule({ id, label, standard, parts }) {
 //
 // An exception is a decision, not a default: the file has to name the rule it
 // uses, and no rule is ever selected on the caller's behalf.
-export const PAYMENT_SCHEDULE_RULES = Object.freeze({
+const PILOT_PAYMENT_SCHEDULE_RULES = Object.freeze({
   [HKIDS_ACTIVE_PAYMENT_TERMS.id]: rule({
     id: HKIDS_ACTIVE_PAYMENT_TERMS.id,
     label: HKIDS_ACTIVE_PAYMENT_TERMS.label,
@@ -69,7 +70,14 @@ export const PAYMENT_SCHEDULE_RULES = Object.freeze({
   })
 });
 
-export const STANDARD_PAYMENT_SCHEDULE_RULE_ID = HKIDS_ACTIVE_PAYMENT_TERMS.id;
+// Another company's own plans (COMPANY_PAYMENT_PLANS) replace the pilot's
+// entirely: the first is its standard, the others its exceptions.
+const COMPANY_PLANS = COMPANY.paymentPlans ?? null;
+export const PAYMENT_SCHEDULE_RULES = COMPANY_PLANS
+  ? Object.freeze(Object.fromEntries(COMPANY_PLANS.map((plan) => [plan.id, rule({ id: plan.id, label: plan.label, standard: plan.standard, parts: plan.parts })])))
+  : PILOT_PAYMENT_SCHEDULE_RULES;
+
+export const STANDARD_PAYMENT_SCHEDULE_RULE_ID = COMPANY_PLANS ? COMPANY_PLANS[0].id : HKIDS_ACTIVE_PAYMENT_TERMS.id;
 
 export function paymentScheduleRule(ruleId) {
   return PAYMENT_SCHEDULE_RULES[ruleId] ?? null;

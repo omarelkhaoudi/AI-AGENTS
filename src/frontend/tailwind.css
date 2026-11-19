@@ -723,7 +723,7 @@
   }
 
   .stat-tile {
-    @apply min-h-0 flex-col items-start justify-start gap-0 rounded-2xl border border-line bg-surface px-4 py-3 text-left font-normal text-ink-2 shadow-none hover:border-line-strong hover:bg-surface-2 max-sm:min-w-[124px] max-sm:shrink-0;
+    @apply flex min-h-0 flex-col items-start justify-start gap-0 rounded-2xl border border-line bg-surface px-4 py-3 text-left font-normal text-ink-2 shadow-none hover:border-line-strong hover:bg-surface-2 max-sm:min-w-[124px] max-sm:shrink-0;
   }
 
   .stat-tile strong {

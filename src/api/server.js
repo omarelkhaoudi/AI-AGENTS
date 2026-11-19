@@ -37,6 +37,7 @@ import { ORDER_ROLE_IDS, WORKSHOP_STEPS, WorkshopError, createMemoryWorkshopStor
 import { COMPANY, brandPage } from "../company/company-profile.js";
 import { planFromEnv } from "../company/plans.js";
 import { AUTOMATION_ACTIONS, AUTOMATION_EVENTS, AutomationError, MAX_RUNS_PER_RULE_PER_DAY, createAutomation, createMemoryAutomationBook } from "../agent/automation.js";
+import { HrBookError, LEAVE_STATUSES as HR_LEAVE_STATUSES, createMemoryHrBook } from "../agent/hr-book.js";
 import { CASH_CATEGORIES, CASH_METHODS, CONFIDENTIAL_CATEGORIES, CashBookError, EXPENSE_STATUSES, OPENING_CATEGORY, createMemoryCashBook } from "../agent/cash-book.js";
 
 export const DEFAULT_COMPANY_ID = "hkids";
@@ -95,6 +96,7 @@ function dirhams(amount) {
 }
 
 const FRONTEND_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "frontend");
+const APP_ICONS = new Set(["icone-192.png", "icone-512.png", "icone-maskable-512.png", "apple-touch-icon.png", "favicon-32.png"]);
 const FRONTEND_ASSETS = Object.freeze({
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
   "/app/": { file: "index.html", type: "text/html; charset=utf-8" },
@@ -136,6 +138,8 @@ export function buildApi({
   teamBook = null,
   // The quotes' follow-ups (data/relances.json for the server process).
   followUpBook = null,
+  // The team's book: employees, absences, leave (data/rh.json for the server process).
+  hrBook = null,
   // The workshop profile of the dessinateur méthodes (data/atelier-profil.json).
   designProfileBook = null,
   // What the AI costs, call by call (data/couts-ia.json), or a ledger a test gives.
@@ -370,6 +374,7 @@ export function buildApi({
     }
   });
   const followUps = followUpBook ?? createMemoryFollowUpBook({ clock });
+  const hr = hrBook ?? createMemoryHrBook({ clock });
   const improvementRecords = improvementBook ?? createMemoryImprovementBook({ clock });
   // Wherever the workshop book is read (the Director, the cockpit, the timer),
   // a step newly blocked or late is told to its order's chef de charge.
@@ -476,6 +481,7 @@ export function buildApi({
     improvementBook: improvement,
     teamBook: teamFeed,
     followUpBook: followUps,
+    hrBook: hr,
     documentArchive: archive,
     designProfileBook,
     aiUsage: usage,
@@ -800,6 +806,33 @@ export function buildApi({
     app.get("/suivi/:token", async (_request, reply) => serveFrontendAsset(clientPageHeaders(reply), "/suivi/"));
     app.get("/app/suivi.js", async (_request, reply) => serveFrontendAsset(reply, "/app/suivi.js"));
 
+    // Installed on a phone or a computer as an app (« Ajouter à l'écran
+    // d'accueil »), under the company's own name. No service worker: the
+    // cockpit is never served from a stale copy, and nothing private is kept
+    // on the device.
+    app.get("/manifest.webmanifest", async (_request, reply) => reply.type("application/manifest+json; charset=utf-8").header("Cache-Control", "no-cache").send({
+      name: `Director IA · ${COMPANY.shortName}`,
+      short_name: COMPANY.shortName.slice(0, 12),
+      description: `Le cockpit de ${COMPANY.name} : le Director IA et son équipe.`,
+      lang: "fr",
+      start_url: "/app/",
+      scope: "/",
+      display: "standalone",
+      background_color: "#0f1a15",
+      theme_color: "#18281f",
+      icons: [
+        { src: "/app/icons/icone-192.png", sizes: "192x192", type: "image/png" },
+        { src: "/app/icons/icone-512.png", sizes: "512x512", type: "image/png" },
+        { src: "/app/icons/icone-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" }
+      ]
+    }));
+    app.get("/app/icons/:name", async (request, reply) => {
+      if (!APP_ICONS.has(request.params.name)) {
+        return reply.code(404).send({ error: "Icône introuvable." });
+      }
+      return reply.type("image/png").header("Cache-Control", "public, max-age=604800").send(await readFile(join(FRONTEND_DIR, "icons", request.params.name)));
+    });
+
     app.get("/api/approvals", readRouteOptions(), async (request, reply) => {
       try {
         const approvals = await repository.listPendingApprovals({
@@ -987,6 +1020,8 @@ export function buildApi({
       name: COMPANY.name,
       shortName: COMPANY.shortName,
       city: COMPANY.city,
+      // The company's own payment plans, when it set them; null for the pilot's.
+      paymentPlans: COMPANY.paymentPlans ? COMPANY.paymentPlans.map((plan) => ({ id: plan.id, label: plan.label, standard: plan.standard })) : null,
       plan: subscription ? { ...subscription, usersUsed: typeof repository.countSignInUsers === "function" ? await repository.countSignInUsers() : null } : null
     }));
 
@@ -1692,6 +1727,33 @@ export function buildApi({
         return { ok: true };
       } catch (error) {
         return sendAutomationError(reply, error);
+      }
+    });
+
+    // --- Équipe RH: employees, absences, leave (src/agent/hr-book.js) -------
+    // Everyone signed in reads it (absence reasons for the direction only);
+    // the direction alone decides on a leave.
+    app.get("/api/hr", readRouteOptions(), async (request) => {
+      const confidential = seesConfidential(request);
+      const month = typeof request.query?.month === "string" && /^\d{4}-\d{2}$/.test(request.query.month) ? request.query.month : "";
+      return { overview: await hr.overview({ confidential }), payroll: await hr.payroll(month).catch(() => null), canDecide: confidential };
+    });
+
+    app.post("/api/hr/leaves/:number/decision", writeRouteOptions(), async (request, reply) => {
+      if (!seesConfidential(request)) {
+        await auditSecurityEvent(repository, { type: "authorization_denied", actorUserId: request.principal.userId, resourceType: "leave", resourceId: String(request.params.number), metadata: { method: request.method, code: "DIRECTION_ONLY" } });
+        return reply.code(403).send({ error: "Réservé à la direction : seule la direction décide d'un congé." });
+      }
+      try {
+        const by = request.principal.userId ?? "direction";
+        const leave = await hr.decideLeave(request.params.number, { decision: request.body?.decision, reason: typeof request.body?.reason === "string" ? request.body.reason : "", by });
+        await teamFeed.log({ agent: "hr", kind: "rh", text: `Congé n° ${leave.number} de ${leave.employee} ${HR_LEAVE_STATUSES[leave.status]} par la direction (cockpit).`, ref: `conge:${leave.number}`, by });
+        return { leave };
+      } catch (error) {
+        if (error instanceof HrBookError) {
+          return reply.code(error.code === "HR_LEAVE_NOT_FOUND" ? 404 : 400).send({ error: error.message, code: error.code });
+        }
+        throw error;
       }
     });
 

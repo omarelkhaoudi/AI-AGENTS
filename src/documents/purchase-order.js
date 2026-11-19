@@ -1,3 +1,4 @@
+import { COMPANY } from "../company/company-profile.js";
 import { roundMoney } from "./document-calculations.js";
 
 // Purchase orders carry their own number series, independent of quotes,
@@ -29,8 +30,14 @@ export const HKIDS_PURCHASE_ORDER_PAYMENT_PLANS = Object.freeze([
   })
 ]);
 
+// Another company states on its orders the plans it set itself
+// (COMPANY_PAYMENT_PLANS), and those only.
+export const PURCHASE_ORDER_PAYMENT_PLANS = COMPANY.paymentPlans
+  ? Object.freeze(COMPANY.paymentPlans.map((plan) => Object.freeze({ id: plan.id, label: plan.label, parts: Object.freeze(plan.parts.map((part) => Object.freeze({ percent: part.percent, due: part.condition }))) })))
+  : HKIDS_PURCHASE_ORDER_PAYMENT_PLANS;
+
 export function purchaseOrderPaymentPlan(id) {
-  return HKIDS_PURCHASE_ORDER_PAYMENT_PLANS.find((plan) => plan.id === id) ?? null;
+  return PURCHASE_ORDER_PAYMENT_PLANS.find((plan) => plan.id === id) ?? null;
 }
 
 // The last instalment takes the remainder, so the instalments always add up to

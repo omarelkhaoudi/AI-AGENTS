@@ -1,4 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import { FILE_TAG } from "../company/company-profile.js";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { createDocumentBundle } from "./document-bundle-service.js";
@@ -98,7 +99,7 @@ export function commercialFileStem(kind, document) {
 
   const number = text(document?.documentNumber) === "" ? "sans-numero" : text(document.documentNumber);
   const date = text(document?.date) === "" ? "sans-date" : text(document.date);
-  return `${prefix}_HKIDS_${number}_${date}`.replace(/[^a-zA-Z0-9_-]+/g, "_");
+  return `${prefix}_${FILE_TAG}_${number}_${date}`.replace(/[^a-zA-Z0-9_-]+/g, "_");
 }
 
 /**

@@ -33,6 +33,46 @@ function list(value) {
   return value.split("|").map((part) => part.trim()).filter(Boolean);
 }
 
+// What may release an instalment, in the words printed on the documents.
+export const PAYMENT_CONDITION_WORDS = Object.freeze(["à la commande", "avant livraison", "à la livraison", "après installation"]);
+
+const fold = (value) => value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+
+// A company's own payment plans, from COMPANY_PAYMENT_PLANS: plans separated
+// by « | », instalments by « ; », the first plan being the standard one:
+//   « 50 % à la commande ; 50 % à la livraison | 100 % à la commande »
+// Each instalment says what releases it, in the words above, and a plan adds
+// up to 100 %. A setting that cannot be read stops the cockpit at start, with
+// the reason, rather than printing an unagreed schedule on a document.
+export function parsePaymentPlans(value) {
+  const plans = String(value ?? "").split("|").map((plan) => plan.trim()).filter(Boolean);
+  if (plans.length === 0) {
+    return null;
+  }
+  return Object.freeze(plans.map((plan, index) => {
+    const parts = plan.split(";").map((part) => part.trim()).filter(Boolean).map((part) => {
+      const match = /^(\d{1,3})\s*%\s*(.+?)\.?$/.exec(part);
+      const condition = match ? PAYMENT_CONDITION_WORDS.find((word) => fold(word) === fold(match[2])) : null;
+      if (!match || !condition) {
+        throw new Error(`COMPANY_PAYMENT_PLANS : « ${part} » n'est pas lisible. Écrire « 50 % à la commande », avec : ${PAYMENT_CONDITION_WORDS.join(", ")}.`);
+      }
+      return Object.freeze({ percent: Number(match[1]), condition });
+    });
+    const total = parts.reduce((sum, part) => sum + part.percent, 0);
+    if (total !== 100) {
+      throw new Error(`COMPANY_PAYMENT_PLANS : « ${plan} » fait ${total} % au lieu de 100 %.`);
+    }
+    const key = parts.map((part) => part.percent).join("/");
+    return Object.freeze({
+      id: `plan-${index + 1}-${key.replace(/\//g, "-")}`,
+      key,
+      label: `${parts.map((part) => `${part.percent} % ${part.condition}`).join(" ; ")}.`,
+      standard: index === 0,
+      parts: Object.freeze(parts)
+    });
+  }));
+}
+
 export function loadCompanyProfile(env = process.env) {
   const name = read(env, "COMPANY_NAME");
   if (!name) {
@@ -40,6 +80,7 @@ export function loadCompanyProfile(env = process.env) {
   }
   // Another company: nothing of H-KIDS is kept, what is not given stays empty
   // rather than borrowing the pilot's address or legal numbers.
+  const plans = parsePaymentPlans(read(env, "COMPANY_PAYMENT_PLANS"));
   return Object.freeze({
     name,
     shortName: read(env, "COMPANY_SHORT_NAME") || name,
@@ -51,11 +92,26 @@ export function loadCompanyProfile(env = process.env) {
     activity: read(env, "COMPANY_ACTIVITY") || "entreprise marocaine",
     city: read(env, "COMPANY_CITY"),
     leaders: Object.freeze(list(read(env, "COMPANY_LEADERS"))),
-    commercialRules: read(env, "COMPANY_RULES") || `Règles commerciales ${name} à respecter dans toute proposition : seuls les échéanciers de paiement acceptés par le cockpit sont proposés ; toute remise ou promotion est soumise à la validation de la direction.`
+    // Null: the pilot's plans (60/20/20 and its exceptions).
+    paymentPlans: plans,
+    commercialRules: read(env, "COMPANY_RULES") || `Règles commerciales ${name} à respecter dans toute proposition : ${plans ? `échéanciers approuvés uniquement — ${plans.map((plan) => `${plan.label.replace(/\.$/, "")}${plan.standard ? " (standard)" : ""}`).join(" ; ou ")}. Aucun autre échéancier` : "seuls les échéanciers de paiement acceptés par le cockpit sont proposés"} ; toute remise ou promotion est soumise à la validation de la direction.`
   });
 }
 
 export const COMPANY = loadCompanyProfile();
+
+// The company's tag in the names of its document files (« devis_HKIDS_170_… »).
+// The pilot keeps HKIDS, so every file it already issued is still found;
+// another company gets its short name, in capitals and letters only.
+export function companyFileTag(company = COMPANY) {
+  if (company === PILOT_COMPANY) {
+    return "HKIDS";
+  }
+  const tag = company.shortName.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, "").slice(0, 16);
+  return tag || "DOC";
+}
+
+export const FILE_TAG = companyFileTag();
 
 // « la direction (Hiba, Omar) », or « la direction » when no name is given.
 export function directionLabel(company = COMPANY) {
@@ -75,7 +131,7 @@ export function brandText(text, company = COMPANY) {
     return text;
   }
   const where = company.city ? ` (${company.city})` : "";
-  return text
+  return brandPlans(text, company)
     .replaceAll(PILOT_COMPANY.commercialRules, company.commercialRules)
     .replaceAll("H KIDS, fabricant marocain de mobilier et d'aménagement sur mesure pour enfants (Marrakech)", `${company.name}, ${company.activity}${where}`)
     .replaceAll("H KIDS (mobilier et aménagement sur mesure pour enfants, Marrakech)", `${company.name} (${company.activity}${company.city ? `, ${company.city}` : ""})`)
@@ -84,6 +140,22 @@ export function brandText(text, company = COMPANY) {
     .replaceAll("Hiba", senderName(company))
     .replaceAll("H KIDS", company.name)
     .replaceAll("H-KIDS", company.shortName);
+}
+
+// The pilot's schedules, as its instructions name them, told in the
+// company's own plans.
+function brandPlans(text, company) {
+  const plans = company.paymentPlans;
+  if (!plans) {
+    return text;
+  }
+  const standard = plans[0].key;
+  const all = plans.map((plan) => `${plan.key} (${plan.label.replace(/\.$/, "")})`).join(" ; ");
+  return text
+    .replaceAll("conditions 60/20/20 par défaut (seuls échéanciers approuvés : 60/20/20 ; en exception 50/30/20, 40/40/20, 100 % ; 50/50 sur bon de commande)", `conditions ${standard} par défaut (seuls échéanciers approuvés : ${all})`)
+    .replaceAll("60/20/20 par défaut, 50/50 seulement sur un bon de commande si c'est demandé.", `${standard} par défaut ; un autre échéancier approuvé seulement si c'est demandé (${all}).`)
+    .replaceAll(" (20 % après installation en 60/20/20)", "")
+    .replaceAll("60/20/20", standard);
 }
 
 export function brandPayload(payload, company = COMPANY) {

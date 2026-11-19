@@ -6,6 +6,13 @@
     <meta name="color-scheme" content="light dark">
     <title>Director IA - AI Agents</title>
     <meta name="theme-color" content="#18281f">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" type="image/png" sizes="32x32" href="/app/icons/favicon-32.png">
+    <link rel="apple-touch-icon" href="/app/icons/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Director IA">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap">
@@ -97,6 +104,10 @@
               <svg class="i" aria-hidden="true"><use href="#i-bulb"/></svg><span class="nav-label">Amélioration</span>
               <span class="nav-badge" id="improvement-count" hidden>0</span>
             </button>
+            <button type="button" class="nav-item max-md:hidden" data-view="hr">
+              <svg class="i" aria-hidden="true"><use href="#i-user-check"/></svg><span class="nav-label">Équipe RH</span>
+              <span class="nav-badge" id="hr-count" hidden>0</span>
+            </button>
             <button type="button" class="nav-item max-md:hidden" data-view="team">
               <svg class="i" aria-hidden="true"><use href="#i-users"/></svg><span class="nav-label">Équipe IA</span>
             </button>
@@ -121,6 +132,7 @@
             <button type="button" class="sheet-item" data-view="cash"><svg class="i" aria-hidden="true"><use href="#i-wallet"/></svg>Caisse</button>
             <button type="button" class="sheet-item" data-view="whatsapp"><svg class="i" aria-hidden="true"><use href="#i-chat"/></svg>WhatsApp</button>
             <button type="button" class="sheet-item" data-view="improvement"><svg class="i" aria-hidden="true"><use href="#i-bulb"/></svg>Amélioration</button>
+            <button type="button" class="sheet-item" data-view="hr"><svg class="i" aria-hidden="true"><use href="#i-user-check"/></svg>Équipe RH</button>
             <button type="button" class="sheet-item" data-view="team"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg>Équipe IA</button>
             <button type="button" class="sheet-item" data-view="documents"><svg class="i" aria-hidden="true"><use href="#i-file"/></svg>Documents</button>
             <button type="button" class="sheet-item" data-view="quotes"><svg class="i" aria-hidden="true"><use href="#i-receipt"/></svg>Devis</button>
@@ -395,6 +407,16 @@
           </header>
           <div id="improvement-stats" class="stat-tiles stat-tiles-4" role="group" aria-label="Filtrer"></div>
           <div id="improvement-list" class="plans-list"></div>
+        </section>
+
+        <section class="view flex animate-rise flex-col gap-6" data-view-panel="hr" hidden aria-labelledby="hr-title">
+          <header class="view-head">
+            <h2 id="hr-title" class="visually-hidden">Équipe RH</h2>
+            <p>Les salariés, leurs absences, retards et heures supplémentaires, et leurs congés payés calculés selon le Code du travail. On l'alimente en le disant au Director : « Samir est absent aujourd'hui », « Karim veut ses congés du 01/12 au 05/12 ». Vous décidez des congés ici.</p>
+            <button type="button" class="secondary" id="refresh-hr"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Rafraîchir</button>
+          </header>
+          <div id="hr-stats" class="stat-tiles stat-tiles-4" aria-live="polite"></div>
+          <div id="hr-body" class="plans-list"></div>
         </section>
 
         <!-- Validations -->

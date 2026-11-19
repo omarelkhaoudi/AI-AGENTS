@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { FILE_TAG } from "../company/company-profile.js";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { PDFDocument, PDFName, PDFRawStream } from "pdf-lib";
@@ -159,7 +160,7 @@ export class HkidsDocumentService {
       return null;
     }
     const used = (await this.#outputNames())
-      .map((name) => Number(new RegExp(`^${prefix}_HKIDS_(\\d+)_`).exec(name)?.[1]))
+      .map((name) => Number(new RegExp(`^${prefix}_${FILE_TAG}_(\\d+)_`).exec(name)?.[1]))
       .filter((number) => Number.isInteger(number) && number > 0);
     const highest = Math.max(ISSUED_BY_HAND[documentType] ?? 0, ...used, 0);
     return highest > 0 ? String(highest + 1) : null;
@@ -188,7 +189,7 @@ export class HkidsDocumentService {
       }
     }
     return names
-      .map((name) => new RegExp(`^${PURCHASE_ORDER_FILE_PREFIX}_HKIDS_(\\d+)_`).exec(name)?.[1])
+      .map((name) => new RegExp(`^${PURCHASE_ORDER_FILE_PREFIX}_${FILE_TAG}_(\\d+)_`).exec(name)?.[1])
       .filter(Boolean);
   }
 
@@ -198,7 +199,7 @@ export class HkidsDocumentService {
     if (!prefix) {
       return [];
     }
-    const pattern = new RegExp(`^${prefix}_HKIDS_${String(documentNumber).replace(/[^a-zA-Z0-9_-]+/g, "_")}_.+\\.(pdf|docx|json)$`);
+    const pattern = new RegExp(`^${prefix}_${FILE_TAG}_${String(documentNumber).replace(/[^a-zA-Z0-9_-]+/g, "_")}_.+\\.(pdf|docx|json)$`);
     return (await this.#outputNames()).filter((name) => pattern.test(name));
   }
 
@@ -271,7 +272,7 @@ export class HkidsDocumentService {
       const match = ISSUED_FILE.exec(name);
       if (match) {
         const [, prefix, number, rest, extension] = match;
-        const stem = `${prefix}_HKIDS_${number}_${rest}`;
+        const stem = `${prefix}_${FILE_TAG}_${number}_${rest}`;
         const entry = stems.get(stem) ?? { type: TYPE_BY_PREFIX[prefix], number, stem, extensions: new Set() };
         entry.extensions.add(extension);
         stems.set(stem, entry);
@@ -480,7 +481,7 @@ const FILE_PREFIXES = Object.freeze({
 const TYPE_BY_PREFIX = Object.freeze(Object.fromEntries(Object.entries(FILE_PREFIXES).map(([type, prefix]) => [prefix, type])));
 // An issued file at the top of the output folder; archived ones live in a
 // subfolder and never match.
-const ISSUED_FILE = /^(devis|facture|bon_livraison|bon_commande|avoir|recu)_HKIDS_(\d+)_(.+)\.(pdf|docx|json)$/;
+const ISSUED_FILE = new RegExp(`^(devis|facture|bon_livraison|bon_commande|avoir|recu)_${FILE_TAG}_(\\d+)_(.+)\\.(pdf|docx|json)$`);
 
 // The highest number issued by hand before the generator, per series. Quotes
 // 160 to 163 were written by hand; the purchase orders have their own register.
@@ -490,7 +491,7 @@ const ISSUED_BY_HAND = Object.freeze({
 
 function safeFileStem(document) {
   const prefix = FILE_PREFIXES[document.documentType] ?? "document";
-  return `${prefix}_HKIDS_${document.documentNumber}_${document.date}`.replace(/[^a-zA-Z0-9_-]+/g, "_");
+  return `${prefix}_${FILE_TAG}_${document.documentNumber}_${document.date}`.replace(/[^a-zA-Z0-9_-]+/g, "_");
 }
 
 export function normalizeDocumentError(error) {

@@ -21,8 +21,11 @@ import { createMemoryTeamBook } from "./team-book.js";
 import { createMemoryFollowUpBook } from "./sales-book.js";
 import { socialTools } from "./social-tools.js";
 import { configTools } from "./config-tools.js";
-import { brandPayload } from "../company/company-profile.js";
+import { COMPANY, brandPayload } from "../company/company-profile.js";
 import { AUTOMATION_TOOL_NAMES, CREATE_AUTOMATION_TOOL, LIST_AUTOMATIONS_TOOL, runAutomationTool } from "./automation-tools.js";
+import { createMemoryHrBook } from "./hr-book.js";
+import { DIRECTOR_HR_TOOLS, HR_TOOL_NAMES, hrTools, runHrTool } from "./hr-tools.js";
+import { ANALYSIS_TOOL_NAMES, FORECAST_TOOL, MARGINS_TOOL, analysisTools, runAnalysisTool } from "./analysis-tools.js";
 import {
   ANOMALIES_TOOL,
   CASH_BALANCE_TOOL,
@@ -92,10 +95,15 @@ const DOCUMENT_TYPES = Object.freeze({
   recu_paiement: HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT
 });
 
-const PAYMENT_RULES = Object.freeze({
-  "60/20/20": "hkids-60-20-20-2026",
-  "50/50": "hkids-po-50-50"
-});
+// The plans a document may state, by the name the agents use. Another
+// company has its own (COMPANY_PAYMENT_PLANS), the first being its standard.
+const PAYMENT_RULES = COMPANY.paymentPlans
+  ? Object.freeze(Object.fromEntries(COMPANY.paymentPlans.map((plan, index, all) => [all.findIndex((other) => other.key === plan.key) === index ? plan.key : `${plan.key} (${index + 1})`, plan.id])))
+  : Object.freeze({
+    "60/20/20": "hkids-60-20-20-2026",
+    "50/50": "hkids-po-50-50"
+  });
+const STANDARD_PLAN = Object.keys(PAYMENT_RULES)[0];
 
 const PLAN_TOOL = Object.freeze({
   type: "function",
@@ -279,7 +287,7 @@ const DOCUMENT_TOOL = Object.freeze({
           }
         },
         caracteristiques: { type: "array", items: { type: "string" }, description: "Finitions, coloris, dimensions… (bon de commande surtout). Liste vide si aucune." },
-        conditions_paiement: { type: "string", enum: Object.keys(PAYMENT_RULES), description: "60/20/20 par défaut ; 50/50 seulement pour un bon de commande." },
+        conditions_paiement: { type: "string", enum: Object.keys(PAYMENT_RULES), description: COMPANY.paymentPlans ? `${STANDARD_PLAN} par défaut. ${COMPANY.paymentPlans.map((plan) => `${plan.key} = ${plan.label}`).join(" ")}` : "60/20/20 par défaut ; 50/50 seulement pour un bon de commande." },
         reference_devis: { type: "string", description: "Numéro du devis lié (bon de commande fait à partir d'un devis, facture, bon de livraison). Chaîne vide si aucun." },
         reference_bl: { type: "string", description: "Numéro du bon de livraison lié (facture). Chaîne vide si aucun." },
         reference_facture: { type: "string", description: "Numéro de la facture liée : obligatoire pour un avoir (la facture qu'il corrige), possible pour un reçu de paiement. Chaîne vide sinon." },
@@ -567,6 +575,9 @@ const TOOLS = Object.freeze([
   LINK_MEMBER_TOOL,
   CREATE_AUTOMATION_TOOL,
   LIST_AUTOMATIONS_TOOL,
+  MARGINS_TOOL,
+  FORECAST_TOOL,
+  ...DIRECTOR_HR_TOOLS,
   {
     type: "function",
     name: "point_entreprise",
@@ -611,6 +622,8 @@ function instructions(today, briefing = []) {
     "",
     "Excel (« exporte-moi les devis du mois en Excel », « fais-moi un fichier Excel de la caisse ») : lis d'abord les données avec tes outils, puis exporter_excel avec ces lignes telles quelles. Le fichier s'affiche sous ta réponse avec un bouton « Télécharger » : dis-le, avec le nombre de lignes et le dossier où il est aussi rangé s'il est donné. Ne dis jamais que tu ne peux pas faire de fichier Excel.",
     "Comptable (« l'export pour le comptable », « les écritures de novembre ») : export_comptable. Dis le nombre d'écritures, si le débit égale le crédit et ce qui reste à compléter à la main, et rappelle que ce sont des comptes proposés, à valider par le comptable.",
+    "Analyse (« quels produits sont les plus rentables », « quelle marge sur le BC 166 », « quelle trésorerie dans 15 jours », « peut-on payer le fournisseur la semaine prochaine ») : rentabilite ou prevision_tresorerie toi-même. Donne les chiffres tels que l'outil les calcule, avec sa méthode en une phrase et ce qui n'est pas mesuré (commandes sans dépense rattachée, livraisons non datées) : ne complète jamais avec une marge ou une date supposée. Pour améliorer la mesure, rappelle de noter le numéro du BC sur chaque achat de matière ou de sous-traitance.",
+    "Équipe et RH : un fait annoncé (« Samir est absent aujourd'hui », « Youssef a fait 2 h de plus », « Karim a commencé le 03/03/2025 », « Samir veut ses congés du 01/12 au 05/12 ») → toi-même avec noter_presence, ajouter_salarie ou demander_conge, puis confirme en une ligne. « J'accepte / je refuse le congé de Samir » → decider_conge ; jamais sans la parole de la direction. « Qui est absent », « combien de congés reste-t-il à Samir » → equipe_rh. « Les variables de paie de novembre » → variables_paie (sans montant : la paie est faite par le comptable). Recrutement, contrat, discipline → rh, en proposition.",
     "Coût de l'IA (« combien coûte l'IA ce mois », « où en est le budget IA ») : couts_ia. Donne le coût estimé, les agents qui consomment le plus, la projection de fin de mois et le budget s'il est fixé, et rappelle en une phrase que c'est une estimation : la facture OpenAI fait foi.",
     "PDF (« envoie-moi ça en PDF », « fais-moi une fiche », « mets-le dans un document ») : joindre_pdf avec le titre et le texte complet du document ; le fichier est joint sous ta réponse avec un bouton « Télécharger ». Dans ta réponse, dis seulement ce que contient le PDF, en deux ou trois lignes, sans recopier son texte. Ne dis jamais que tu ne peux pas joindre un fichier PDF, et n'invente jamais un lien ni un dossier du cockpit où il serait déposé. Ce que le PDF affirme vient de tes données ou de ce que la direction a dit : un réglage de machine, une cote ou un chiffre que tu ne connais pas y est marqué « à confirmer par l'atelier ».",
     "",
@@ -666,7 +679,7 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, documentArchive = undefined, designProfileBook = null, aiUsage = null, social = null, agentConfig = null, automation = null, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, hrBook = undefined, documentArchive = undefined, designProfileBook = null, aiUsage = null, social = null, agentConfig = null, automation = null, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
@@ -674,7 +687,7 @@ export function createDirectorAgentFromEnv({ env = process.env, documentService,
   // The dessinateur méthodes' engine runs with the Python of DESSINATEUR_PYTHON.
   const python = defaultPython(env);
   const designOffice = createDesignOffice({ book: designProfileBook ?? createMemoryDesignProfileBook(), engine: (request) => runEngine(request, { python }) });
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, documentArchive, designOffice, aiUsage, social, agentConfig, automation, autoAnalyse, publicBaseUrl, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, hrBook, documentArchive, designOffice, aiUsage, social, agentConfig, automation, autoAnalyse, publicBaseUrl, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -695,6 +708,8 @@ export function createDirectorAgent({
   improvementBook = null,
   teamBook = null,
   followUpBook = null,
+  // The team's book: employees, absences, leave (data/rh.json).
+  hrBook = null,
   // The register of the documents issued; read only from documentService
   // when not given.
   documentArchive = null,
@@ -725,7 +740,8 @@ export function createDirectorAgent({
     cash: cashBook ?? createMemoryCashBook({ clock }),
     improvement: improvementBook ?? createMemoryImprovementBook({ clock }),
     team: teamBook ?? createMemoryTeamBook({ clock, agents: SPECIALIST_IDS }),
-    followUps: followUpBook ?? createMemoryFollowUpBook({ clock })
+    followUps: followUpBook ?? createMemoryFollowUpBook({ clock }),
+    hr: hrBook ?? createMemoryHrBook({ clock })
   });
   const configured = () => Boolean(client) || apiKey !== "";
   // The context every tool runs in; a turn adds its own outcome and user.
@@ -1083,6 +1099,12 @@ async function runTool(call, context) {
     if (AUTOMATION_TOOL_NAMES.includes(call.name)) {
       return await runAutomationTool(call.name, args, context, context.userId ?? "director");
     }
+    if (ANALYSIS_TOOL_NAMES.includes(call.name)) {
+      return await runAnalysisTool(call.name, args, context);
+    }
+    if (HR_TOOL_NAMES.includes(call.name)) {
+      return await runHrTool(call.name, args, context, context.userId ?? "director");
+    }
     if (call.name === MEASURE_TOOL.name) {
       return await measure(args, context);
     }
@@ -1190,8 +1212,8 @@ async function prepareDocument(args, { documentService, clock, outcome, books },
   if (receipt && !text(args.reference_facture) && !text(args.reference_devis)) {
     return { ok: false, erreur: "Un reçu dit ce qu'il règle : donner reference_devis (ou reference_facture). S'il manque, demande-le à la direction." };
   }
-  const termsRule = PAYMENT_RULES[args.conditions_paiement] ?? PAYMENT_RULES["60/20/20"];
-  if (termsRule === PAYMENT_RULES["50/50"] && !purchaseOrder) {
+  const termsRule = PAYMENT_RULES[args.conditions_paiement] ?? PAYMENT_RULES[STANDARD_PLAN];
+  if (!COMPANY.paymentPlans && termsRule === PAYMENT_RULES["50/50"] && !purchaseOrder) {
     return { ok: false, erreur: "Le 50/50 n'est possible que sur un bon de commande. Utiliser 60/20/20." };
   }
 
@@ -2069,7 +2091,7 @@ function agentToolParams(agentId, context) {
     agentId,
     extraTools: [
       ...(context.agentConfig ? configTools(context, agentId) : []),
-      ...(books ? [...(agentId === "finance" ? cashTools(context, agentId) : []), ...(agentId === "commercial" ? salesTools(context, agentId) : []), ...improvementTools(context, agentId)] : []),
+      ...(books ? [...(agentId === "finance" ? [...cashTools(context, agentId), ...analysisTools(context)] : []), ...(agentId === "commercial" ? salesTools(context, agentId) : []), ...(agentId === "hr" ? hrTools(context, agentId) : []), ...improvementTools(context, agentId)] : []),
       ...(context.social ? socialTools(context, agentId) : []),
       ...(SPECIALISTS[agentId].keepsRegister ? [{ tool: SEARCH_DOCUMENT_TOOL, run: (searchArgs) => searchDocument(searchArgs, context) }] : []),
       ...(SPECIALISTS[agentId].coordinatesDesign ? [{ tool: DESIGN_DELEGATE_TOOL, run: async (args) => {

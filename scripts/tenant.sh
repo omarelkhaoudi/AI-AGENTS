@@ -7,7 +7,8 @@
 #   sh scripts/tenant.sh create <slug> --name="Atelier Exemple" --plan=starter \
 #        [--domain=exemple.hkids-cockpit.duckdns.org] [--city=Fès] \
 #        [--leaders="Sara"] [--activity="..."] [--address="ligne 1|ligne 2"] \
-#        [--email=...] [--phone=...] [--legal="ICE ... - RC ..."]
+#        [--email=...] [--phone=...] [--legal="ICE ... - RC ..."] \
+#        [--payment-plans="50 % à la commande ; 50 % à la livraison | 100 % à la commande"]
 #   sh scripts/tenant.sh user <slug> --id=sara --email=sara@exemple.ma [--name=Sara] [--role=leader]
 #   sh scripts/tenant.sh list
 #   sh scripts/tenant.sh upgrade            (after a new version of H-KIDS' image)
@@ -105,7 +106,7 @@ create() {
     echo "HKIDS_COMPANY_ID=$slug"
     echo "HKIDS_PLAN=$plan"
     echo "COMPANY_NAME=$(quoted "$name")"
-    for pair in short-name:COMPANY_SHORT_NAME city:COMPANY_CITY leaders:COMPANY_LEADERS activity:COMPANY_ACTIVITY address:COMPANY_ADDRESS email:COMPANY_EMAIL phone:COMPANY_PHONE legal:COMPANY_LEGAL; do
+    for pair in short-name:COMPANY_SHORT_NAME city:COMPANY_CITY leaders:COMPANY_LEADERS activity:COMPANY_ACTIVITY address:COMPANY_ADDRESS email:COMPANY_EMAIL phone:COMPANY_PHONE legal:COMPANY_LEGAL payment-plans:COMPANY_PAYMENT_PLANS; do
       value=$(option "${pair%%:*}" "$@")
       [ -z "$value" ] || echo "${pair#*:}=$(quoted "$value")"
     done

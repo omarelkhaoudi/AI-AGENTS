@@ -10,6 +10,7 @@ import { createFileWorkshopStore } from "./agent/workshop-book.js";
 import { createFileDesignProfileBook } from "./agent/design-office.js";
 import { createFileAiUsageBook } from "./agent/ai-usage.js";
 import { createFileCashBook } from "./agent/cash-book.js";
+import { createFileHrBook } from "./agent/hr-book.js";
 import { createFileImprovementBook } from "./agent/improvement-book.js";
 import { createFileFollowUpBook } from "./agent/sales-book.js";
 import { createFileTeamBook } from "./agent/team-book.js";
@@ -86,12 +87,14 @@ const socialStore = createFileSocialInbox();
 // Each agent's settings and reference documents (data/agents.json, data/agents-documents/).
 const agentConfigStore = createFileAgentConfig({ agents: SPECIALIST_IDS });
 const automationBook = createFileAutomationBook();
+// The team's employees, absences and leave (data/rh.json).
+const hrBook = createFileHrBook();
 
 // The Administratif files each devis, bon and facture in a folder per client:
 // DocumentsH-KIDS Administratif unless HKIDS_ARCHIVE_DIR says where.
 const archiveDir = process.env.HKIDS_ARCHIVE_DIR?.trim() || DEFAULT_ARCHIVE_DIR;
 
-const app = buildApi({ repository, companyId: process.env.HKIDS_COMPANY_ID?.trim() || "hkids", config, toolRegistry, planStore, conversationStore, workshopStore, designProfileBook, aiUsageBook, cashBook, improvementBook, teamBook, followUpBook, autoAnalyseAnomalies, whatsAppStore, socialStore, agentConfigStore, automationBook, archiveDir });
+const app = buildApi({ repository, companyId: process.env.HKIDS_COMPANY_ID?.trim() || "hkids", config, toolRegistry, planStore, conversationStore, workshopStore, designProfileBook, aiUsageBook, cashBook, improvementBook, teamBook, followUpBook, hrBook, autoAnalyseAnomalies, whatsAppStore, socialStore, agentConfigStore, automationBook, archiveDir });
 
 // Every half hour, the workshop book is read for steps that became late, and
 // the quotes for follow-ups that became due.

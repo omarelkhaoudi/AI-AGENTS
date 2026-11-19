@@ -311,7 +311,11 @@ direction seule peut le modifier (rôle `leader`). Il contient :
   - Le texte est lu une fois, à l'import. Un PDF est lu par l'IA
     (`OPENAI_API_KEY`). « Voir ce que l'agent lit » montre ce qui a été retenu.
   - L'agent y cherche avec `documents_reference`. Il cite la source (titre et
-    version).
+    version). La recherche lit des mots entiers (« lit » ne trouve pas
+    « politique »), au singulier comme au pluriel. Elle connaît les synonymes
+    du métier (armoire, placard, dressing ; prix, tarif ; pose, montage). Un
+    mot rare pèse plus qu'un mot présent partout. Les mots de la question côte
+    à côte (« lit cabane ») font passer le bon passage devant.
   - Importer un document sous le même titre crée la **version suivante** et
     rend l'ancienne **périmée**. Un document périmé ne sert plus que
     d'historique.
@@ -364,6 +368,62 @@ Fonctionnement :
 - Une règle s'arrête d'elle-même après 20 déclenchements dans la même journée.
 - Chaque exécution, réussie ou non, est listée dans « Dernières exécutions ».
 - Tout est gardé dans `data/automatisations.json`.
+
+### Analyse : rentabilité et prévision de trésorerie
+
+Le Director et l'agent Finance répondent à « quels produits sont les plus
+rentables ? » et « quelle trésorerie dans 15 jours ? » à partir du cockpit,
+jamais d'une estimation.
+
+- **`rentabilite`** (période, 3 derniers mois par défaut) :
+  - Marge de chaque bon de commande : vente HT (TTC / 1,2) moins les dépenses
+    de caisse rattachées au BC ou à son devis.
+  - Puis la marge par produit (objet du BC), et les charges non rattachées
+    (loyer, salaires…).
+  - Un BC sans dépense rattachée est listé à part : sa marge n'est pas
+    mesurable. Pour la mesurer, noter le numéro du BC sur chaque achat.
+- **`prevision_tresorerie`** (1 à 90 jours, 15 par défaut) :
+  - Part du solde de caisse du jour.
+  - Ajoute les encaissements attendus selon l'échéancier standard : acompte
+    non reçu, part due à la livraison prévue au carnet d'atelier, solde des
+    commandes installées.
+  - Retire les dépenses au rythme des 30 derniers jours.
+  - Donne le solde prévu, le point bas et le premier jour négatif.
+
+Rien n'est enregistré : ce sont des lectures.
+
+### Équipe RH : congés, présences, variables de paie
+
+La vue **Équipe RH** du cockpit montre :
+
+- les salariés et leur solde de congés (Code du travail, art. 231 à 233) :
+  - 1,5 jour ouvrable par mois de service, plus 1,5 jour par tranche de
+    5 ans d'ancienneté, 30 jours au plus ;
+  - rien n'est dû avant 6 mois de service ;
+  - les jours ouvrables vont du lundi au samedi, jours fériés exclus ;
+- les demandes de congé en attente ;
+- les absences, retards et heures supplémentaires du mois ;
+- les variables de paie du mois, à transmettre au comptable.
+
+Ce sont des variables, pas une paie calculée.
+
+Ce qu'on peut dire au Director ou à l'agent RH : « Karim absent hier,
+malade », « Sara demande 5 jours à partir du 2 décembre », « variables de paie
+de novembre ». La direction seule accepte ou refuse un congé : dans la vue, ou
+au Director. L'agent RH ne décide d'aucun congé.
+
+Le motif d'une absence n'est montré qu'à qui voit le confidentiel (loi 09-08).
+Tout est gardé dans `data/rh.json`.
+
+### Application installable
+
+Le cockpit s'installe comme une application, sur téléphone ou sur ordinateur :
+
+- Android / Chrome : menu, puis « Installer l'application ».
+- iPhone / Safari : Partager, puis « Sur l'écran d'accueil ».
+
+Il s'ouvre alors en plein écran avec son icône (`/manifest.webmanifest`). Il
+n'y a pas de mode hors ligne : le cockpit a besoin du serveur.
 
 ### Documents H-KIDS
 

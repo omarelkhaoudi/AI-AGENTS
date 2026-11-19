@@ -597,6 +597,7 @@ async function sendToAgent(message) {
     refreshCash();
     refreshImprovement();
     refreshTeam();
+    refreshHr();
     if (response.directorResponse) {
       state.current = { ...response.directorResponse, receivedAt: Date.now() };
       state.history = [state.current, ...state.history].slice(0, 8);
@@ -1234,6 +1235,102 @@ async function submitCashMovement(confirmDuplicate) {
   } finally {
     cashSubmit.disabled = false;
   }
+}
+
+// --- Équipe RH view ---------------------------------------------------------------
+// The team's book: who works here, who is away today, leave balances (Code du
+// travail), leave requests the direction decides on, and the month's payroll
+// variables for the accountant, without any amount.
+const hrStats = document.querySelector("#hr-stats");
+const hrBody = document.querySelector("#hr-body");
+const hrCount = document.querySelector("#hr-count");
+document.querySelector("#refresh-hr").addEventListener("click", () => refreshHr());
+hrBody.addEventListener("click", async (event) => {
+  const button = event.target.closest?.("[data-leave-decision]");
+  if (!button) {
+    return;
+  }
+  button.disabled = true;
+  try {
+    await postJson(`/api/hr/leaves/${button.dataset.leave}/decision`, { decision: button.dataset.leaveDecision });
+    showToast(button.dataset.leaveDecision === "approuve" ? "Congé approuvé." : "Congé refusé.");
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshHr();
+});
+
+async function refreshHr() {
+  try {
+    const response = await fetch("/api/hr", { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("Impossible de charger l'équipe RH.");
+    }
+    renderHr(await response.json());
+  } catch (error) {
+    hrBody.innerHTML = card("Équipe RH indisponible", escapeHtml(error.message), "warning");
+  }
+}
+
+function renderHr({ overview, payroll, canDecide }) {
+  hrCount.textContent = String(overview.pendingLeaves.length);
+  hrCount.hidden = overview.pendingLeaves.length === 0;
+  if (overview.headcount === 0) {
+    hrStats.innerHTML = "";
+    hrBody.innerHTML = `
+      <div class="all-clear">
+        <span class="badge">${icon("user-check")}</span>
+        <h3>Aucun salarié enregistré</h3>
+        <p>Dites au Director qui travaille dans l'entreprise, avec le poste et la date d'entrée : « Samir, menuisier, a commencé le 03/03/2025 ». Les congés payés sont ensuite calculés seuls.</p>
+      </div>
+    `;
+    return;
+  }
+  const tiles = [
+    ["Effectif", overview.headcount, "salariés en poste"],
+    ["Absents aujourd'hui", overview.absentToday.length, "absence ou congé"],
+    ["Congés à décider", overview.pendingLeaves.length, canDecide ? "par vous, ci-dessous" : "par la direction"],
+    ["Congés à venir", overview.upcomingLeaves.length, "dans les 30 jours"]
+  ];
+  hrStats.innerHTML = tiles.map(([label, value, hint], index) => `
+    <div class="stat-tile ${index === 2 && value > 0 ? "is-alert" : ""}"><strong>${value}</strong><span>${escapeHtml(label)}</span><small>${escapeHtml(hint)}</small></div>
+  `).join("");
+  const table = (head, rows) => `<div class="answer-table"><table><thead><tr>${head.map((value) => `<th>${escapeHtml(value)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+  const sections = [];
+  if (overview.pendingLeaves.length > 0) {
+    sections.push(improvementSection("Demandes de congé", "Elles restent demandées jusqu'à votre décision.", overview.pendingLeaves.map((leave) => `
+      <article class="rule-card">
+        <p><strong>${escapeHtml(leave.name)}</strong> — ${escapeHtml(leave.kind)}, du ${formatIsoDay(leave.from)} au ${formatIsoDay(leave.to)} (${leave.days} jour${leave.days > 1 ? "s" : ""} ouvrable${leave.days > 1 ? "s" : ""})${leave.note ? ` · ${escapeHtml(leave.note)}` : ""}</p>
+        ${canDecide ? `<div class="flex gap-2"><button type="button" data-leave="${leave.number}" data-leave-decision="approuve">${icon("check")}Approuver</button><button type="button" class="secondary" data-leave="${leave.number}" data-leave-decision="refuse">${icon("x")}Refuser</button></div>` : ""}
+      </article>
+    `).join("")));
+  }
+  if (overview.absentToday.length > 0 || overview.upcomingLeaves.length > 0) {
+    sections.push(improvementSection("Absences", "Aujourd'hui, puis les congés approuvés des 30 prochains jours.", `<ul class="flex flex-col gap-1">${[
+      ...overview.absentToday.map((entry) => `<li><strong>${escapeHtml(entry.name)}</strong> : ${escapeHtml(entry.why)}</li>`),
+      ...overview.upcomingLeaves.map((leave) => `<li>${escapeHtml(leave.name)} : ${escapeHtml(leave.kind)} du ${formatIsoDay(leave.from)} au ${formatIsoDay(leave.to)}</li>`)
+    ].join("")}</ul>`));
+  }
+  sections.push(improvementSection("Salariés et congés payés", "1,5 jour ouvrable par mois de service, plus 1,5 jour par tranche de cinq ans d'ancienneté (art. 231 et 232).", table(
+    ["Salarié", "Poste", "Entrée", "Acquis", "Pris", "Reste"],
+    overview.employees.map((employee) => `<tr><td>${escapeHtml(employee.name)}</td><td>${escapeHtml(employee.role || "—")}</td><td>${formatIsoDay(employee.startDate)}</td><td class="num">${employee.leave.earned}</td><td class="num">${employee.leave.taken}</td><td class="num">${employee.leave.eligible ? employee.leave.remaining : `${employee.leave.remaining} <small>(dû après 6 mois)</small>`}</td></tr>`)
+  )));
+  if (payroll) {
+    const month = new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${payroll.month}-01T00:00:00Z`));
+    sections.push(improvementSection(`Variables de paie — ${month}`, `${payroll.workingDays} jours ouvrables. Sans montant : la paie, la CNSS et l'IR sont calculés par le comptable.`, table(
+      ["Salarié", "Jours travaillés", "Abs. justifiées", "Abs. non justifiées", "Congés (j)", "Retards (h)", "Heures sup."],
+      payroll.rows.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td class="num">${row.daysWorked} / ${row.workingDays}</td><td class="num">${row.absencesJustified}</td><td class="num">${row.absencesUnjustified}</td><td class="num">${Object.values(row.leave).reduce((sum, days) => sum + days, 0)}</td><td class="num">${row.hoursLate}</td><td class="num">${row.overtimeHours}</td></tr>`)
+    )));
+  }
+  if (overview.recent.length > 0) {
+    sections.push(`
+      <details class="panel improvement-history">
+        <summary><strong>14 derniers jours</strong><small>${overview.recent.length} absence(s), retard(s) ou heures supplémentaires</small></summary>
+        <ul>${overview.recent.map((entry) => `<li><small>${formatIsoDay(entry.day)}</small> n° ${entry.number} ${escapeHtml(entry.name)} : ${escapeHtml(entry.label)}${entry.hours ? ` ${entry.hours} h` : ""}${entry.kind === "absence" ? (entry.justified ? " justifiée" : " non justifiée") : ""}${entry.reason ? ` (${escapeHtml(entry.reason)})` : ""}</li>`).join("")}</ul>
+      </details>
+    `);
+  }
+  hrBody.innerHTML = sections.join("");
 }
 
 // --- Continuous improvement view -------------------------------------------------
@@ -4296,13 +4393,14 @@ const COCKPIT_VIEWS = Object.freeze({
   documents: "Documents H-KIDS",
   quotes: "Préparation de devis",
   file: "Dossier commercial",
-  team: "Équipe IA"
+  team: "Équipe IA",
+  hr: "Équipe RH"
 });
 
 // On a phone the tab bar keeps the four views of every day; the others open
 // from « Plus », which stays lit while one of them is shown. The cash of the
 // day is on the briefing's first card.
-const SHEET_VIEWS = Object.freeze(["cash", "whatsapp", "improvement", "team", "documents", "quotes", "file"]);
+const SHEET_VIEWS = Object.freeze(["cash", "whatsapp", "improvement", "hr", "team", "documents", "quotes", "file"]);
 const moreButton = document.querySelector("#more-button");
 const moreSheet = document.querySelector("#more-sheet");
 
@@ -4342,6 +4440,9 @@ function showView(name) {
   }
   if (view === "team") {
     refreshTeam();
+  }
+  if (view === "hr") {
+    refreshHr();
   }
   if (view === "documents") {
     refreshRegister();
@@ -4638,8 +4739,32 @@ renderGreeting();
 setInterval(() => renderGreeting(), 60_000)?.unref?.();
 renderAgentRoster([]);
 updateOverview({});
+// A company that set its own payment plans sees them, and only them, in the
+// document forms; the pilot keeps the options written in the page.
+async function applyCompanyPaymentPlans() {
+  try {
+    const response = await fetch("/api/company", { headers: await authHeaders() });
+    const plans = response.ok ? (await response.json()).paymentPlans : null;
+    if (!Array.isArray(plans) || plans.length === 0) {
+      return;
+    }
+    const options = plans.map((plan) => `<option value="${escapeHtml(plan.id)}"${plan.standard ? " selected" : ""}>${escapeHtml(plan.label)}${plan.standard ? " — standard" : ""}</option>`).join("");
+    const documentTerms = document.querySelector("#document-payment-terms");
+    if (documentTerms) {
+      documentTerms.innerHTML = `<option value="" data-hide-for="purchase_order">Saisie manuelle requise</option>${options}`;
+    }
+    const fileRule = document.querySelector("#file-payment-rule");
+    if (fileRule) {
+      fileRule.innerHTML = options;
+    }
+  } catch {
+    // The page's own options stay.
+  }
+}
+
 async function loadPanels() {
   await checkAgentStatus();
+  applyCompanyPaymentPlans();
   refreshPlans();
   refreshOrders();
   refreshCash();

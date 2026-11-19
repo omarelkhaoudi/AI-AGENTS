@@ -60,6 +60,13 @@ docker compose exec app npm run auth:create-user -- --id=omar --name="Omar" --em
 docker compose exec app npm run auth:create-user -- --id=hicham --name="Hicham" --email=hicham@exemple.ma --role=operator
 ```
 
+**La personne n'est pas là ?** Ajoutez `--provisoire` et tapez un mot de passe
+provisoire, à lui donner de vive voix, jamais par message. À sa première
+connexion, le cockpit lui demande d'en choisir un autre et n'ouvre rien d'autre
+tant que ce n'est pas fait. Ensuite, chacun change son mot de passe quand il
+veut : bouton bouclier à côté de son nom → **Changer mon mot de passe**. Les
+autres appareils connectés à ce compte sont alors déconnectés.
+
 Rôles possibles :
 
 | Rôle | Ce qu'il peut faire |

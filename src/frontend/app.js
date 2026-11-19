@@ -327,9 +327,15 @@ function askLogin() {
           return;
         }
         keepSession(payload.token);
+        const typed = loginForm.password.value;
         loginForm.password.value = "";
         loginForm.code.value = "";
         loginCodeField.hidden = true;
+        // A temporary password: the person chooses their own before the
+        // cockpit opens. The one just typed is not asked again.
+        if (payload.mustChangePassword) {
+          await askPasswordChange(typed);
+        }
         loginScreen.hidden = true;
         pendingLogin = null;
         resolve({ user: payload.user, demo: false });
@@ -344,6 +350,61 @@ function askLogin() {
   return pendingLogin;
 }
 
+// The first sign-in with a temporary password: the person chooses their own on
+// the sign-in screen, and nothing else opens until it is saved. `current` is
+// the temporary password just typed, or null when it must be asked.
+const passwordForm = document.querySelector("#password-form");
+const passwordError = document.querySelector("#password-error");
+
+function askPasswordChange(current) {
+  loginForm.hidden = true;
+  passwordForm.hidden = false;
+  passwordError.hidden = true;
+  document.querySelector("#password-current-field").hidden = current !== null;
+  passwordForm.current.required = current === null;
+  (current === null ? passwordForm.current : passwordForm.next).focus();
+  return new Promise((resolve) => {
+    passwordForm.onsubmit = async (event) => {
+      event.preventDefault();
+      const fail = (message) => {
+        passwordError.textContent = message;
+        passwordError.hidden = false;
+      };
+      if (passwordForm.next.value !== passwordForm.confirm.value) {
+        fail("Les deux nouveaux mots de passe sont différents.");
+        return;
+      }
+      const submit = document.querySelector("#password-submit");
+      submit.disabled = true;
+      try {
+        const { ok, payload } = await changePassword(current ?? passwordForm.current.value, passwordForm.next.value);
+        if (!ok) {
+          fail(payload.error ?? "Enregistrement impossible.");
+          return;
+        }
+        passwordForm.reset();
+        passwordForm.hidden = true;
+        loginForm.hidden = false;
+        showToast("Mot de passe enregistré.");
+        resolve();
+      } catch {
+        fail("Le serveur ne répond pas. Vérifiez la connexion internet.");
+      } finally {
+        submit.disabled = false;
+      }
+    };
+  });
+}
+
+async function changePassword(current, next) {
+  const response = await nativeFetch("/api/auth/password", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${apiToken}` },
+    body: JSON.stringify({ current, next })
+  });
+  return { ok: response.ok, payload: await response.json().catch(() => ({})) };
+}
+
 // True when a session is open: one kept from an earlier visit that the server
 // still accepts, or a demo token. False means the sign-in has to be shown.
 async function ensureSession() {
@@ -351,7 +412,13 @@ async function ensureSession() {
   if (apiToken) {
     const me = await nativeFetch("/api/auth/me", { headers: { authorization: `Bearer ${apiToken}` } });
     if (me.ok) {
-      showSession(await me.json());
+      const session = await me.json();
+      if (session.mustChangePassword) {
+        loginScreen.hidden = false;
+        await askPasswordChange(null);
+        loginScreen.hidden = true;
+      }
+      showSession(session);
       return true;
     }
     forgetSession();
@@ -421,6 +488,7 @@ async function showSecurityState() {
       <p class="mt-3 text-muted">Il vous faut une application d'authentification : Google Authenticator ou Microsoft Authenticator (gratuites).</p>
       <button type="button" class="primary mt-5 w-full justify-center" id="security-start">${icon("shield")}Activer</button>`;
     securityBody.querySelector("#security-start").addEventListener("click", startTwoFactorSetup);
+    appendPasswordSection();
     return;
   }
   securityBody.innerHTML = `
@@ -445,6 +513,44 @@ async function showSecurityState() {
     }
     showToast("Double authentification désactivée.");
     showSecurityState();
+  });
+  appendPasswordSection();
+}
+
+// Each person changes their own password here, with the one they have now.
+// The other devices signed in to the account are signed out.
+function appendPasswordSection() {
+  const section = document.createElement("form");
+  section.id = "security-password-change";
+  section.className = "mt-5 border-t border-line pt-4";
+  section.innerHTML = `
+    <p class="font-semibold">Changer mon mot de passe</p>
+    <div class="field mt-3"><label for="security-current">Mot de passe actuel</label><input id="security-current" type="password" autocomplete="current-password" required></div>
+    <div class="field mt-3"><label for="security-next">Nouveau mot de passe (10 caractères au moins)</label><input id="security-next" type="password" autocomplete="new-password" minlength="10" required></div>
+    <div class="field mt-3"><label for="security-confirm-next">Confirmez le nouveau mot de passe</label><input id="security-confirm-next" type="password" autocomplete="new-password" minlength="10" required></div>
+    <p class="mt-3 text-[14px] text-danger" id="security-password-error" role="alert" hidden></p>
+    <button type="submit" class="mt-4 w-full justify-center">${icon("check")}Enregistrer le nouveau mot de passe</button>`;
+  securityBody.append(section);
+  section.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const error = section.querySelector("#security-password-error");
+    const fail = (message) => {
+      error.textContent = message;
+      error.hidden = false;
+    };
+    const next = section.querySelector("#security-next").value;
+    if (next !== section.querySelector("#security-confirm-next").value) {
+      fail("Les deux nouveaux mots de passe sont différents.");
+      return;
+    }
+    const { ok, payload } = await changePassword(section.querySelector("#security-current").value, next);
+    if (!ok) {
+      fail(payload.error ?? "Enregistrement impossible.");
+      return;
+    }
+    section.reset();
+    error.hidden = true;
+    showToast(payload.otherSessionsClosed > 0 ? `Mot de passe changé. ${payload.otherSessionsClosed} autre(s) appareil(s) déconnecté(s).` : "Mot de passe changé.");
   });
 }
 

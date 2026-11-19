@@ -55,7 +55,7 @@ import { AuthenticationError, authenticatePrincipal, extractBearerToken } from "
 import { assertCapability, roleSatisfiesCapability } from "../security/authorization.js";
 import { DEFAULT_RATE_LIMITS, createSecurityConfig } from "../security/security-config.js";
 import { createApiTokenMaterial, hashApiTokenSecret } from "../security/api-token.js";
-import { burnPasswordCheck, verifyPassword } from "../security/password.js";
+import { burnPasswordCheck, hashPassword, verifyPassword } from "../security/password.js";
 import QRCode from "qrcode";
 import {
   createRecoveryCodes,
@@ -677,6 +677,14 @@ export function buildApi({
           details: { code: error.code ?? "AUTHENTICATION_REQUIRED" }
         });
       }
+      // A temporary password opens nothing but the change of password (and
+      // signing out): the person chooses their own first.
+      if (request.principal.mustChangePassword && !PASSWORD_CHANGE_ROUTES.has(`${request.method} ${routeIdentifier(request)}`)) {
+        return reply.code(403).send({
+          error: "Choisissez d'abord votre propre mot de passe.",
+          details: { code: "PASSWORD_CHANGE_REQUIRED" }
+        });
+      }
     });
 
     // C3 - User authorization. A route that declares no capability is refused
@@ -783,7 +791,7 @@ export function buildApi({
       const material = createApiTokenMaterial({ userId: found.user.id, name: "session", expiresAt });
       await repository.createApiToken(material.record);
       await auditSecurityEvent(repository, { type: "login_succeeded", actorUserId: found.user.id, resourceType: "endpoint", resourceId: "/api/auth/login" });
-      return reply.code(200).send({ token: material.secret, expiresAt, user: { name: found.user.name, role: found.user.role } });
+      return reply.code(200).send({ token: material.secret, expiresAt, user: { name: found.user.name, role: found.user.role }, mustChangePassword: found.user.metadata?.mustChangePassword === true });
     });
 
     // Routes are declared after the rate limiter has loaded, so its per-route
@@ -1921,7 +1929,8 @@ export function buildApi({
     // kept from an earlier visit still works.
     app.get("/api/auth/me", readRouteOptions(), async (request) => ({
       user: { name: request.principal.name, role: request.principal.role },
-      demo: securityConfig.demoModeEnabled
+      demo: securityConfig.demoModeEnabled,
+      mustChangePassword: request.principal.mustChangePassword === true
     }));
 
     // Two-step sign-in, turned on and off by each person for their own account.
@@ -1992,6 +2001,46 @@ export function buildApi({
       await repository.updateTwoFactor(userId, { secret: null, pendingSecret: null, lastStep: null, enabledAt: null, recoveryCodeHashes: [] });
       await auditSecurityEvent(repository, { type: "two_factor_disabled", actorUserId: userId, resourceType: "user", resourceId: userId });
       return { enabled: false };
+    });
+
+    // Each person changes their own password, with the one they have now. A
+    // temporary password given at creation must be changed at the first
+    // sign-in. Every other session of the account is closed: a device that
+    // knew the old password is signed out.
+    app.post("/api/auth/password", twoFactorRouteOptions(), async (request, reply) => {
+      const userId = request.principal.userId;
+      const user = await repository.getUser(userId);
+      const found = user?.email ? await repository.findUserCredentialByEmail?.(user.email) : null;
+      if (!found || found.user.id !== userId) {
+        return reply.code(404).send({ error: "Ce compte n'a pas de mot de passe." });
+      }
+      const current = typeof request.body?.current === "string" ? request.body.current : "";
+      const next = typeof request.body?.next === "string" ? request.body.next : "";
+      if (!(await verifyPassword(current, found.passwordHash))) {
+        await auditSecurityEvent(repository, { type: "authentication_failed", actorUserId: userId, resourceType: "endpoint", resourceId: "/api/auth/password", metadata: { method: "POST", code: "INVALID_PASSWORD" } });
+        return reply.code(400).send({ error: "Mot de passe actuel incorrect.", details: { code: "INVALID_PASSWORD" } });
+      }
+      if (next === current) {
+        return reply.code(400).send({ error: "Le nouveau mot de passe doit être différent de l'actuel.", details: { code: "PASSWORD_UNCHANGED" } });
+      }
+      let passwordHash;
+      try {
+        passwordHash = await hashPassword(next);
+      } catch (error) {
+        return reply.code(400).send({ error: error.message, details: { code: error.code ?? "PASSWORD_INVALID" } });
+      }
+      await repository.setUserPassword(userId, passwordHash);
+      if (user.metadata?.mustChangePassword) {
+        const { mustChangePassword: _done, ...metadata } = user.metadata;
+        await repository.upsertUser({ ...user, metadata });
+      }
+      const others = (await repository.listApiTokens({ userId }))
+        .filter((token) => token.name === "session" && token.id !== request.principal.tokenId && !token.revokedAt);
+      for (const token of others) {
+        await repository.revokeApiToken(token.id);
+      }
+      await auditSecurityEvent(repository, { type: "password_changed", actorUserId: userId, resourceType: "user", resourceId: userId, metadata: { otherSessionsClosed: others.length } });
+      return { ok: true, otherSessionsClosed: others.length };
     });
 
     app.post("/api/auth/logout", readRouteOptions(), async (request, reply) => {
@@ -2390,6 +2439,10 @@ function shouldAuditRateLimit(auditedKeys, key, timeWindow) {
   auditedKeys.set(key, now);
   return true;
 }
+
+// What a person signed in with a temporary password may reach: changing it,
+// signing out, who they are, and the company's name for the page.
+const PASSWORD_CHANGE_ROUTES = new Set(["POST /api/auth/password", "POST /api/auth/logout", "GET /api/auth/me", "GET /api/company"]);
 
 function routeIdentifier(request) {
   return request.routeOptions?.url ?? request.url;

@@ -131,6 +131,8 @@ docker compose exec app npm run auth:create-user -- --id=omar --name="Omar" --em
 ```
 
 Les rôles et la suite : [DEPLOIEMENT.md, section 2](DEPLOIEMENT.md#2-créer-les-comptes).
+Pour une personne absente : `--provisoire` et un mot de passe provisoire donné
+de vive voix ; elle choisit le sien à sa première connexion.
 
 ### Double authentification
 

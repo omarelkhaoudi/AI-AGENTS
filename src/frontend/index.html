@@ -774,6 +774,25 @@
         <button type="submit" class="primary mt-7 min-h-12 w-full justify-center text-[15px]" id="login-submit">Se connecter<svg class="i" aria-hidden="true"><use href="#i-arrow"/></svg></button>
         <p class="mt-6 text-center text-[12.5px] text-muted">Mot de passe oublié ? Demandez à Omar de le réinitialiser.</p>
       </form>
+      <form id="password-form" class="w-full max-w-[400px] rounded-[28px] border border-line bg-surface p-6 shadow-card md:border-0 md:bg-transparent md:p-8 md:shadow-none" hidden>
+        <span class="mb-5 grid size-12 place-items-center rounded-2xl bg-linear-140 from-brand-2 to-brand text-brand-ink shadow-[var(--shadow-brand)]" aria-hidden="true"><svg class="i size-[22px]!"><use href="#i-shield"/></svg></span>
+        <h1 class="text-[28px]">Votre mot de passe</h1>
+        <p class="mt-1.5 mb-7 text-[14.5px] text-muted">Le mot de passe reçu est provisoire. Choisissez le vôtre : au moins 10 caractères. Personne d'autre ne le connaîtra.</p>
+        <div class="field" id="password-current-field">
+          <label for="password-current">Mot de passe provisoire</label>
+          <input id="password-current" name="current" type="password" autocomplete="current-password">
+        </div>
+        <div class="field mt-4">
+          <label for="password-next">Nouveau mot de passe</label>
+          <input id="password-next" name="next" type="password" autocomplete="new-password" minlength="10" required>
+        </div>
+        <div class="field mt-4">
+          <label for="password-confirm">Confirmez le nouveau mot de passe</label>
+          <input id="password-confirm" name="confirm" type="password" autocomplete="new-password" minlength="10" required>
+        </div>
+        <p id="password-error" class="mt-4 text-[14px] text-danger" role="alert" hidden></p>
+        <button type="submit" class="primary mt-7 min-h-12 w-full justify-center text-[15px]" id="password-submit">Enregistrer et ouvrir le cockpit<svg class="i" aria-hidden="true"><use href="#i-arrow"/></svg></button>
+      </form>
       </div>
     </div>
 
@@ -781,7 +800,7 @@
       <div class="flex items-start justify-between gap-4">
         <div>
           <p class="eyebrow">Mon compte</p>
-          <h2 id="security-title" class="text-[22px]">Double authentification</h2>
+          <h2 id="security-title" class="text-[22px]">Sécurité du compte</h2>
         </div>
         <button type="button" class="session-logout" id="security-close" title="Fermer"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg><span class="visually-hidden">Fermer</span></button>
       </div>

@@ -63,6 +63,9 @@ export function createPrincipal({ user, tokenId = null }) {
     // The company the person belongs to; null for an account made before
     // companies were named, which belongs to the one company of its server.
     companyId: typeof user.metadata?.companyId === "string" && user.metadata.companyId.trim() ? user.metadata.companyId.trim() : null,
+    // Created with a temporary password: the person chooses their own before
+    // anything else.
+    mustChangePassword: user.metadata?.mustChangePassword === true,
     tokenId
   });
 }

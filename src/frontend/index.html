@@ -91,6 +91,10 @@
             <button type="button" class="nav-item max-md:hidden" data-view="cash">
               <svg class="i" aria-hidden="true"><use href="#i-wallet"/></svg><span class="nav-label">Caisse</span>
             </button>
+            <button type="button" class="nav-item max-md:hidden" data-view="saas" id="saas-nav" hidden>
+              <svg class="i" aria-hidden="true"><use href="#i-receipt"/></svg><span class="nav-label">Abonnements</span>
+              <span class="nav-badge" id="saas-count" hidden>0</span>
+            </button>
             <button type="button" class="nav-item max-md:hidden" data-view="whatsapp">
               <svg class="i" aria-hidden="true"><use href="#i-chat"/></svg><span class="nav-label">WhatsApp</span>
               <span class="nav-badge" id="whatsapp-count" hidden>0</span>
@@ -130,6 +134,7 @@
           <div id="more-sheet" class="more-sheet md:hidden" hidden>
             <p class="more-sheet-title">Plus de vues</p>
             <button type="button" class="sheet-item" data-view="cash"><svg class="i" aria-hidden="true"><use href="#i-wallet"/></svg>Caisse</button>
+            <button type="button" class="sheet-item" data-view="saas" id="saas-sheet" hidden><svg class="i" aria-hidden="true"><use href="#i-receipt"/></svg>Abonnements</button>
             <button type="button" class="sheet-item" data-view="whatsapp"><svg class="i" aria-hidden="true"><use href="#i-chat"/></svg>WhatsApp</button>
             <button type="button" class="sheet-item" data-view="improvement"><svg class="i" aria-hidden="true"><use href="#i-bulb"/></svg>Amélioration</button>
             <button type="button" class="sheet-item" data-view="hr"><svg class="i" aria-hidden="true"><use href="#i-user-check"/></svg>Équipe RH</button>
@@ -171,6 +176,10 @@
             </button>
           </div>
         </header>
+
+        <p id="suspended-banner" class="rounded-2xl border border-line bg-surface px-4 py-3 text-sm" role="status" hidden>
+          <strong>Cockpit en lecture seule.</strong> L'abonnement est suspendu : vous consultez et exportez tout, mais rien ne peut être modifié. Contactez votre fournisseur pour le réactiver.
+        </p>
 
         <!-- Briefing -->
         <section class="view flex animate-rise flex-col gap-6 [&>*]:min-w-0" data-view-panel="director" aria-labelledby="request-title">
@@ -417,6 +426,16 @@
           </header>
           <div id="hr-stats" class="stat-tiles stat-tiles-4" aria-live="polite"></div>
           <div id="hr-body" class="plans-list"></div>
+        </section>
+
+        <section class="view flex animate-rise flex-col gap-6" data-view-panel="saas" hidden aria-labelledby="saas-title">
+          <header class="view-head">
+            <h2 id="saas-title" class="visually-hidden">Abonnements</h2>
+            <p>Les entreprises clientes du cockpit et leur abonnement. Le 1er de chaque mois, leurs factures sont préparées ; vous les émettez ici, sous la série de factures de H-KIDS, puis vous notez le virement reçu. Les relances et la suspension sont proposées, jamais faites seules.</p>
+            <button type="button" class="secondary" id="refresh-saas"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Rafraîchir</button>
+          </header>
+          <div id="saas-stats" class="stat-tiles stat-tiles-4" aria-live="polite"></div>
+          <div id="saas-body" class="plans-list"></div>
         </section>
 
         <!-- Validations -->

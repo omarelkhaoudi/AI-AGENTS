@@ -15,6 +15,8 @@
 #   sh scripts/tenant.sh export <slug>      (all of a company's data, in one archive)
 #   sh scripts/tenant.sh stop <slug>        (the cockpit stops, its data is kept)
 #   sh scripts/tenant.sh start <slug>
+#   sh scripts/tenant.sh suspend <slug>     (unpaid subscription: read only, data kept)
+#   sh scripts/tenant.sh resume <slug>      (paid again: the cockpit works as before)
 #
 # Each company's settings are in deploy/tenants/<slug>/.env (readable by this
 # account only). The company's own WhatsApp and Meta keys go there too.
@@ -192,6 +194,19 @@ stop() {
   echo "« $slug » arrêtée ; ses données sont gardées (relancer : sh scripts/tenant.sh start $slug)."
 }
 
+# Read only while the subscription is unpaid: the company still signs in, reads
+# and exports everything; it changes nothing until resumed.
+set_suspended() {
+  slug=$1
+  check_slug "$slug"
+  env_file="$TENANTS/$slug/.env"
+  [ -f "$env_file" ] || fail "aucune entreprise « $slug »."
+  grep -v '^HKIDS_SUSPENDED=' "$env_file" > "$env_file.tmp" || true
+  [ "$2" = "on" ] && echo "HKIDS_SUSPENDED=on" >> "$env_file.tmp"
+  mv "$env_file.tmp" "$env_file"
+  compose "$slug" up -d
+}
+
 command=${1:-}
 [ $# -gt 0 ] && shift
 case "$command" in
@@ -202,5 +217,7 @@ case "$command" in
   export) [ $# -gt 0 ] || fail "identifiant manquant."; export_data "$1" ;;
   stop) [ $# -gt 0 ] || fail "identifiant manquant."; stop "$1" ;;
   start) [ $# -gt 0 ] || fail "identifiant manquant."; start "$1" ;;
-  *) sed -n '2,20p' "$0"; exit 1 ;;
+  suspend) [ $# -gt 0 ] || fail "identifiant manquant."; set_suspended "$1" on; echo "« $1 » suspendue : lecture seule, données gardées (réactiver : sh scripts/tenant.sh resume $1)." ;;
+  resume) [ $# -gt 0 ] || fail "identifiant manquant."; set_suspended "$1" off; echo "« $1 » réactivée." ;;
+  *) sed -n '2,22p' "$0"; exit 1 ;;
 esac

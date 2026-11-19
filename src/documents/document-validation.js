@@ -95,6 +95,8 @@ export function normalizeDocumentInput(input = {}) {
     quoteReference: text(input.quoteReference),
     invoiceReference: text(input.invoiceReference),
     deliveryNoteReference: text(input.deliveryNoteReference),
+    // A subscription invoice (the SaaS) names its contract, ABO-<company>.
+    subscriptionReference: text(input.subscriptionReference),
     deliveryDate: text(input.deliveryDate),
     // Stated, never inferred. An unknown value falls back to the historical
     // priced document rather than silently stripping money off a real one.
@@ -202,7 +204,7 @@ export function validateAndPrepareDocument(input = {}, { requireConfirmation = f
   } else if (SETTLEMENT_CHOICES[document.documentType]) {
     validateSettlement(document, errors);
   } else {
-    validatePayment(document.payment, errors);
+    validatePayment(document.payment, errors, { subscription: isSubscriptionInvoice(document) });
   }
 
   const calculated = recalculate(document);
@@ -320,6 +322,10 @@ function assertNoCommercialTerms(input) {
 // An invoice has to point at what came before it, and either reference does.
 // Requiring one in particular would break one of the two flows; requiring
 // neither would let an invoice reference nothing at all.
+export function isSubscriptionInvoice(document) {
+  return document?.documentType === HKIDS_DOCUMENT_TYPES.INVOICE && typeof document.subscriptionReference === "string" && document.subscriptionReference.trim() !== "";
+}
+
 function validateUpstreamReferences(document, errors, relatedDocuments = {}) {
   // A credit note corrects one invoice, which it must name.
   if (document.documentType === HKIDS_DOCUMENT_TYPES.CREDIT_NOTE) {
@@ -336,6 +342,22 @@ function validateUpstreamReferences(document, errors, relatedDocuments = {}) {
     return;
   }
   if (document.documentType !== HKIDS_DOCUMENT_TYPES.INVOICE) {
+    if (document.subscriptionReference) {
+      errors.push(error("subscriptionReference", "REFERENCE_NOT_ALLOWED", "Only an invoice names a subscription contract."));
+    }
+    return;
+  }
+
+  // A subscription invoice bills a month of the contract it names; it follows
+  // no quote and no delivery note, and may not mix with a sale's references.
+  if (document.subscriptionReference) {
+    if (!/^ABO-[a-z0-9][a-z0-9-]{1,29}$/.test(document.subscriptionReference)) {
+      errors.push(error("subscriptionReference", "INVALID_SUBSCRIPTION_REFERENCE", "subscriptionReference must read ABO-<company identifier>."));
+    }
+    const mixed = UPSTREAM_REFERENCE_FIELDS.filter((field) => !isMissing(document[field]));
+    if (mixed.length > 0) {
+      errors.push(error(mixed.join(" | "), "REFERENCE_NOT_ALLOWED", "A subscription invoice references its contract only, not a quote or a delivery note."));
+    }
     return;
   }
 
@@ -420,7 +442,15 @@ function normalizePaymentMethod(value) {
 // are how an unapproved plan reaches a document: "70 % commande ; 30 %
 // livraison" reads perfectly and was never agreed with the company, and
 // checking only `termsRule` let it through whenever the rule was left out.
-function validatePayment(payment, errors) {
+function validatePayment(payment, errors, { subscription = false } = {}) {
+  // A subscription is paid month by month, not on a sale's schedule: its terms
+  // are the contract's, written by the subscription book, never a sale's rule.
+  if (subscription) {
+    if (payment.termsRule) {
+      errors.push(error("payment.termsRule", "TERMS_RULE_NOT_ALLOWED", "A subscription invoice carries the contract's terms, not a sale's schedule."));
+    }
+    return;
+  }
   if (payment.termsRule && !isKnownPaymentScheduleRule(payment.termsRule)) {
     errors.push(error("payment.termsRule", "UNKNOWN_PAYMENT_TERMS_RULE", "payment.termsRule is not an active H-KIDS payment rule."));
   }
@@ -456,7 +486,15 @@ function validateSettlement(document, errors) {
   }
 }
 
+export const SUBSCRIPTION_INVOICE_OBJECT = "Abonnement au cockpit Director IA";
+
 function validateDocumentObject(document, errors) {
+  if (isSubscriptionInvoice(document)) {
+    if (document.object !== SUBSCRIPTION_INVOICE_OBJECT) {
+      errors.push(error("object", "INVALID_DOCUMENT_OBJECT", `a subscription invoice's object must be ${SUBSCRIPTION_INVOICE_OBJECT}.`));
+    }
+    return;
+  }
   if (document.documentType === HKIDS_DOCUMENT_TYPES.INVOICE && document.object && document.object !== "Vente de mobilier") {
     errors.push(error("object", "INVALID_DOCUMENT_OBJECT", "invoice object must be Vente de mobilier when provided."));
   }

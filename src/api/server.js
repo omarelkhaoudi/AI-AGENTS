@@ -38,6 +38,7 @@ import { COMPANY, brandPage } from "../company/company-profile.js";
 import { planFromEnv } from "../company/plans.js";
 import { AUTOMATION_ACTIONS, AUTOMATION_EVENTS, AutomationError, MAX_RUNS_PER_RULE_PER_DAY, createAutomation, createMemoryAutomationBook } from "../agent/automation.js";
 import { HrBookError, LEAVE_STATUSES as HR_LEAVE_STATUSES, createMemoryHrBook } from "../agent/hr-book.js";
+import { SubscriptionError, createMemorySubscriptionBook } from "../agent/subscription-book.js";
 import { CASH_CATEGORIES, CASH_METHODS, CONFIDENTIAL_CATEGORIES, CashBookError, EXPENSE_STATUSES, OPENING_CATEGORY, createMemoryCashBook } from "../agent/cash-book.js";
 
 export const DEFAULT_COMPANY_ID = "hkids";
@@ -169,6 +170,14 @@ export function buildApi({
   automationBook = null,
   // The subscription of this instance (HKIDS_PLAN); null for the pilot.
   subscription = planFromEnv(),
+  // Suspended for an unpaid subscription (HKIDS_SUSPENDED=on, set by
+  // scripts/tenant.sh suspend): the cockpit is read only.
+  suspended = String(process.env.HKIDS_SUSPENDED ?? "").trim().toLowerCase() === "on",
+  // The client companies' subscriptions, kept by the company selling the
+  // cockpit (data/abonnements.json for the server process). Only an instance
+  // with no plan of its own sells it: H-KIDS.
+  subscriptionBook = null,
+  saasOperator = undefined,
   // The site's own address, for the links sent to clients. Left empty, a link
   // made from the cockpit takes the address the cockpit was opened at.
   publicBaseUrl = process.env.PUBLIC_BASE_URL ?? "",
@@ -375,6 +384,8 @@ export function buildApi({
   });
   const followUps = followUpBook ?? createMemoryFollowUpBook({ clock });
   const hr = hrBook ?? createMemoryHrBook({ clock });
+  const sellsSubscriptions = saasOperator ?? subscription === null;
+  const subscriptions = subscriptionBook ?? createMemorySubscriptionBook({ clock });
   const improvementRecords = improvementBook ?? createMemoryImprovementBook({ clock });
   // Wherever the workshop book is read (the Director, the cockpit, the timer),
   // a step newly blocked or late is told to its order's chef de charge.
@@ -580,6 +591,10 @@ export function buildApi({
     return { summary, reminded: reminded.map((anomaly) => anomaly.number) };
   });
 
+  // From the 1st of each month, the month's subscription invoices are
+  // prepared, waiting for the direction to issue them.
+  app.decorate("sweepSubscriptions", async () => (sellsSubscriptions ? subscriptions.prepareMonth(isoDay(clock()).slice(0, 7)) : []));
+
   app.decorate("sweepFollowUps", async () => {
     if (!whatsApp.configured || !workingHours(clock())) {
       return [];
@@ -683,6 +698,14 @@ export function buildApi({
         return reply.code(403).send({
           error: "Choisissez d'abord votre propre mot de passe.",
           details: { code: "PASSWORD_CHANGE_REQUIRED" }
+        });
+      }
+      // A company suspended for an unpaid subscription reads its cockpit and
+      // exports it; it changes nothing until its seller lifts the suspension.
+      if (suspended && !["GET", "HEAD"].includes(request.method) && !PASSWORD_CHANGE_ROUTES.has(`${request.method} ${routeIdentifier(request)}`)) {
+        return reply.code(403).send({
+          error: "Cockpit en lecture seule : l'abonnement est suspendu. Contactez votre fournisseur pour le réactiver.",
+          details: { code: "SUBSCRIPTION_SUSPENDED" }
         });
       }
     });
@@ -1024,13 +1047,17 @@ export function buildApi({
     app.get("/api/ai-usage", readRouteOptions(), async (request) => usage.summary({ month: typeof request.query?.month === "string" ? request.query.month : "" }));
 
     // The company of this instance and its subscription (none for the pilot).
-    app.get("/api/company", readRouteOptions(), async () => ({
+    app.get("/api/company", readRouteOptions(), async (request) => ({
       name: COMPANY.name,
       shortName: COMPANY.shortName,
       city: COMPANY.city,
       // The company's own payment plans, when it set them; null for the pilot's.
       paymentPlans: COMPANY.paymentPlans ? COMPANY.paymentPlans.map((plan) => ({ id: plan.id, label: plan.label, standard: plan.standard })) : null,
-      plan: subscription ? { ...subscription, usersUsed: typeof repository.countSignInUsers === "function" ? await repository.countSignInUsers() : null } : null
+      plan: subscription ? { ...subscription, usersUsed: typeof repository.countSignInUsers === "function" ? await repository.countSignInUsers() : null } : null,
+      suspended,
+      // This cockpit sells the subscriptions, and this person is its direction
+      // (the « Abonnements » view).
+      saas: sellsSubscriptions && seesConfidential(request)
     }));
 
     app.get("/api/agent/status", readRouteOptions(), async () => ({
@@ -1762,6 +1789,166 @@ export function buildApi({
           return reply.code(error.code === "HR_LEAVE_NOT_FOUND" ? 404 : 400).send({ error: error.message, code: error.code });
         }
         throw error;
+      }
+    });
+
+    // --- Abonnements: the client companies of the SaaS (subscription-book.js)
+    // The direction of the selling company alone sees and changes them. An
+    // invoice is issued through the same chain as any H-KIDS invoice: preview,
+    // then generation under the number the direction saw.
+    const subscriptionRefused = async (request, reply) => {
+      if (!sellsSubscriptions) {
+        reply.code(404).send({ error: "Ce cockpit ne vend pas d'abonnements." });
+        return true;
+      }
+      if (!seesConfidential(request)) {
+        await auditSecurityEvent(repository, { type: "authorization_denied", actorUserId: request.principal.userId, resourceType: "subscription", resourceId: String(request.params?.slug ?? ""), metadata: { method: request.method, code: "DIRECTION_ONLY" } });
+        reply.code(403).send({ error: "Réservé à la direction : les abonnements sont confidentiels." });
+        return true;
+      }
+      return false;
+    };
+    const sendSubscriptionError = (reply, error) => {
+      if (error instanceof SubscriptionError) {
+        return reply.code(/NOT_FOUND$/.test(error.code) ? 404 : error.code === "SUBSCRIPTION_CLIENT_EXISTS" || error.code === "SUBSCRIPTION_INVOICE_ISSUED" || error.code === "SUBSCRIPTION_ALREADY_PAID" ? 409 : 400).send({ error: error.message, details: { code: error.code } });
+      }
+      const normalized = normalizeDocumentError(error);
+      if (normalized) {
+        return reply.code(normalized.statusCode).send(normalized.body);
+      }
+      throw error;
+    };
+    const byOf = (request) => request.principal.userId ?? "direction";
+    // The next number of the company's invoice series; never invented when the
+    // series is unknown.
+    const nextInvoiceNumber = async () => {
+      const number = await hkidsDocuments.nextDocumentNumber("invoice");
+      if (!number) {
+        throw new SubscriptionError("Aucune facture connue dans ce cockpit : impossible de savoir quel numéro suit. Importez d'abord les factures déjà émises.", "SUBSCRIPTION_NO_INVOICE_NUMBER");
+      }
+      return number;
+    };
+    const bodyText = (request, name) => (typeof request.body?.[name] === "string" || typeof request.body?.[name] === "number" ? String(request.body[name]) : "");
+
+    app.get("/api/saas", readRouteOptions(), async (request, reply) => {
+      if (await subscriptionRefused(request, reply)) {
+        return reply;
+      }
+      return { overview: await subscriptions.overview() };
+    });
+
+    app.post("/api/saas/clients", writeRouteOptions(), async (request, reply) => {
+      if (await subscriptionRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        const client = await subscriptions.addClient({
+          slug: bodyText(request, "slug"), name: bodyText(request, "name"), address: bodyText(request, "address"), plan: bodyText(request, "plan"),
+          priceHt: bodyText(request, "priceHt"), since: bodyText(request, "since"), ice: bodyText(request, "ice"), email: bodyText(request, "email"), by: byOf(request)
+        });
+        await teamFeed.log({ agent: "finance", kind: "abonnement", text: `Abonnement ${client.plan} ouvert pour ${client.name} (${client.priceHt} DH HT par mois).`, ref: `abonnement:${client.slug}`, by: byOf(request) });
+        return reply.code(201).send({ client });
+      } catch (error) {
+        return sendSubscriptionError(reply, error);
+      }
+    });
+
+    app.post("/api/saas/clients/:slug/plan", writeRouteOptions(), async (request, reply) => {
+      if (await subscriptionRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        const client = await subscriptions.changePlan(request.params.slug, { plan: bodyText(request, "plan"), priceHt: bodyText(request, "priceHt"), by: byOf(request) });
+        await teamFeed.log({ agent: "finance", kind: "abonnement", text: `${client.name} passe à l'offre ${client.plan} (${client.priceHt} DH HT par mois).`, ref: `abonnement:${client.slug}`, by: byOf(request) });
+        return { client };
+      } catch (error) {
+        return sendSubscriptionError(reply, error);
+      }
+    });
+
+    app.post("/api/saas/clients/:slug/status", writeRouteOptions(), async (request, reply) => {
+      if (await subscriptionRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        const client = await subscriptions.setStatus(request.params.slug, { status: bodyText(request, "status"), reason: bodyText(request, "reason"), by: byOf(request) });
+        await teamFeed.log({ agent: "finance", kind: "abonnement", text: `Abonnement de ${client.name} : ${client.status}.`, ref: `abonnement:${client.slug}`, by: byOf(request) });
+        return { client };
+      } catch (error) {
+        return sendSubscriptionError(reply, error);
+      }
+    });
+
+    app.post("/api/saas/prepare", writeRouteOptions(), async (request, reply) => {
+      if (await subscriptionRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        return { prepared: await subscriptions.prepareMonth(isoDay(clock()).slice(0, 7)) };
+      } catch (error) {
+        return sendSubscriptionError(reply, error);
+      }
+    });
+
+    // What the invoice will say, under the next number of H-KIDS' series.
+    app.post("/api/saas/invoices/:slug/:period/preview", writeRouteOptions(), async (request, reply) => {
+      if (await subscriptionRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        const number = await nextInvoiceNumber();
+        const input = await subscriptions.invoiceInput(request.params.slug, request.params.period, { number });
+        const preview = await hkidsDocuments.preview(input);
+        return { number, document: preview.document, notices: preview.notices };
+      } catch (error) {
+        return sendSubscriptionError(reply, error);
+      }
+    });
+
+    // The direction confirmed the number it was shown; if another invoice took
+    // it in between, nothing is issued and the preview is to be seen again.
+    app.post("/api/saas/invoices/:slug/:period/issue", writeRouteOptions(), async (request, reply) => {
+      if (await subscriptionRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        const number = await nextInvoiceNumber();
+        if (bodyText(request, "number") !== String(number)) {
+          return reply.code(409).send({ error: `Le numéro a changé entre-temps : la facture prendrait le n° ${number}. Revoyez l'aperçu.`, details: { code: "SUBSCRIPTION_NUMBER_CHANGED", number } });
+        }
+        const input = await subscriptions.invoiceInput(request.params.slug, request.params.period, { number });
+        const preview = await hkidsDocuments.preview(input);
+        await hkidsDocuments.generate({ ...input, previewToken: preview.previewToken, userConfirmation: true }, { createdById: request.principal.userId });
+        const invoice = await subscriptions.markIssued(request.params.slug, request.params.period, { number: String(number), date: isoDay(clock()), by: byOf(request) });
+        await app.syncArchive();
+        await teamFeed.log({ agent: "finance", kind: "abonnement", text: `Facture n° ${number} émise : abonnement de ${input.client.name}, ${input.items[0].designation}, ${invoice.totalTtc} DH TTC.`, ref: `facture:${number}`, by: byOf(request) });
+        return reply.code(201).send({ invoice });
+      } catch (error) {
+        return sendSubscriptionError(reply, error);
+      }
+    });
+
+    app.post("/api/saas/invoices/:slug/:period/paid", writeRouteOptions(), async (request, reply) => {
+      if (await subscriptionRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        const invoice = await subscriptions.markPaid(request.params.slug, request.params.period, { paidOn: bodyText(request, "paidOn"), note: bodyText(request, "note"), by: byOf(request) });
+        await teamFeed.log({ agent: "finance", kind: "abonnement", text: `Facture n° ${invoice.number} payée (abonnement ${invoice.slug}, ${invoice.totalTtc} DH TTC).`, ref: `facture:${invoice.number}`, by: byOf(request) });
+        return { invoice };
+      } catch (error) {
+        return sendSubscriptionError(reply, error);
+      }
+    });
+
+    app.post("/api/saas/invoices/:slug/:period/reminder", writeRouteOptions(), async (request, reply) => {
+      if (await subscriptionRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        return { invoice: await subscriptions.noteReminder(request.params.slug, request.params.period, { step: bodyText(request, "step"), by: byOf(request) }) };
+      } catch (error) {
+        return sendSubscriptionError(reply, error);
       }
     });
 

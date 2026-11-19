@@ -415,6 +415,27 @@ au Director. L'agent RH ne décide d'aucun congé.
 Le motif d'une absence n'est montré qu'à qui voit le confidentiel (loi 09-08).
 Tout est gardé dans `data/rh.json`.
 
+### Abonnements : facturer les entreprises clientes
+
+Le cockpit qui vend les abonnements (celui de H-KIDS, sans `HKIDS_PLAN`) a une
+vue **Abonnements**, visible de la direction seule :
+
+- les entreprises clientes : nom légal, adresse du siège, offre, prix HT par
+  mois (celui de l'offre par défaut) ;
+- le revenu mensuel et annuel, l'encaissé, le retard ;
+- chaque 1er du mois, une facture préparée par entreprise active. La direction
+  voit le numéro et le montant, puis émet : c'est une facture H-KIDS ordinaire,
+  dans sa série, qui cite « Référence abonnement : ABO-&lt;entreprise&gt; » au lieu
+  d'un devis ou d'un BL, avec TVA 20 % et une échéance à 30 jours ;
+- les impayés, avec une relance prête à copier à J+7 et J+15 après
+  l'échéance, envoyée par la direction elle-même ;
+- au-delà de 30 jours de retard, la suspension proposée avec sa commande :
+  `sh scripts/tenant.sh suspend <entreprise>` met son cockpit en lecture seule,
+  ses données restent consultables et exportables ; `resume` le réactive.
+
+Rien n'est émis, envoyé ou suspendu seul. Le paiement est noté à réception du
+virement (« Virement reçu »). Tout est gardé dans `data/abonnements.json`.
+
 ### Application installable
 
 Le cockpit s'installe comme une application, sur téléphone ou sur ordinateur :

@@ -1439,6 +1439,169 @@ function renderHr({ overview, payroll, canDecide }) {
   hrBody.innerHTML = sections.join("");
 }
 
+// --- Abonnements view (the cockpit that sells the SaaS) -----------------------------
+// The client companies, the month's invoices to issue under H-KIDS' series,
+// the unpaid ones with their reminder ready to copy, and the suspensions to
+// decide. Each invoice is shown with its number before it is issued.
+const saasStats = document.querySelector("#saas-stats");
+const saasBody = document.querySelector("#saas-body");
+const saasCount = document.querySelector("#saas-count");
+const SAAS_PLANS = Object.freeze({ starter: "Starter", business: "Business", enterprise: "Enterprise" });
+document.querySelector("#refresh-saas").addEventListener("click", () => refreshSaas());
+
+const saasInvoiceUrl = (button) => `/api/saas/invoices/${encodeURIComponent(button.dataset.slug)}/${encodeURIComponent(button.dataset.period)}`;
+
+saasBody.addEventListener("click", async (event) => {
+  const button = event.target.closest?.("[data-saas-action]");
+  if (!button) {
+    return;
+  }
+  const action = button.dataset.saasAction;
+  button.disabled = true;
+  try {
+    if (action === "prepare") {
+      const { prepared } = await postJson("/api/saas/prepare", {});
+      showToast(prepared.length > 0 ? `${prepared.length} facture(s) du mois préparée(s).` : "Toutes les factures du mois sont déjà préparées.");
+    }
+    if (action === "issue") {
+      const preview = await postJson(`${saasInvoiceUrl(button)}/preview`, {});
+      const line = preview.document.items[0];
+      const confirmed = globalThis.confirm?.(`Émettre la facture n° ${preview.number} ?\n\n${preview.document.client.name}\n${line.designation}\n${formatDh(preview.document.totals.totalHt)} HT + TVA ${formatDh(preview.document.totals.tva)} = ${formatDh(preview.document.totals.totalTtc)} TTC\n${preview.document.payment.terms}\n\nUne facture émise ne s'efface pas : elle se corrige par un avoir.`);
+      if (!confirmed) {
+        button.disabled = false;
+        return;
+      }
+      await postJson(`${saasInvoiceUrl(button)}/issue`, { number: preview.number });
+      showToast(`Facture n° ${preview.number} émise. Elle est dans Documents, à envoyer au client.`);
+    }
+    if (action === "paid") {
+      const day = globalThis.prompt?.("Date du virement reçu (JJ/MM/AAAA) :", new Intl.DateTimeFormat("fr-FR").format(new Date()));
+      if (!day) {
+        button.disabled = false;
+        return;
+      }
+      await postJson(`${saasInvoiceUrl(button)}/paid`, { paidOn: day.trim() });
+      showToast("Paiement noté.");
+    }
+    if (action === "copy-reminder") {
+      await globalThis.navigator?.clipboard?.writeText(button.dataset.text);
+      await postJson(`${saasInvoiceUrl(button)}/reminder`, { step: button.dataset.step });
+      showToast("Relance copiée : collez-la dans l'e-mail ou le WhatsApp du client.");
+    }
+    if (action === "copy-command") {
+      await globalThis.navigator?.clipboard?.writeText(button.dataset.text);
+      showToast("Commande copiée : à lancer sur le serveur, depuis /opt/hkids.");
+    }
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshSaas();
+});
+
+saasBody.addEventListener("submit", async (event) => {
+  const formNode = event.target.closest?.("[data-saas-client-form]");
+  if (!formNode) {
+    return;
+  }
+  event.preventDefault();
+  const read = (name) => formNode.querySelector(`[name='${name}']`)?.value ?? "";
+  try {
+    const since = read("since");
+    await postJson("/api/saas/clients", {
+      slug: read("slug"), name: read("name"), address: read("address"), plan: read("plan"), priceHt: read("priceHt"),
+      ice: read("ice"), email: read("email"), since: since ? since.split("-").reverse().join("/") : ""
+    });
+    showToast("Entreprise cliente ajoutée.");
+    await refreshSaas();
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+});
+
+async function refreshSaas() {
+  try {
+    const response = await fetch("/api/saas", { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error((await response.json().catch(() => ({}))).error ?? "Impossible de charger les abonnements.");
+    }
+    renderSaas((await response.json()).overview);
+  } catch (error) {
+    saasStats.innerHTML = "";
+    saasBody.innerHTML = card("Abonnements indisponibles", escapeHtml(error.message), "warning");
+  }
+}
+
+function renderSaas(overview) {
+  const pending = overview.toIssue.length + overview.unpaid.filter((invoice) => invoice.reminderDue !== null).length + overview.toSuspend.length;
+  saasCount.textContent = String(pending);
+  saasCount.hidden = pending === 0;
+  const tiles = [
+    ["Revenu mensuel", formatDh(overview.monthlyHt), `HT · ${formatDh(overview.yearlyHt)} sur un an`],
+    ["Entreprises actives", overview.activeCount, Object.entries(SAAS_PLANS).map(([id, label]) => `${overview.byPlan[id] ?? 0} ${label}`).join(" · ")],
+    ["À encaisser", formatDh(overview.unpaidTtc), "TTC, factures émises"],
+    ["En retard", formatDh(overview.lateTtc), "TTC, échéance passée"]
+  ];
+  saasStats.innerHTML = tiles.map(([label, value, hint], index) => `
+    <div class="stat-tile ${index === 3 && overview.lateTtc > 0 ? "is-alert" : ""}"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span><small>${escapeHtml(hint)}</small></div>
+  `).join("");
+  const table = (head, rows) => `<div class="answer-table"><table><thead><tr>${head.map((value) => `<th>${escapeHtml(value)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+  const data = (entry) => `data-slug="${escapeHtml(entry.slug)}" data-period="${escapeHtml(entry.period)}"`;
+  const sections = [];
+
+  sections.push(improvementSection("Factures à émettre", "Préparées le 1er du mois pour chaque entreprise active. Vous voyez le numéro et le montant avant d'émettre.",
+    overview.toIssue.length > 0
+      ? overview.toIssue.map((entry) => `
+        <article class="rule-card">
+          <p><strong>${escapeHtml(entry.name)}</strong> : abonnement ${escapeHtml(entry.plan)}, ${escapeHtml(entry.month)}, ${escapeHtml(formatDh(entry.totalHt))} HT (${escapeHtml(formatDh(entry.totalTtc))} TTC)</p>
+          <div class="flex gap-2"><button type="button" data-saas-action="issue" ${data(entry)}>${icon("check")}Voir le numéro et émettre</button></div>
+        </article>`).join("")
+      : `<p class="muted">Rien à émettre. <button type="button" class="secondary" data-saas-action="prepare">${icon("refresh")}Préparer les factures du mois</button></p>`));
+
+  if (overview.unpaid.length > 0) {
+    sections.push(improvementSection("Factures impayées", `Échéance à ${overview.settings.dueDays} jours. Une relance est proposée ${overview.settings.reminderDays.map((day) => `à J+${day}`).join(" et ")} après l'échéance : copiez-la et envoyez-la vous-même.`,
+      overview.unpaid.map((invoice) => `
+        <article class="rule-card ${invoice.daysLate > 0 ? "is-alert" : ""}">
+          <p><strong>${escapeHtml(invoice.name)}</strong> : facture n° ${escapeHtml(invoice.number)} du ${formatIsoDay(invoice.date)}, ${escapeHtml(invoice.month)}, ${escapeHtml(formatDh(invoice.totalTtc))} TTC · ${invoice.daysLate > 0 ? `<strong>${invoice.daysLate} jour(s) de retard</strong>` : `à payer avant le ${formatIsoDay(invoice.dueDate)}`}${invoice.remindersSent.length > 0 ? ` · relancée ${invoice.remindersSent.map((day) => `J+${day}`).join(", ")}` : ""}</p>
+          <div class="flex flex-wrap gap-2">
+            <button type="button" data-saas-action="paid" ${data(invoice)}>${icon("check")}Virement reçu</button>
+            ${invoice.reminderDue !== null ? `<button type="button" class="secondary" data-saas-action="copy-reminder" data-step="${invoice.reminderDue}" data-text="${escapeHtml(invoice.reminderText)}" ${data(invoice)}>${icon("send")}Copier la relance J+${invoice.reminderDue}</button>` : ""}
+          </div>
+        </article>`).join("")));
+  }
+
+  if (overview.toSuspend.length > 0) {
+    sections.push(improvementSection("Suspensions à décider", `Impayé depuis plus de ${overview.settings.suspendAfterDays} jours après l'échéance. La suspension met le cockpit du client en lecture seule ; ses données restent intactes et exportables.`,
+      overview.toSuspend.map((entry) => `
+        <article class="rule-card is-alert">
+          <p><strong>${escapeHtml(entry.name)}</strong> · sur le serveur : <code>${escapeHtml(entry.command)}</code></p>
+          <div class="flex gap-2"><button type="button" class="secondary" data-saas-action="copy-command" data-text="${escapeHtml(entry.command)}">${icon("link")}Copier la commande</button></div>
+        </article>`).join("")));
+  }
+
+  sections.push(improvementSection("Entreprises clientes", "Le nom légal et l'adresse du siège sont ceux imprimés sur leurs factures.",
+    overview.clients.length > 0
+      ? table(["Entreprise", "Identifiant", "Offre", "Prix HT / mois", "Depuis", "Statut", "Impayé TTC"], overview.clients.map((client) => `<tr><td>${escapeHtml(client.name)}</td><td>${escapeHtml(client.slug)}</td><td>${escapeHtml(client.planLabel)}</td><td class="num">${escapeHtml(formatDh(client.priceHt))}</td><td>${formatIsoDay(client.since)}</td><td>${escapeHtml(client.status)}</td><td class="num">${client.unpaidTtc > 0 ? escapeHtml(formatDh(client.unpaidTtc)) : "—"}</td></tr>`))
+      : `<p class="muted">Aucune entreprise cliente pour l'instant.</p>`));
+
+  sections.push(`
+    <details class="task-assign panel">
+      <summary>Ajouter une entreprise cliente</summary>
+      <form data-saas-client-form>
+        <label>Identifiant<input name="slug" required pattern="[a-z0-9][a-z0-9\\-]{1,29}" placeholder="celui de son cockpit (tenant.sh)"></label>
+        <label class="wide">Nom légal<input name="name" required placeholder="tel qu'au registre du commerce"></label>
+        <label class="wide">Adresse du siège<input name="address" required></label>
+        <label>Offre<select name="plan">${Object.entries(SAAS_PLANS).map(([id, label]) => `<option value="${id}">${label}</option>`).join("")}</select></label>
+        <label>Prix HT / mois<input name="priceHt" inputmode="decimal" placeholder="celui de l'offre"></label>
+        <label>Début<input name="since" type="date"></label>
+        <label>ICE<input name="ice" inputmode="numeric"></label>
+        <label>E-mail de facturation<input name="email" type="email"></label>
+        <button type="submit" class="primary">${icon("plus")}Ajouter</button>
+      </form>
+    </details>
+  `);
+  saasBody.innerHTML = sections.join("");
+}
+
 // --- Continuous improvement view -------------------------------------------------
 // The anomalies, what caused them, and the rules that keep them from coming
 // back: proposed by the agent in charge, in force once the direction says so.
@@ -4503,13 +4666,14 @@ const COCKPIT_VIEWS = Object.freeze({
   quotes: "Préparation de devis",
   file: "Dossier commercial",
   team: "Équipe IA",
-  hr: "Équipe RH"
+  hr: "Équipe RH",
+  saas: "Abonnements"
 });
 
 // On a phone the tab bar keeps the four views of every day; the others open
 // from « Plus », which stays lit while one of them is shown. The cash of the
 // day is on the briefing's first card.
-const SHEET_VIEWS = Object.freeze(["cash", "whatsapp", "improvement", "hr", "team", "documents", "quotes", "file"]);
+const SHEET_VIEWS = Object.freeze(["cash", "saas", "whatsapp", "improvement", "hr", "team", "documents", "quotes", "file"]);
 const moreButton = document.querySelector("#more-button");
 const moreSheet = document.querySelector("#more-sheet");
 
@@ -4552,6 +4716,9 @@ function showView(name) {
   }
   if (view === "hr") {
     refreshHr();
+  }
+  if (view === "saas") {
+    refreshSaas();
   }
   if (view === "documents") {
     refreshRegister();
@@ -4853,7 +5020,17 @@ updateOverview({});
 async function applyCompanyPaymentPlans() {
   try {
     const response = await fetch("/api/company", { headers: await authHeaders() });
-    const plans = response.ok ? (await response.json()).paymentPlans : null;
+    const company = response.ok ? await response.json() : {};
+    const plans = company.paymentPlans ?? null;
+    // The « Abonnements » view, on the cockpit that sells the subscriptions; a
+    // suspended company is told why nothing can be changed.
+    const sells = company.saas === true;
+    document.querySelector("#saas-nav").hidden = !sells;
+    document.querySelector("#saas-sheet").hidden = !sells;
+    document.querySelector("#suspended-banner").hidden = company.suspended !== true;
+    if (sells) {
+      refreshSaas();
+    }
     if (!Array.isArray(plans) || plans.length === 0) {
       return;
     }

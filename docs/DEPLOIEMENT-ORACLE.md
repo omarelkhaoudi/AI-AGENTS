@@ -301,6 +301,15 @@ sh scripts/tenant.sh user atelier-exemple --id=sara --email=sara@exemple.ma --na
   documents, données, dossiers) en une archive, dans `deploy/exports/`.
 - `sh scripts/tenant.sh stop atelier-exemple` : le cockpit s'arrête, ses données
   sont gardées. `start` le relance.
+- `sh scripts/tenant.sh suspend atelier-exemple` : abonnement impayé, son
+  cockpit passe en lecture seule (consulter et exporter, rien modifier).
+  `resume` le réactive. La vue **Abonnements** du cockpit H-KIDS propose cette
+  commande après 30 jours de retard.
+
+**Facturer l'abonnement.** Ajoutez l'entreprise dans la vue **Abonnements** du
+cockpit H-KIDS, avec le même identifiant que pour `tenant.sh create`, son nom
+légal et l'adresse de son siège. Ses factures mensuelles y sont préparées le
+1er de chaque mois, à émettre par la direction.
 
 **Sauvegardes.** La sauvegarde de nuit (section 8) prend aussi chaque
 entreprise en marche, dans `backups/<date>/tenants/<entreprise>/`.

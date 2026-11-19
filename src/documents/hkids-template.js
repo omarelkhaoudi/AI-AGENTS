@@ -79,6 +79,11 @@ export function invoiceUpstreamReference(document) {
     return Object.freeze({ field: "deliveryNoteReference", label: "Référence BL", value: deliveryNote });
   }
 
+  const subscription = typeof document?.subscriptionReference === "string" ? document.subscriptionReference.trim() : "";
+  if (subscription !== "") {
+    return Object.freeze({ field: "subscriptionReference", label: "Référence abonnement", value: subscription });
+  }
+
   return null;
 }
 

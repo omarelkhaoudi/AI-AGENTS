@@ -1,5 +1,6 @@
 import { SPECIALISTS } from "./agent-team.js";
 import { TranscriptionError } from "./transcriber.js";
+import { taskWords } from "./languages.js";
 import { MAX_CNC_FILE_BYTES, WorkshopError, isCncFileName } from "./workshop-book.js";
 import { DOCUMENT_LABELS } from "./document-register.js";
 import { MAX_TEXT_LENGTH, WhatsAppCloudError, parseWebhookMessages } from "../integrations/whatsapp-cloud.js";
@@ -429,16 +430,14 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
   }
 
   // « tâche 4 prise en charge », « je m'en occupe, tâche 4 », « tâche 4
-  // résolue : … » from the person it was given to. Returns what to answer.
+  // résolue : … » from the person it was given to, or the same in Darija
+  // (« mohima 4 salat », « ana 3liha, tache 4 »). Returns what to answer.
   async function fromTaskWords(said, by) {
-    const number = tasks ? /t[âa]che\s*(?:n\s*[°o.]?\s*)?(\d+)/i.exec(said)?.[1] : null;
-    if (!number) {
+    const word = tasks ? taskWords(said) : null;
+    if (!word) {
       return null;
     }
-    const action = /r[ée]solu|r[ée]gl[ée]|termin[ée]|\bfini/i.test(said) ? "resolue" : /prise? en charge|m'en occupe|en cours/i.test(said) ? "prise_en_charge" : null;
-    if (!action) {
-      return null;
-    }
+    const { number, action } = word;
     const note = action === "resolue" ? (said.split(/\s*:\s*/).slice(1).join(" : ").trim() || said) : "";
     const result = await tasks.update(number, action, { note, by });
     return result.ok

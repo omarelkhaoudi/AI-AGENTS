@@ -15,6 +15,7 @@
 
 import { WHATSAPP_MESSAGE_TOOL } from "./whatsapp.js";
 import { PILOT_COMPANY } from "../company/company-profile.js";
+import { TEAM_LANGUAGE_RULE } from "./languages.js";
 
 export const MAX_SPECIALIST_ROUNDS = 5;
 // What every agent keeps whatever its settings: reading its own reference
@@ -68,6 +69,7 @@ const COMMON_RULES = [
   "Un chiffre qui ne vient pas de tes données (objectif, estimation, budget) n'est donné que s'il est utile, et il est toujours présenté comme une hypothèse à valider, avec son raisonnement.",
   "H KIDS est une entreprise marocaine : montants en dirhams (DH / MAD), droit et institutions marocains (Code du travail marocain, CNSS, DGI et TVA marocaine, loi 09-08 et CNDP pour les données personnelles, Code de commerce, DOC). Ne cite jamais un texte ou un organisme étranger (RGPD, DUERP, URSSAF, Code du travail français…).",
   "Tu vouvoies toujours la direction.",
+  TEAM_LANGUAGE_RULE,
   "Pour comparer plusieurs éléments (devis, factures, commandes, matières, échéances), présente-les en tableau Markdown (| Colonne | … |, puis | --- | … |) : le cockpit l'affiche comme un vrai tableau.",
   PILOT_COMPANY.commercialRules,
   "Si les données viennent de la démonstration (source demo), signale-le en une phrase.",

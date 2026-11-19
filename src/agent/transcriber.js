@@ -2,9 +2,17 @@
 // WhatsApp as it reads what she types. Same OpenAI key as the agents; no
 // language is imposed, since a note may mix French and Darija.
 
+import { COMPANY, PILOT_COMPANY } from "../company/company-profile.js";
+
 export const DEFAULT_TRANSCRIBE_MODEL = "gpt-4o-transcribe";
 // Words the model would otherwise mishear in a furniture workshop's notes.
-const VOCABULARY = "H-KIDS, mobilier pour enfants, Marrakech. Devis, bon de commande (BC), facture, acompte, DH, dirhams, lit cabane, CNC, laque, MDF.";
+// The last sentence tells it a note may switch between French and Darija, so
+// a Darija sentence is written as heard instead of forced into French.
+// Another company's notes get its own name and city, not the pilot's
+// furniture words.
+const VOCABULARY = COMPANY === PILOT_COMPANY
+  ? "H-KIDS, mobilier pour enfants, Marrakech. Devis, bon de commande (BC), facture, acompte, DH, dirhams, lit cabane, CNC, laque, MDF. Wakha, safi, bghit, chhal, mlyoun, ryal."
+  : `${[COMPANY.shortName, COMPANY.city].filter(Boolean).join(", ")}. Devis, bon de commande (BC), facture, acompte, DH, dirhams. Wakha, safi, bghit, chhal, mlyoun, ryal.`;
 
 export class TranscriptionError extends Error {
   constructor(message, code) {

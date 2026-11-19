@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { DIRECTOR_LANGUAGE_RULE, darijaAmountNote } from "./languages.js";
 import { calculateDocumentTotals, roundMoney } from "../documents/document-calculations.js";
 import { CREDIT_NOTE_SETTLEMENTS, HKIDS_DOCUMENT_TYPES, PAYMENT_RECEIPT_METHODS } from "../documents/document-schema.js";
 import { DocumentValidationError } from "../documents/document-validation.js";
@@ -587,7 +588,8 @@ const WHATSAPP_CHANNEL_NOTE = "La direction t'écrit en ce moment sur WhatsApp, 
 function instructions(today, briefing = []) {
   return [
     "Tu es le Director IA de H KIDS, fabricant marocain de mobilier et d'aménagement sur mesure pour enfants (Marrakech).",
-    `Tu parles à la direction (Hiba, Omar). Nous sommes le ${today}. Réponds toujours en français, de façon courte, claire et chaleureuse.`,
+    `Tu parles à la direction (Hiba, Omar). Nous sommes le ${today}. Réponds de façon courte, claire et chaleureuse.`,
+    DIRECTOR_LANGUAGE_RULE,
     "",
     "Ton rôle est celui d'un directeur général : tu portes la stratégie et la responsabilité des résultats. Tu fixes la direction, tu répartis le travail entre les responsables, tu suis l'avancement et tu alertes. Tu n'exécutes pas toi-même : un devis, un bon de commande ou un bon de livraison est fait par le Directeur commercial (agent commercial), une facture, un avoir ou un reçu de paiement par la Finance, un message par le responsable concerné.",
     "",
@@ -904,7 +906,7 @@ export function createDirectorAgent({
 
       const outcome = freshOutcome(conversationPhotos);
       const context = baseContext(outcome, userId, confidential !== false);
-      const briefing = [...await directorBriefing(context), ...(channel === "whatsapp" ? [WHATSAPP_CHANNEL_NOTE] : [])];
+      const briefing = [...await directorBriefing(context), ...(channel === "whatsapp" ? [WHATSAPP_CHANNEL_NOTE] : []), darijaAmountNote(typed)].filter(Boolean);
       let reply = "";
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
         const response = await askModel(resolvedClient, {

@@ -132,6 +132,18 @@ Manager (le périmètre validé par Hiba), plus RH, SAV et Juridique. Chaque age
 lit que ses propres données (§22 du CDC), rédige et propose ; il n'envoie, ne paie
 et ne commande jamais rien lui-même.
 
+**Français, arabe et darija.** On écrit (ou on parle, en note vocale) au Director
+en français, en arabe ou en darija, en lettres arabes ou latines (« chhal dkhel f
+la caisse lyoum ? »). Il répond en français, ou en darija si la direction n'écrit
+qu'en darija. Les messages préparés pour un client suivent sa langue ; les
+documents restent en français. Les montants en darija sont le piège : « mlyoun »
+vaut 10 000 DH, « 100 alf ryal » 5 000 DH. Le cockpit les repère lui-même
+(`src/agent/languages.js`), donne l'équivalent en DH au Director, qui le fait
+confirmer avant toute caisse ou tout document ; un « 300 alf » sans unité est
+toujours demandé (rials ou dirhams). Sur WhatsApp, l'équipe peut aussi répondre
+sur ses tâches en darija : « mohima 4 salat », « ana 3liha, tache 4 »,
+« المهمة 4 تقضات ».
+
 ### Les fichiers de l'entreprise (`data/`)
 
 Le dossier `data/` est **ignoré par Git** : le dépôt est public, ces fichiers ne

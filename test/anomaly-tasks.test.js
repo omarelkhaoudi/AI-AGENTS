@@ -171,6 +171,23 @@ test("scenario 5: a grave anomaly is told, assigned, taken, resolved, then close
   assert.equal(meta.sent.at(-1).text, "Clôture de la tâche n° 1 confirmée.");
 });
 
+test("a team member takes and resolves a task in Darija on WhatsApp", async (t) => {
+  const { inject, app, workshop, meta } = await setUp(t);
+  await workshop.advance("171", "assemblage", { status: "bloquee", note: "Charnières en rupture" });
+  await inject({ method: "GET", url: "/api/workshop" });
+  await inject({ method: "POST", url: "/api/improvement/anomalies/1/assign", payload: { agent: "production", person: "Samir", phone: "06 70 00 00 04", dueDate: "12/11/2026" } });
+
+  await whatsAppFrom(app, SAMIR, "ana 3liha, tache 1", "wamid.d1");
+  let anomaly = (await inject({ method: "GET", url: "/api/improvement" })).json().anomalies.find((entry) => entry.number === 1);
+  assert.equal(anomaly.task.status, "prise_en_charge");
+  assert.match(meta.sent.at(-1).text, /Tâche n° 1 notée prise en charge\./);
+
+  await whatsAppFrom(app, SAMIR, "المهمة 1 تقضات : شريت الشارنيير من بريكوما", "wamid.d2");
+  anomaly = (await inject({ method: "GET", url: "/api/improvement" })).json().anomalies.find((entry) => entry.number === 1);
+  assert.equal(anomaly.task.status, "resolue");
+  assert.equal(anomaly.task.resolution, "شريت الشارنيير من بريكوما");
+});
+
 test("the direction reopens a resolved task, and only the direction may close one in the cockpit", async (t) => {
   const { inject, workshop, meta } = await setUp(t);
   await workshop.advance("171", "assemblage", { status: "bloquee", note: "Charnières en rupture" });

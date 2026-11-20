@@ -95,6 +95,9 @@ create() {
   plan=$(option plan "$@")
   [ -n "$name" ] || fail "--name est obligatoire (nom imprimé sur les documents)."
   case "$plan" in starter|business|enterprise) ;; *) fail "--plan=starter, business ou enterprise." ;; esac
+  # The team the company starts with (src/agent/team-templates.js).
+  template=$(option modele "$@")
+  case "$template" in fabricant|commerce|restaurant|services|agence) ;; *) fail "--modele=fabricant, commerce, restaurant, services ou agence (l'équipe d'agents de départ)." ;; esac
   main_domain=$(env_value "$MAIN_ENV" DOMAIN)
   domain=$(option domain "$@")
   domain=${domain:-$slug.$main_domain}
@@ -107,6 +110,7 @@ create() {
     echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)"
     echo "HKIDS_COMPANY_ID=$slug"
     echo "HKIDS_PLAN=$plan"
+    echo "HKIDS_TEAM_TEMPLATE=$template"
     echo "COMPANY_NAME=$(quoted "$name")"
     for pair in short-name:COMPANY_SHORT_NAME city:COMPANY_CITY leaders:COMPANY_LEADERS activity:COMPANY_ACTIVITY address:COMPANY_ADDRESS email:COMPANY_EMAIL phone:COMPANY_PHONE legal:COMPANY_LEGAL payment-plans:COMPANY_PAYMENT_PLANS; do
       value=$(option "${pair%%:*}" "$@")
@@ -124,7 +128,7 @@ create() {
   compose "$slug" up -d
   write_site "$slug"
   reload_caddy
-  echo "Entreprise « $name » créée : https://$domain (offre $plan)."
+  echo "Entreprise « $name » créée : https://$domain (offre $plan, équipe $template)."
   echo "Créez maintenant le compte de sa direction :"
   echo "  sh scripts/tenant.sh user $slug --id=<identifiant> --email=<e-mail> --name=<nom> --role=leader"
 }
@@ -143,7 +147,7 @@ list() {
     [ -f "$env_file" ] || { echo "Aucune entreprise cliente."; return; }
     slug=$(env_value "$env_file" TENANT)
     state=$(TENANT_ENV_FILE="$env_file" docker compose -p "tenant-$slug" --env-file "$env_file" -f "$COMPOSE_FILE" ps --status running -q cockpit | grep -q . && echo "en marche" || echo "arrêtée")
-    echo "$slug — $(env_value "$env_file" COMPANY_NAME) — https://$(env_value "$env_file" DOMAIN) — offre $(env_value "$env_file" HKIDS_PLAN) — $state"
+    echo "$slug — $(env_value "$env_file" COMPANY_NAME) — https://$(env_value "$env_file" DOMAIN) — offre $(env_value "$env_file" HKIDS_PLAN) — équipe $(env_value "$env_file" HKIDS_TEAM_TEMPLATE) — $state"
   done
 }
 

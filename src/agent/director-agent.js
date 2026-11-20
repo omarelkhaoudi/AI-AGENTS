@@ -8,6 +8,7 @@ import { parseReferenceImage } from "../documents/purchase-order.js";
 import { ChatAttachmentError, readAttachments } from "./chat-attachments.js";
 import { createCatalogueLoader, searchCatalogue } from "./catalogue.js";
 import { LOCKED_TOOLS, READ_TOOL_LABELS, SPECIALISTS, SPECIALIST_IDS, runSpecialist, specialistToolset } from "./agent-team.js";
+import { teamNote, tradeNote } from "./team-templates.js";
 import { draftWhatsAppMessage } from "./whatsapp.js";
 import { STEP_LABELS, createMemoryPlanStore } from "./plan-store.js";
 import { createMemoryConversationStore } from "./conversation-store.js";
@@ -922,7 +923,7 @@ export function createDirectorAgent({
 
       const outcome = freshOutcome(conversationPhotos);
       const context = baseContext(outcome, userId, confidential !== false);
-      const briefing = [...await directorBriefing(context), ...(channel === "whatsapp" ? [WHATSAPP_CHANNEL_NOTE] : []), darijaAmountNote(typed)].filter(Boolean);
+      const briefing = [...await directorBriefing(context), await activeTeamNote(agentConfig), ...(channel === "whatsapp" ? [WHATSAPP_CHANNEL_NOTE] : []), darijaAmountNote(typed)].filter(Boolean);
       let reply = "";
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
         const response = await askModel(resolvedClient, {
@@ -2053,6 +2054,14 @@ async function consultDocument(args, { documentService }) {
   };
 }
 
+// The company's team and trade, when it is not the whole library (section 10-E).
+async function activeTeamNote(agentConfig) {
+  if (!agentConfig || typeof agentConfig.team !== "function") {
+    return "";
+  }
+  return teamNote(await agentConfig.team(), agentConfig.templateId);
+}
+
 async function delegate(args, context) {
   if (!SPECIALISTS[args.agent]) {
     return { ok: false, erreur: "Agent inconnu." };
@@ -2070,6 +2079,17 @@ async function delegate(args, context) {
 // asked and what it answered go to the team's feed.
 async function runAgent(agentId, mission, context) {
   const { team, clock, outcome, books, agentConfig } = context;
+  // An agent outside the company's team (its template and plan) gets no
+  // mission: the model is not called and nothing is billed.
+  if (agentConfig && typeof agentConfig.isActive === "function" && !await agentConfig.isActive(agentId)) {
+    return Object.freeze({
+      agent: agentId,
+      label: SPECIALISTS[agentId].label,
+      mission,
+      tools: Object.freeze([]),
+      answer: `L'agent ${SPECIALISTS[agentId].label} n'est pas dans l'équipe de cette entreprise. La direction peut l'activer dans « Équipe IA » si son offre le permet.`
+    });
+  }
   // The direction's settings for this agent: its instructions, documents and
   // notes are told to it, the tools it was refused are taken from it.
   const settings = agentConfig ? await agentConfig.settings(agentId) : null;
@@ -2077,7 +2097,7 @@ async function runAgent(agentId, mission, context) {
     ...agentToolParams(agentId, context),
     mission,
     forbiddenTools: settings?.forbiddenTools ?? [],
-    briefing: [...(books ? await agentBriefing(agentId, context) : []), ...(agentConfig ? await agentConfig.briefing(agentId) : [])],
+    briefing: [tradeNote(agentConfig?.templateId), ...(books ? await agentBriefing(agentId, context) : []), ...(agentConfig ? await agentConfig.briefing(agentId) : [])].filter(Boolean),
     callModel: (payload) => askModel(team.client, payload, { aiUsage: context.aiUsage, agent: agentId }),
     model: team.model,
     today: formatDate(clock())

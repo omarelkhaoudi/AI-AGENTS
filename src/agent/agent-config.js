@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DATA_DIR, createFileJsonBook, createMemoryJsonBook } from "./json-book.js";
 import { queryTerms, rankPassages } from "./passage-search.js";
+import { DEFAULT_TEMPLATE_ID, TeamTemplateError, allowedAgents, changeTeam, defaultTeam } from "./team-templates.js";
 
 // Each agent as the direction configures it, without programming (CDC V2,
 // section 9): five things of its own.
@@ -41,17 +42,19 @@ export class AgentConfigError extends Error {
 
 const EMPTY = Object.freeze({ agents: {}, documents: [], memory: [] });
 
-export function createMemoryAgentConfig({ clock = () => new Date(), agents = [] } = {}) {
+export function createMemoryAgentConfig({ clock = () => new Date(), agents = [], templateId = DEFAULT_TEMPLATE_ID, plan = null } = {}) {
   const texts = new Map();
   return createAgentConfig({
     book: createMemoryJsonBook(EMPTY),
     texts: { read: async (id) => texts.get(id) ?? "", write: async (id, text) => void texts.set(id, text) },
     clock,
-    agents
+    agents,
+    templateId,
+    plan
   });
 }
 
-export function createFileAgentConfig({ path = DEFAULT_AGENT_CONFIG_PATH, dir = DEFAULT_AGENT_DOCUMENTS_DIR, clock = () => new Date(), agents = [] } = {}) {
+export function createFileAgentConfig({ path = DEFAULT_AGENT_CONFIG_PATH, dir = DEFAULT_AGENT_DOCUMENTS_DIR, clock = () => new Date(), agents = [], templateId = DEFAULT_TEMPLATE_ID, plan = null } = {}) {
   const file = (id) => join(dir, `${id.replace(/[^\w-]/g, "")}.txt`);
   return createAgentConfig({
     book: createFileJsonBook(path, EMPTY),
@@ -71,18 +74,58 @@ export function createFileAgentConfig({ path = DEFAULT_AGENT_CONFIG_PATH, dir = 
       }
     },
     clock,
-    agents
+    agents,
+    templateId,
+    plan
   });
 }
 
-function createAgentConfig({ book, texts, clock, agents }) {
+function createAgentConfig({ book, texts, clock, agents, templateId = DEFAULT_TEMPLATE_ID, plan = null }) {
   const known = (agent) => {
     if (agents.length > 0 && !agents.includes(agent)) {
       throw new AgentConfigError(`Agent inconnu : ${agent}.`, "AGENT_CONFIG_UNKNOWN_AGENT");
     }
   };
 
+  // The company's team (section 10-E): its template's agents its plan opens,
+  // until the direction turns one on or off. Kept once changed; an agent a
+  // later plan no longer opens is left out of the team it reads.
+  const teamOf = (state) => {
+    const stored = Array.isArray(state.team?.active) ? state.team.active : defaultTeam(templateId, plan);
+    const allowed = allowedAgents(templateId, plan);
+    return stored.filter((agent) => allowed.includes(agent) && (agents.length === 0 || agents.includes(agent)));
+  };
+
   return Object.freeze({
+    templateId,
+    plan,
+
+    async team() {
+      return teamOf(await book.load());
+    },
+
+    async isActive(agent) {
+      return teamOf(await book.load()).includes(agent);
+    },
+
+    // Turns one agent on or off, within what the template and the plan allow.
+    async setActive(agent, on, { by = "direction" } = {}) {
+      known(agent);
+      return book.change((state) => {
+        let next;
+        try {
+          next = changeTeam(teamOf(state), agent, on === true, { templateId, plan });
+        } catch (error) {
+          if (error instanceof TeamTemplateError) {
+            throw new AgentConfigError(error.message, error.code);
+          }
+          throw error;
+        }
+        state.team = { active: next, updatedAt: clock().toISOString(), updatedBy: by };
+        return [...next];
+      });
+    },
+
     // An agent's settings: its instructions and the tools it may not use.
     async settings(agent) {
       const state = await book.load();

@@ -87,6 +87,7 @@ const briefingReport = document.querySelector("#briefing-report");
 const planList = document.querySelector("#plan-list");
 const agentResults = document.querySelector("#agent-results");
 const agentRoster = document.querySelector("#agent-roster");
+const teamPlanNode = document.querySelector("#team-plan");
 const approvalList = document.querySelector("#approval-list");
 const historyList = document.querySelector("#history-list");
 const apiStatus = document.querySelector("#api-status");
@@ -1905,6 +1906,13 @@ agentRoster.addEventListener("toggle", (event) => {
   }
 }, true);
 agentRoster.addEventListener("click", async (event) => {
+  const toggle = event.target.closest?.("[data-agent-active]");
+  if (toggle) {
+    const on = toggle.dataset.agentActive === "on";
+    toggle.disabled = true;
+    await agentRequest(`/api/agents/${encodeURIComponent(toggle.dataset.agent)}/active`, { body: { active: on } }, on ? `${formatAgent(toggle.dataset.agent)} rejoint l'équipe : le Director peut lui confier des missions.` : `${formatAgent(toggle.dataset.agent)} est retiré de l'équipe : le Director ne lui confie plus rien.`);
+    return;
+  }
   const status = event.target.closest?.("[data-document-status]");
   if (status) {
     await agentRequest(`/api/agents/${encodeURIComponent(status.dataset.agent)}/documents/${encodeURIComponent(status.dataset.documentStatus)}/status`, { method: "POST", body: { status: status.dataset.status } }, status.dataset.status === "perime" ? "Document marqué périmé : l'agent ne l'applique plus." : "Document remis en vigueur.");
@@ -2225,6 +2233,7 @@ async function loadAgentSettings() {
     }
     const payload = await response.json();
     teamView.config = new Map((payload.agents ?? []).map((agent) => [agent.id, agent]));
+    teamView.team = payload.team ?? null;
   } catch {
     // The cards show without their settings.
   }
@@ -2422,17 +2431,70 @@ function renderAgentRoster(activeAgents) {
 
 function renderTeam() {
   const agents = teamView.data?.agents ?? AGENT_ROSTER.filter((agent) => agent.id !== "director").map((agent) => ({ id: agent.id, label: formatAgent(agent.id), mission: agent.role, member: null, missions: [], rules: [], activity: [] }));
-  agentRoster.innerHTML = agents.map((agent) => teamCard(agent)).join("");
+  // The company's team first, then the agents its plan can still open.
+  const team = teamView.team;
+  const isOn = (id) => !team || team.active.includes(id);
+  agentRoster.innerHTML = [...agents.filter((agent) => isOn(agent.id)), ...agents.filter((agent) => !isOn(agent.id))].map((agent) => teamCard(agent)).join("");
+  renderTeamPlan();
   const feed = teamView.data?.activity ?? [];
   teamFeed.innerHTML = feed.length > 0
     ? feed.map((entry) => feedLine(entry)).join("")
     : '<li class="muted text-[13px]">Rien encore. Chaque mission, mouvement de caisse ou étape d\'atelier s\'inscrira ici.</li>';
 }
 
+// The company's template and what its plan opens, above the cards.
+function renderTeamPlan() {
+  const node = teamPlanNode;
+  const team = teamView.team;
+  if (!node) {
+    return;
+  }
+  node.hidden = !team;
+  if (!team) {
+    return;
+  }
+  const limit = team.max ? `${team.active.length} / ${team.max} agents de l'offre ${team.plan.label}` : `${team.active.length} agent${team.active.length > 1 ? "s" : ""} actif${team.active.length > 1 ? "s" : ""}`;
+  const opens = !team.plan ? "tous les agents" : team.plan.id === "enterprise" ? "tous les agents (offre Enterprise)" : team.plan.id === "starter" ? "les agents essentiels du modèle" : "toute l'équipe du modèle";
+  node.innerHTML = `<span class="tag info">Modèle : ${escapeHtml(team.templateLabel)}</span> ${escapeHtml(limit)} · votre offre ouvre ${escapeHtml(opens)}.`;
+}
+
+// Turning an agent on or off: what the plan opens, the rest greyed with why.
+function teamToggle(agentId) {
+  const team = teamView.team;
+  if (!team) {
+    return "";
+  }
+  const id = escapeHtml(agentId);
+  if (team.active.includes(agentId)) {
+    return `<button type="button" class="link-button" data-agent="${id}" data-agent-active="off">Retirer de l'équipe</button>`;
+  }
+  if (!team.allowed.includes(agentId)) {
+    const why = team.plan?.id === "starter" ? "Compris dans l'offre Business" : "Compris dans l'offre Enterprise";
+    return `<span class="tag" title="${escapeHtml(why)}">${escapeHtml(why)}</span>`;
+  }
+  return `<button type="button" class="secondary" data-agent="${id}" data-agent-active="on">${icon("plus")}Activer</button>`;
+}
+
 function teamCard(agent) {
   const roster = AGENT_ROSTER.find((entry) => entry.id === agent.id);
   const member = agent.member;
   const canSend = Boolean(member?.phone) && agent.missions.length > 0;
+  const off = Boolean(teamView.team) && !teamView.team.active.includes(agent.id);
+  if (off) {
+    return `
+      <article class="team-card is-off">
+        <header>
+          ${avatar(agent.id, "lg")}
+          <div class="min-w-0 flex-1">
+            <h3>${escapeHtml(agent.label)} <span class="tag">hors équipe</span></h3>
+            <p>${escapeHtml(agent.mission)}</p>
+            ${roster?.parent ? `<small class="muted">↳ sous ${escapeHtml(roster.parent)}</small>` : ""}
+          </div>
+          ${teamToggle(agent.id)}
+        </header>
+      </article>
+    `;
+  }
   return `
     <article class="team-card ${teamView.responded.has(agent.id) ? "has-responded" : ""}">
       <header>
@@ -2443,6 +2505,7 @@ function teamCard(agent) {
           ${roster?.parent ? `<small class="muted">↳ sous ${escapeHtml(roster.parent)}</small>` : ""}
         </div>
         ${teamView.responded.has(agent.id) ? '<span class="tag ok">a répondu</span>' : ""}
+        ${teamView.team && (teamView.team.plan || teamView.team.active.length < teamView.team.allowed.length) ? teamToggle(agent.id) : ""}
       </header>
       <div class="team-member ${member ? "" : "is-empty"}">
         ${icon("user-check")}

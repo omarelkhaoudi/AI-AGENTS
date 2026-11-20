@@ -19,6 +19,8 @@ import { SPECIALIST_IDS } from "./agent/agent-team.js";
 import { createFileWhatsAppInbox } from "./agent/whatsapp-inbox.js";
 import { createFileSocialInbox } from "./agent/social-inbox.js";
 import { createFileAgentConfig } from "./agent/agent-config.js";
+import { templateFromEnv } from "./agent/team-templates.js";
+import { planFromEnv } from "./company/plans.js";
 import { createFileAutomationBook } from "./agent/automation.js";
 import { DEFAULT_ARCHIVE_DIR } from "./agent/document-register.js";
 
@@ -86,7 +88,9 @@ const whatsAppStore = createFileWhatsAppInbox();
 // Instagram and Facebook messages, replies and prospects (data/reseaux.json).
 const socialStore = createFileSocialInbox();
 // Each agent's settings and reference documents (data/agents.json, data/agents-documents/).
-const agentConfigStore = createFileAgentConfig({ agents: SPECIALIST_IDS });
+// Its team follows the template chosen at creation (HKIDS_TEAM_TEMPLATE) and
+// what the plan opens (HKIDS_PLAN): an unknown template stops the start.
+const agentConfigStore = createFileAgentConfig({ agents: SPECIALIST_IDS, templateId: templateFromEnv(), plan: planFromEnv() });
 const automationBook = createFileAutomationBook();
 // The team's employees, absences and leave (data/rh.json).
 const hrBook = createFileHrBook();

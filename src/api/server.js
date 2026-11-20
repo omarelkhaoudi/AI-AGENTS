@@ -28,6 +28,7 @@ import { createSocialService, isSocialReplyApproval } from "../social/social-ser
 import { createMemorySocialInbox } from "../agent/social-inbox.js";
 import { createMetaSocialClient, loadMetaSocialConfig } from "../integrations/meta-social.js";
 import { AgentConfigError, createMemoryAgentConfig } from "../agent/agent-config.js";
+import { AGENT_REQUIRES, TEAM_TEMPLATES, allowedAgents, maxAgents, templateFromEnv } from "../agent/team-templates.js";
 import { MAX_REFERENCE_BYTES, ReferenceReadError, readReferenceFile } from "../agent/reference-reader.js";
 import { ToolExecutionService, ToolExecutionServiceError } from "../tools/execution-service.js";
 import { createMvpToolRegistry } from "../tools/mvp-tools.js";
@@ -170,6 +171,9 @@ export function buildApi({
   automationBook = null,
   // The subscription of this instance (HKIDS_PLAN); null for the pilot.
   subscription = planFromEnv(),
+  // The company's team template (HKIDS_TEAM_TEMPLATE, set by tenant.sh
+  // create --modele=…): fabricant, H-KIDS' own, unless told otherwise.
+  teamTemplate = templateFromEnv(),
   // Suspended for an unpaid subscription (HKIDS_SUSPENDED=on, set by
   // scripts/tenant.sh suspend): the cockpit is read only.
   suspended = String(process.env.HKIDS_SUSPENDED ?? "").trim().toLowerCase() === "on",
@@ -477,7 +481,7 @@ export function buildApi({
       return prospect;
     }
   });
-  const agentSettings = agentConfigStore ?? createMemoryAgentConfig({ clock, agents: SPECIALIST_IDS });
+  const agentSettings = agentConfigStore ?? createMemoryAgentConfig({ clock, agents: SPECIALIST_IDS, templateId: teamTemplate, plan: subscription });
   const agent = directorAgent ?? createDirectorAgentFromEnv({
     documentService: hkidsDocuments,
     runDirectorRequest,
@@ -1605,13 +1609,49 @@ export function buildApi({
         agentSettings.memory(id),
         typeof agent.agentTools === "function" ? agent.agentTools(id).catch(() => []) : []
       ]);
-      return { id, label: SPECIALISTS[id].label, mission: SPECIALISTS[id].mission, ...settings, tools, documents: documents.slice().reverse(), memory: memory.slice().reverse() };
+      const active = typeof agentSettings.isActive === "function" ? await agentSettings.isActive(id) : true;
+      return { id, label: SPECIALISTS[id].label, mission: SPECIALISTS[id].mission, active, requires: AGENT_REQUIRES[id] ?? null, ...settings, tools, documents: documents.slice().reverse(), memory: memory.slice().reverse() };
+    };
+    // The company's team: its template, what its plan opens, who is active.
+    const teamOverview = async () => {
+      const templateId = agentSettings.templateId ?? teamTemplate;
+      const plan = agentSettings.plan !== undefined ? agentSettings.plan : subscription;
+      return {
+        template: templateId,
+        templateLabel: TEAM_TEMPLATES[templateId]?.label ?? templateId,
+        plan: plan ? { id: plan.id, label: plan.label } : null,
+        active: typeof agentSettings.team === "function" ? await agentSettings.team() : [...SPECIALIST_IDS],
+        allowed: allowedAgents(templateId, plan),
+        max: maxAgents(plan)
+      };
     };
 
     app.get("/api/agents/config", readRouteOptions(), async () => ({
       agents: await Promise.all(SPECIALIST_IDS.map(agentSettingsOf)),
+      team: await teamOverview(),
       canEdit: true
     }));
+
+    // Turn an agent on or off, within the company's template and plan.
+    app.post("/api/agents/:agent/active", writeRouteOptions(), async (request, reply) => {
+      if (!knownAgent(request, reply) || await agentConfigRefused(request, reply)) {
+        return reply;
+      }
+      if (typeof request.body?.active !== "boolean") {
+        return reply.code(400).send({ error: "Précisez active : true ou false.", details: { code: "AGENT_ACTIVE_REQUIRED" } });
+      }
+      try {
+        const by = request.principal.userId ?? "direction";
+        const before = await agentSettings.isActive(request.params.agent);
+        await agentSettings.setActive(request.params.agent, request.body.active, { by });
+        if (before !== request.body.active) {
+          await teamFeed.log({ agent: request.params.agent, kind: "equipe", text: `${SPECIALISTS[request.params.agent].label} ${request.body.active ? "activé dans" : "retiré de"} l'équipe par la direction.`, by });
+        }
+        return { agent: await agentSettingsOf(request.params.agent), team: await teamOverview() };
+      } catch (error) {
+        return sendAgentConfigError(reply, error);
+      }
+    });
 
     app.put("/api/agents/:agent/config", writeRouteOptions(), async (request, reply) => {
       if (!knownAgent(request, reply) || await agentConfigRefused(request, reply)) {

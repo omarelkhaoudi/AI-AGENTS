@@ -327,6 +327,33 @@ direction seule peut le modifier (rôle `leader`). Il contient :
 Les réglages sont gardés dans `data/agents.json`, et le texte des documents
 dans `data/agents-documents/`.
 
+### La bibliothèque d'agents (une équipe par métier)
+
+Une entreprise cliente reçoit l'équipe de son métier, choisie à la création
+(`tenant.sh create … --modele=…`, gardée dans `HKIDS_TEAM_TEMPLATE`). Les
+modèles sont dans `src/agent/team-templates.js` :
+
+| Modèle | Pour | Agents essentiels (Starter) |
+| --- | --- | --- |
+| `fabricant` | atelier, fabrication sur commande (H-KIDS) | Commercial, Finance, Production, Administration |
+| `commerce` | boutique, vente en ligne | Commercial, Finance, Achats, Administration |
+| `restaurant` | restaurant, traiteur | Finance, Achats, RH, Marketing |
+| `services` | prestations, interventions | Commercial, Finance, RH, Administration |
+| `agence` | communication, immobilier, voyage… | Commercial, Finance, Marketing, Administration |
+
+- L'offre ouvre : **Starter** les agents essentiels du modèle (4 au plus),
+  **Business** toute l'équipe du modèle, **Enterprise** toute la bibliothèque.
+  H-KIDS, le pilote, garde toute son équipe.
+- Dans **Équipe IA**, la direction active ou retire un agent dans cette
+  limite. Un agent hors équipe reste visible, grisé, avec l'offre qui l'ouvre.
+  Les dessinateurs travaillent sous Production et le Community Manager sous
+  Marketing : on ne peut pas activer l'un sans l'autre.
+- Le Director ne délègue qu'à l'équipe active ; une mission confiée à un agent
+  hors équipe est refusée sans appeler l'IA. Hors `fabricant`, le Director et
+  chaque agent savent le métier de l'entreprise (pas d'atelier ni de CNC).
+- Un modèle inconnu dans `HKIDS_TEAM_TEMPLATE` empêche le cockpit de démarrer,
+  avec la liste des modèles.
+
 ### Automatisations « quand … alors … »
 
 En bas de **Équipe IA**, le panneau **Automatisations** permet à la direction

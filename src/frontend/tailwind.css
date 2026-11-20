@@ -2539,7 +2539,20 @@
   }
 
   .team-card > header {
-    @apply flex items-start gap-3;
+    @apply flex flex-wrap items-start gap-3;
+  }
+
+  /* An agent outside the company's team: shown, greyed, with what opens it. */
+  .team-card.is-off {
+    @apply border-dashed bg-transparent shadow-none;
+  }
+
+  .team-card.is-off > header > :not(button):not(.tag) {
+    @apply opacity-60;
+  }
+
+  .team-plan {
+    @apply mb-4 text-[13px] text-ink-2;
   }
 
   .team-card h3 {

@@ -247,9 +247,15 @@ client prend environ 110 Mo de mémoire.
 **Créer une entreprise**, depuis `/opt/hkids` :
 
 ```bash
-sh scripts/tenant.sh create atelier-exemple --name="Atelier Exemple" --plan=starter --city="Fès" --leaders="Sara" --activity="menuiserie sur mesure" --address="12 rue Exemple|Fès" --email=contact@exemple.ma --phone=0500000000 --legal="ICE ... - IF ... - RC ..."
+sh scripts/tenant.sh create atelier-exemple --name="Atelier Exemple" --plan=starter --modele=fabricant --city="Fès" --leaders="Sara" --activity="menuiserie sur mesure" --address="12 rue Exemple|Fès" --email=contact@exemple.ma --phone=0500000000 --legal="ICE ... - IF ... - RC ..."
 ```
 
+- `--modele` est obligatoire : l'équipe d'agents de départ, selon le métier
+  (`fabricant`, `commerce`, `restaurant`, `services` ou `agence`). L'offre
+  décide combien de ces agents sont ouverts ; la direction les active ou les
+  retire ensuite dans « Équipe IA ». Une entreprise créée avant cette option
+  garde l'équipe `fabricant` ; pour en changer, ajoutez
+  `HKIDS_TEAM_TEMPLATE=<modèle>` à son `.env` puis relancez-la.
 - L'adresse est `atelier-exemple.<domaine d'H-KIDS>` (les sous-adresses DuckDNS
   pointent déjà sur le serveur). Une autre adresse se donne avec
   `--domain=...`.

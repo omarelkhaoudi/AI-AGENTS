@@ -1624,6 +1624,61 @@ pilotPeriodForm.addEventListener("submit", (event) => {
   refreshPilot();
 });
 
+// The direction's commercial rules, which the commercial alerts follow.
+const commercialRulesForm = document.querySelector("#commercial-rules-form");
+const commercialRulesSummary = document.querySelector("#commercial-rules-summary");
+const COMMERCIAL_RULE_NAMES = Object.freeze(["validityDays", "maxDiscountPercent", "marginFloorPercent"]);
+commercialRulesForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const body = Object.fromEntries(COMMERCIAL_RULE_NAMES.map((name) => [name, commercialRulesForm.querySelector(`[name='${name}']`)?.value ?? ""]));
+  try {
+    const response = await fetch("/api/commercial/rules", { method: "PUT", headers: { "content-type": "application/json", ...(await authHeaders()) }, body: JSON.stringify(body) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error ?? "Les règles n'ont pas été enregistrées.");
+    }
+    showToast("Règles commerciales enregistrées : les alertes sont recalculées.");
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshImprovement();
+});
+
+async function refreshCommercialRules() {
+  try {
+    const response = await fetch("/api/commercial/rules", { headers: await authHeaders() });
+    if (!response.ok) {
+      return;
+    }
+    const { rules } = await response.json();
+    for (const name of COMMERCIAL_RULE_NAMES) {
+      const field = commercialRulesForm.querySelector(`[name='${name}']`);
+      if (field && document.activeElement !== field) {
+        field.value = Number.isFinite(rules[name]) ? String(rules[name]) : "";
+      }
+    }
+    const set = [
+      Number.isFinite(rules.validityDays) ? `devis valable ${rules.validityDays} j` : "",
+      Number.isFinite(rules.maxDiscountPercent) ? `remise ≤ ${rules.maxDiscountPercent} %` : "",
+      Number.isFinite(rules.marginFloorPercent) ? `marge ≥ ${rules.marginFloorPercent} %` : ""
+    ].filter(Boolean);
+    commercialRulesSummary.textContent = set.length > 0 ? set.join(" · ") : "aucune règle fixée";
+  } catch {
+    // The form stays as it is.
+  }
+}
+
+// What each kind of anomaly is called in the cards.
+const ANOMALY_KIND_LABELS = Object.freeze({
+  retard: "retard",
+  blocage: "blocage",
+  devis_expire: "devis expiré",
+  remise_hors_plafond: "remise hors plafond",
+  marge_sous_seuil: "marge sous le seuil",
+  ecart_devis_commande: "écart devis / commande",
+  client_en_double: "client en double"
+});
+
 // The pilot's indicators (CDC V2 annex): each tile says what it counts.
 async function refreshPilot() {
   const read = (name) => pilotPeriodForm.querySelector(`[name='${name}']`)?.value ?? "";
@@ -1745,6 +1800,7 @@ improvementList.addEventListener("click", async (event) => {
 
 async function refreshImprovement() {
   refreshPilot();
+  refreshCommercialRules();
   try {
     const response = await fetch("/api/improvement", { headers: await authHeaders() });
     if (!response.ok) {
@@ -1806,7 +1862,7 @@ function renderImprovement(data) {
   }
   const listed = improvementView.filter === "analyse" ? waiting : open;
   if ((show("open") || show("analyse")) && listed.length > 0) {
-    sections.push(improvementSection(improvementView.filter === "analyse" ? "À analyser" : "Anomalies ouvertes", "Un retard ou un blocage du carnet d'atelier, ou un problème signalé au Director.", listed.map((anomaly) => anomalyCard(anomaly, data.analysis)).join("")));
+    sections.push(improvementSection(improvementView.filter === "analyse" ? "À analyser" : "Anomalies ouvertes", "Un retard ou un blocage du carnet d'atelier, une alerte commerciale, ou un problème signalé au Director.", listed.map((anomaly) => anomalyCard(anomaly, data.analysis)).join("")));
   }
   if (show("rules") && inForce.length > 0) {
     sections.push(improvementSection("Règles en vigueur", "Données à leur agent, et au Director, à chaque mission.", inForce.map((rule) => ruleCard(rule, anomalyOf)).join("")));
@@ -1872,7 +1928,7 @@ function anomalyCard(anomaly, canAnalyse) {
     <article class="anomaly-card" data-kind="${escapeHtml(anomaly.kind)}">
       <span class="anomaly-icon" aria-hidden="true">${icon(anomaly.kind === "retard" ? "clock" : anomaly.kind === "blocage" ? "alert" : "bulb")}</span>
       <div class="min-w-0 flex-1">
-        <span class="eyebrow">Anomalie n° ${anomaly.number} · ${escapeHtml(anomaly.kind)} · le ${escapeHtml(formatIsoDay(anomaly.detectedAt.slice(0, 10)))} <span class="tag ${severity === "haute" ? "warning" : ""}">gravité ${escapeHtml(severity)}</span></span>
+        <span class="eyebrow">${anomaly.source === "commercial" ? "Alerte commerciale" : "Anomalie"} n° ${anomaly.number} · ${escapeHtml(ANOMALY_KIND_LABELS[anomaly.kind] ?? anomaly.kind)} · le ${escapeHtml(formatIsoDay(anomaly.detectedAt.slice(0, 10)))} <span class="tag ${severity === "haute" ? "warning" : ""}">gravité ${escapeHtml(severity)}</span></span>
         <p class="anomaly-fact">${escapeHtml(anomaly.fact)}</p>
         ${anomaly.cause
           ? `<p class="anomaly-cause"><b>Cause</b> (${escapeHtml(formatAgent(anomaly.analysedBy))}) : ${escapeHtml(anomaly.cause)}${anomaly.rule ? ` · règle n° ${anomaly.rule}` : ""}</p>`
@@ -1886,7 +1942,7 @@ function anomalyCard(anomaly, canAnalyse) {
         ${anomaly.task?.status === "resolue" ? `
           <button type="button" class="primary" data-closure="${anomaly.number}:confirmer">${icon("check")}Confirmer la clôture</button>
           <button type="button" class="link-button" data-closure="${anomaly.number}:rouvrir">Rouvrir</button>` : ""}
-        ${anomaly.source === "signalee" && !anomaly.task ? `<button type="button" class="link-button" data-lift="${anomaly.number}">Marquer réglée</button>` : ""}
+        ${["signalee", "commercial"].includes(anomaly.source) && !anomaly.task ? `<button type="button" class="link-button" data-lift="${anomaly.number}">Marquer réglée</button>` : ""}
         ${isOpenAnomaly(anomaly) && !anomaly.falseAlarm ? `<button type="button" class="link-button" data-false-alarm="${anomaly.number}">Fausse alerte</button>` : ""}
       </div>
     </article>

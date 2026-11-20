@@ -66,8 +66,13 @@ function createImprovementBook({ book, clock }) {
     // The workshop book read afresh: a step blocked or late that has no open
     // anomaly gets one; an open anomaly whose step is back on track is lifted.
     // Returns the anomalies just found, for their agent to analyse.
-    async sync(orders) {
-      const facts = workshopFacts(orders);
+    //
+    // The commercial alerts (commercial-alerts.js) come with it when given;
+    // only the sources given are lifted, so a read of the workshop alone
+    // never lifts a commercial alert.
+    async sync(orders, { commercial } = {}) {
+      const facts = [...workshopFacts(orders), ...(Array.isArray(commercial) ? commercial : [])];
+      const managed = new Set(["atelier", ...(Array.isArray(commercial) ? ["commercial"] : [])]);
       return book.change((state) => {
         const at = now();
         const found = [];
@@ -75,22 +80,28 @@ function createImprovementBook({ book, clock }) {
           const open = state.anomalies.find((entry) => entry.key === fact.key && entry.status !== "levee");
           // A false alarm stays dismissed while the book keeps showing the
           // same fact; once the fact is gone, a new one is a new anomaly.
-          const dismissed = state.anomalies.some((entry) => entry.key === fact.key && entry.falseAlarm && !entry.falseAlarm.endedAt);
+          const dismissed = state.anomalies.some((entry) => entry.key === fact.key && ((entry.falseAlarm && !entry.falseAlarm.endedAt) || entry.heldUntilGone));
           if (!open && !dismissed) {
-            const anomaly = { id: randomUUID(), number: nextNumber(state.anomalies), ...fact, severity: fact.kind === "blocage" ? "haute" : "moyenne", status: "a_analyser", detectedAt: at, journal: [{ at, by: "director", text: "Anomalie détectée au carnet d'atelier." }] };
+            const anomaly = { id: randomUUID(), number: nextNumber(state.anomalies), ...fact, severity: fact.severity ?? (fact.kind === "blocage" ? "haute" : "moyenne"), status: "a_analyser", detectedAt: at, journal: [{ at, by: "director", text: fact.source === "commercial" ? "Alerte commerciale relevée sur les documents émis." : "Anomalie détectée au carnet d'atelier." }] };
             state.anomalies.push(anomaly);
             found.push(Object.freeze({ ...anomaly }));
           }
         }
         const current = new Set(facts.map((fact) => fact.key));
         for (const anomaly of state.anomalies) {
-          if (anomaly.falseAlarm && !anomaly.falseAlarm.endedAt && !current.has(anomaly.key)) {
+          if (!managed.has(anomaly.source) || current.has(anomaly.key)) {
+            continue;
+          }
+          if (anomaly.falseAlarm && !anomaly.falseAlarm.endedAt) {
             anomaly.falseAlarm.endedAt = at;
           }
-          if (anomaly.source === "atelier" && anomaly.status !== "levee" && !current.has(anomaly.key)) {
+          if (anomaly.heldUntilGone) {
+            anomaly.heldUntilGone = false;
+          }
+          if (anomaly.status !== "levee") {
             anomaly.status = "levee";
             anomaly.liftedAt = at;
-            anomaly.journal.push({ at, by: "director", text: "Le carnet ne la signale plus : anomalie levée." });
+            anomaly.journal.push({ at, by: "director", text: anomaly.source === "commercial" ? "Les documents ne la montrent plus : alerte levée." : "Le carnet ne la signale plus : anomalie levée." });
             // A task given for it is resolved by the book; the direction
             // still confirms its closure.
             if (anomaly.task && ["ouverte", "prise_en_charge"].includes(anomaly.task.status)) {
@@ -219,6 +230,11 @@ function createImprovementBook({ book, clock }) {
           anomaly.status = "levee";
           anomaly.liftedAt = at;
           anomaly.journal.push({ at, by, text: "Anomalie levée." });
+        }
+        // A commercial alert dealt with stays so while the documents show the
+        // same fact (a duplicate name cannot be unwritten).
+        if (anomaly.source === "commercial") {
+          anomaly.heldUntilGone = true;
         }
         if (anomaly.task && anomaly.task.status !== "cloturee") {
           Object.assign(anomaly.task, { status: "cloturee", closedAt: at, closedBy: by });

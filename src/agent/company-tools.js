@@ -214,6 +214,11 @@ export async function salesReportFor(args, { books, documentService, workshop = 
   const report = salesReport(await documentService.listIssued(), await books.followUps.state(), {
     from, to, today, days: books.followUps.days, workshopOrders: workshop ? await workshop.book() : []
   });
+  // The commercial alerts still open (expired quote, discount over the
+  // ceiling, margin under the floor, order not matching its quote, client
+  // written several ways), as the improvement book keeps them.
+  const alerts = books.improvement ? (await books.improvement.state()).anomalies.filter((anomaly) => anomaly.source === "commercial" && anomaly.status !== "levee") : [];
+  const rules = typeof books.followUps.rules === "function" ? await books.followUps.rules() : {};
   return {
     ok: true,
     periode: `du ${salesDay(from)} au ${salesDay(to)}`,
@@ -226,7 +231,13 @@ export async function salesReportFor(args, { books, documentService, workshop = 
     a_relancer: report.toFollowUp.map(describeQuote),
     livraisons_en_retard: report.lateDeliveries.map((order) => `BC ${order.number} (${order.client}) prévue le ${salesDay(order.plannedDate)}`),
     ...(report.unknownAmounts.length > 0 ? { montants_inconnus: `devis n° ${report.unknownAmounts.join(", ")} : montant illisible, non compté` } : {}),
-    regle_de_relance: `un devis ouvert sans nouvelles depuis ${report.followUpDays} jours est à relancer ; depuis ${report.followUpDays * 2} jours, la direction est prévenue`
+    regle_de_relance: `un devis ouvert sans nouvelles depuis ${report.followUpDays} jours est à relancer ; depuis ${report.followUpDays * 2} jours, la direction est prévenue`,
+    alertes_commerciales: alerts.length > 0 ? alerts.map((anomaly) => `anomalie n° ${anomaly.number} (gravité ${anomaly.severity}) : ${anomaly.fact}`) : "aucune",
+    regles_commerciales: {
+      validite_devis: Number.isFinite(rules.validityDays) ? `${rules.validityDays} jours` : "non fixée : pas d'alerte de devis expiré",
+      remise_maximale: Number.isFinite(rules.maxDiscountPercent) ? `${rules.maxDiscountPercent} %` : "non fixée : pas d'alerte de remise",
+      marge_minimale: Number.isFinite(rules.marginFloorPercent) ? `${rules.marginFloorPercent} %` : "non fixée : pas d'alerte de marge"
+    }
   };
 }
 

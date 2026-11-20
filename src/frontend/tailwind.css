@@ -2522,6 +2522,39 @@
     @apply mr-1.5 text-muted tabular-nums;
   }
 
+  /* The direction's commercial rules, above the anomalies. */
+  .commercial-rules > summary {
+    @apply flex cursor-pointer list-none flex-wrap items-baseline gap-x-3 gap-y-1;
+  }
+
+  .commercial-rules > summary small {
+    @apply text-[12.5px];
+  }
+
+  .commercial-rules > p {
+    @apply mt-3;
+  }
+
+  .commercial-rules-form {
+    @apply mt-4 flex flex-wrap items-end gap-3;
+  }
+
+  .commercial-rules-form label {
+    @apply flex flex-col gap-1 text-[12.5px] text-ink-2;
+  }
+
+  .input-unit {
+    @apply flex items-center gap-1.5;
+  }
+
+  .input-unit input {
+    @apply w-24;
+  }
+
+  .input-unit small {
+    @apply text-[12px] text-muted;
+  }
+
   /* ---------- Team ---------- */
 
   /* Two columns only when the cards have room for them, whatever the screen:

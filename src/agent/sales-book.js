@@ -73,6 +73,21 @@ function createFollowUpBook({ book, clock, days }) {
       return book.load();
     },
 
+    // The direction's commercial rules (validity of a quote, discount ceiling,
+    // margin floor), already checked by commercial-alerts.js; a rule left
+    // out is not set.
+    async rules() {
+      const { values = {}, updatedAt = null, updatedBy = null } = (await book.load()).rules ?? {};
+      return { ...values, updatedAt, updatedBy };
+    },
+
+    async setRules(values, { by = "direction" } = {}) {
+      return book.change((state) => {
+        state.rules = { values: { ...values }, updatedAt: clock().toISOString(), updatedBy: by };
+        return { ...state.rules.values, updatedAt: state.rules.updatedAt, updatedBy: by };
+      });
+    },
+
     // The reminders not yet sent, among those due; they are marked sent at
     // once, so two sweeps never send the same one.
     async claimReminders(reminders) {

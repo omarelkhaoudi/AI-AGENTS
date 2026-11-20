@@ -416,7 +416,7 @@
           </header>
           <section id="pilot-panel" class="panel pilot-panel" aria-labelledby="pilot-title">
             <header class="pilot-head">
-              <div class="min-w-0 flex-1">
+              <div class="min-w-0 flex-[1_1_260px]">
                 <h3 id="pilot-title">Indicateurs du pilote</h3>
                 <p class="muted text-[13px]">Comptés sur les carnets du cockpit, sur la période choisie (30 à 60 jours). Un tiret : rien à compter.</p>
               </div>
@@ -428,6 +428,16 @@
             </header>
             <div id="pilot-tiles" class="pilot-tiles"></div>
           </section>
+          <details id="commercial-rules" class="panel commercial-rules">
+            <summary><strong>Règles commerciales</strong><small id="commercial-rules-summary" class="muted"></small></summary>
+            <p class="muted text-[13px]">Elles déclenchent les alertes commerciales : devis expiré, remise au-delà du plafond, commande terminée sous la marge minimale. Une règle laissée vide ne donne aucune alerte. L'écart entre un devis et sa commande, et un client écrit de plusieurs façons, sont signalés dans tous les cas.</p>
+            <form id="commercial-rules-form" class="commercial-rules-form">
+              <label>Validité d'un devis<span class="input-unit"><input name="validityDays" type="number" min="1" max="365" step="1" inputmode="numeric" placeholder="ex. 30"><small>jours</small></span></label>
+              <label>Remise maximale sans accord<span class="input-unit"><input name="maxDiscountPercent" type="number" min="0" max="100" step="0.5" inputmode="decimal" placeholder="ex. 10"><small>%</small></span></label>
+              <label>Marge minimale d'une commande<span class="input-unit"><input name="marginFloorPercent" type="number" min="-100" max="100" step="0.5" inputmode="decimal" placeholder="ex. 25"><small>%</small></span></label>
+              <button type="submit" class="secondary">Enregistrer</button>
+            </form>
+          </details>
           <div id="improvement-stats" class="stat-tiles stat-tiles-4" role="group" aria-label="Filtrer"></div>
           <div id="improvement-list" class="plans-list"></div>
         </section>

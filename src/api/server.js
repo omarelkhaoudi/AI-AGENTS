@@ -46,6 +46,8 @@ export const DEFAULT_COMPANY_ID = "hkids";
 import { ANOMALY_STATUSES, ImprovementError, RULE_STATUSES, SEVERITIES, TASK_STATUSES, createMemoryImprovementBook, taskBoard } from "../agent/improvement-book.js";
 import { TeamBookError, createMemoryTeamBook } from "../agent/team-book.js";
 import { minutesPerMissionFromEnv, pilotIndicators, pilotPeriod } from "../agent/pilot-indicators.js";
+import { COMMERCIAL_RULE_LIMITS, commercialFacts, readCommercialRules } from "../agent/commercial-alerts.js";
+import { orderMargins } from "../agent/business-analysis.js";
 import { SPECIALISTS, SPECIALIST_IDS } from "../agent/agent-team.js";
 import { createMemoryWhatsAppInbox } from "../agent/whatsapp-inbox.js";
 import { createWhatsAppGateway } from "../agent/whatsapp-gateway.js";
@@ -401,10 +403,22 @@ export function buildApi({
   // a step newly blocked or late is told to its order's chef de charge.
   // A grave anomaly is told to the direction, a task to its person, a task
   // resolved or reopened to whom it concerns, from wherever it happens.
+  // The commercial alerts, read from the documents issued, the follow-ups,
+  // the direction's rules and the margins measured on the cash book. A failure
+  // to read them leaves the commercial alerts as they were.
+  const readCommercialFacts = async (orders) => {
+    try {
+      const [issued, state, rules, entries] = await Promise.all([hkidsDocuments.listIssued(), followUps.state(), followUps.rules(), cashRecords.entries()]);
+      const margins = Number.isFinite(rules.marginFloorPercent) ? orderMargins(orders, entries, { from: "0000-01-01", to: "9999-12-31", confidential: true }) : null;
+      return commercialFacts(issued, state, { today: clock(), rules, margins });
+    } catch {
+      return undefined;
+    }
+  };
   const improvement = Object.freeze({
     ...improvementRecords,
     async sync(orders) {
-      const found = await improvementRecords.sync(orders);
+      const found = await improvementRecords.sync(orders, { commercial: await readCommercialFacts(orders) });
       await whatsApp.alertLeads(found, orders);
       await whatsApp.alertSevere(found);
       for (const anomaly of found.filter((entry) => entry.kind === "retard")) {
@@ -1470,13 +1484,35 @@ export function buildApi({
       const to = isoDay(typeof request.query?.to === "string" ? request.query.to : "") ?? `${month}-${String(last).padStart(2, "0")}`;
       try {
         const [issued, state, orders] = await Promise.all([hkidsDocuments.listIssued(), followUps.state(), workshop.book()]);
+        await syncAnomalies(orders);
+        const [rules, records] = await Promise.all([followUps.rules(), improvement.state()]);
         return {
           report: salesReport(issued, state, { from, to, today, days: followUps.days, workshopOrders: orders }),
-          quotes: quotePipeline(issued, state, { today, days: followUps.days })
+          quotes: quotePipeline(issued, state, { today, days: followUps.days }),
+          // The commercial alerts still open; they are followed in Amélioration.
+          alerts: records.anomalies.filter((anomaly) => anomaly.source === "commercial" && (anomaly.task ? anomaly.task.status !== "cloturee" : anomaly.status !== "levee")).reverse(),
+          rules,
+          ruleLimits: COMMERCIAL_RULE_LIMITS
         };
       } catch (error) {
         return sendDomainError(reply, "Commercial report unavailable.", error);
       }
+    });
+
+    app.get("/api/commercial/rules", readRouteOptions(), async () => ({ rules: await followUps.rules(), limits: COMMERCIAL_RULE_LIMITS }));
+
+    // The direction's commercial rules: an empty field is a rule not set.
+    app.put("/api/commercial/rules", decisionRouteOptions(), async (request, reply) => {
+      const { rules, errors } = readCommercialRules(request.body ?? {});
+      if (errors.length > 0) {
+        return reply.code(400).send({ error: errors.join(" "), details: { code: "COMMERCIAL_RULES_INVALID" } });
+      }
+      const by = request.principal.userId ?? "direction";
+      const saved = await followUps.setRules(rules, { by });
+      const described = Object.entries(COMMERCIAL_RULE_LIMITS).map(([name, limit]) => `${limit.label} : ${Number.isFinite(rules[name]) ? rules[name] : "non fixée"}`).join(" ; ");
+      await teamFeed.log({ agent: "commercial", kind: "equipe", text: `Règles commerciales modifiées par la direction. ${described}.`, by });
+      await syncAnomalies(await workshop.book());
+      return reply.code(200).send({ rules: saved });
     });
 
     // A follow-up made, or a quote the client turned down, as told from the cockpit.

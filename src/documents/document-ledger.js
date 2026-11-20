@@ -28,8 +28,23 @@ export function summarizeIssuedContent({ type, number, stem }, input) {
     quoteReference: document.quoteReference,
     deliveryNoteReference: bareDeliveryNoteNumber(document.deliveryNoteReference),
     invoiceReference: document.invoiceReference,
+    discountPercent: discountShare(document),
     source: "content"
   });
+}
+
+// The share of the price given away, line discounts and global discount
+// together: what was sold before discount against the net HT. Null when the
+// document says nothing of it.
+function discountShare(document) {
+  const gross = Number.isFinite(document.totals.totalBrutHt)
+    ? document.totals.totalBrutHt
+    : document.items.reduce((sum, item) => sum + (Number.isFinite(item.quantity) && Number.isFinite(item.unitPriceHt) ? item.quantity * item.unitPriceHt : 0), 0);
+  const net = Number.isFinite(document.totals.totalNetHt) ? document.totals.totalNetHt : document.totals.totalHt;
+  if (!(gross > 0) || !Number.isFinite(net)) {
+    return null;
+  }
+  return Math.max(0, Math.round(((gross - net) / gross) * 1000) / 10);
 }
 
 // A document issued before its content was kept: what its Word file prints.
@@ -48,6 +63,7 @@ export function summarizeIssuedWord({ type, number, stem }, text = "") {
     quoteReference: /Référence devis\s*:\s*([^\s|]+)/.exec(text)?.[1] ?? "",
     deliveryNoteReference: bareDeliveryNoteNumber(/Référence BL\s*:\s*([^|\n]+)/.exec(text)?.[1] ?? ""),
     invoiceReference: /Référence facture\s*:\s*([^\s|]+)/.exec(text)?.[1] ?? "",
+    discountPercent: null,
     source: "word"
   });
 }

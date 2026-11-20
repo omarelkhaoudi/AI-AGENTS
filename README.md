@@ -183,6 +183,31 @@ demande à l'agent concerné d'en chercher la cause (appel à OpenAI). Pour coup
 cette analyse automatique : `HKIDS_AUTO_ANALYSIS=off` dans `.env` ; les anomalies
 restent alors listées et s'analysent à la demande depuis l'onglet Amélioration.
 
+### Alertes commerciales
+
+En plus des devis à relancer, le cockpit relève sur les documents émis les
+alertes commerciales du cahier des charges (V2, section 5). Elles deviennent
+des anomalies de l'onglet Amélioration (« Alerte commerciale »), avec un
+responsable, une gravité, une tâche possible et leur place dans les
+indicateurs du pilote. Celles qui ne sont plus vraies sont levées toutes seules.
+
+| Alerte | Quand | Gravité | Règle à fixer |
+| --- | --- | --- | --- |
+| Devis expiré | Devis ni commandé ni perdu au-delà de sa validité | moyenne | Validité d'un devis (jours) |
+| Remise hors plafond | Devis ou BC dont la remise (lignes et remise globale) dépasse le plafond | haute | Remise maximale sans accord (%) |
+| Marge sous le seuil | BC terminé dont la marge, mesurée sur ses dépenses, est sous le minimum (agent Finance) | haute | Marge minimale d'une commande (%) |
+| Écart devis / commande | BC dont le montant TTC n'est pas celui de son devis | moyenne | — |
+| Client en double | Un même client écrit de plusieurs façons (civilité, accents, ordre des mots) | faible | — |
+
+- Les trois règles se fixent dans **Amélioration → Règles commerciales**, par la
+  direction seule. Une règle laissée vide ne donne aucune alerte : rien n'est
+  supposé à sa place. Elles sont gardées dans `data/relances.json`.
+- Une alerte « Marquer réglée » ne revient pas tant que les documents montrent
+  le même fait (un nom écrit de deux façons ne s'efface pas).
+- Le bilan commercial du Director et de l'agent Commercial les cite, avec les
+  règles en vigueur. Une alerte de gravité haute est envoyée à la direction
+  par WhatsApp, comme toute anomalie grave.
+
 ### Indicateurs du pilote
 
 En tête de l'onglet Amélioration, le panneau « Indicateurs du pilote » donne

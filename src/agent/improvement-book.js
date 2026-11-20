@@ -73,7 +73,10 @@ function createImprovementBook({ book, clock }) {
         const found = [];
         for (const fact of facts) {
           const open = state.anomalies.find((entry) => entry.key === fact.key && entry.status !== "levee");
-          if (!open) {
+          // A false alarm stays dismissed while the book keeps showing the
+          // same fact; once the fact is gone, a new one is a new anomaly.
+          const dismissed = state.anomalies.some((entry) => entry.key === fact.key && entry.falseAlarm && !entry.falseAlarm.endedAt);
+          if (!open && !dismissed) {
             const anomaly = { id: randomUUID(), number: nextNumber(state.anomalies), ...fact, severity: fact.kind === "blocage" ? "haute" : "moyenne", status: "a_analyser", detectedAt: at, journal: [{ at, by: "director", text: "Anomalie détectée au carnet d'atelier." }] };
             state.anomalies.push(anomaly);
             found.push(Object.freeze({ ...anomaly }));
@@ -81,6 +84,9 @@ function createImprovementBook({ book, clock }) {
         }
         const current = new Set(facts.map((fact) => fact.key));
         for (const anomaly of state.anomalies) {
+          if (anomaly.falseAlarm && !anomaly.falseAlarm.endedAt && !current.has(anomaly.key)) {
+            anomaly.falseAlarm.endedAt = at;
+          }
           if (anomaly.source === "atelier" && anomaly.status !== "levee" && !current.has(anomaly.key)) {
             anomaly.status = "levee";
             anomaly.liftedAt = at;
@@ -217,6 +223,32 @@ function createImprovementBook({ book, clock }) {
         if (anomaly.task && anomaly.task.status !== "cloturee") {
           Object.assign(anomaly.task, { status: "cloturee", closedAt: at, closedBy: by });
         }
+        return Object.freeze({ ...anomaly });
+      });
+    },
+
+    // The direction says an alert was wrong (a date entered late, a step
+    // finished but not ticked): it leaves the anomalies, is counted among the
+    // pilot's false alarms, and its task, if any, is closed.
+    async dismiss(reference, { note = "", by = "direction" } = {}) {
+      if (!text(note)) {
+        throw new ImprovementError("Dire pourquoi c'est une fausse alerte.", "IMPROVEMENT_FALSE_ALARM_NOTE_MISSING");
+      }
+      return book.change((state) => {
+        const anomaly = find(state.anomalies, reference, "Anomalie", "IMPROVEMENT_ANOMALY_NOT_FOUND");
+        if (anomaly.falseAlarm) {
+          throw new ImprovementError(`L'anomalie n° ${anomaly.number} est déjà marquée fausse alerte.`, "IMPROVEMENT_FALSE_ALARM_ALREADY");
+        }
+        const at = now();
+        anomaly.falseAlarm = { at, by, note: text(note) };
+        if (anomaly.status !== "levee") {
+          anomaly.status = "levee";
+          anomaly.liftedAt = at;
+        }
+        if (anomaly.task && anomaly.task.status !== "cloturee") {
+          Object.assign(anomaly.task, { status: "cloturee", closedAt: at, closedBy: by });
+        }
+        anomaly.journal.push({ at, by, text: `Fausse alerte : ${text(note)}.` });
         return Object.freeze({ ...anomaly });
       });
     },

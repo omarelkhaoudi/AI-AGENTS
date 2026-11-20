@@ -45,6 +45,7 @@ import { CASH_CATEGORIES, CASH_METHODS, CONFIDENTIAL_CATEGORIES, CashBookError, 
 export const DEFAULT_COMPANY_ID = "hkids";
 import { ANOMALY_STATUSES, ImprovementError, RULE_STATUSES, SEVERITIES, TASK_STATUSES, createMemoryImprovementBook, taskBoard } from "../agent/improvement-book.js";
 import { TeamBookError, createMemoryTeamBook } from "../agent/team-book.js";
+import { minutesPerMissionFromEnv, pilotIndicators, pilotPeriod } from "../agent/pilot-indicators.js";
 import { SPECIALISTS, SPECIALIST_IDS } from "../agent/agent-team.js";
 import { createMemoryWhatsAppInbox } from "../agent/whatsapp-inbox.js";
 import { createWhatsAppGateway } from "../agent/whatsapp-gateway.js";
@@ -171,6 +172,11 @@ export function buildApi({
   automationBook = null,
   // The subscription of this instance (HKIDS_PLAN); null for the pilot.
   subscription = planFromEnv(),
+  // The pilot's indicators: the day it started (HKIDS_PILOT_START, AAAA-MM-JJ),
+  // the default start of their period, and the minutes an agent's mission is
+  // taken to save (HKIDS_PILOT_MINUTES_PER_MISSION), the direction's hypothesis.
+  pilotStart = String(process.env.HKIDS_PILOT_START ?? "").trim(),
+  minutesPerMission = minutesPerMissionFromEnv(),
   // The company's team template (HKIDS_TEAM_TEMPLATE, set by tenant.sh
   // create --modele=…): fabricant, H-KIDS' own, unless told otherwise.
   teamTemplate = templateFromEnv(),
@@ -1530,6 +1536,33 @@ export function buildApi({
           return reply.code(error.code === "AGENT_ANOMALY_NOT_FOUND" ? 404 : 503).send({ error: error.message, details: { code: error.code } });
         }
         return sendBookError(reply, error, "Anomaly analysis failed.");
+      }
+    });
+
+    // The pilot's indicators over a period (CDC V2 annex), from the books.
+    app.get("/api/improvement/pilot", readRouteOptions(), async (request, reply) => {
+      try {
+        const today = clock();
+        const period = pilotPeriod({ from: typeof request.query?.from === "string" ? request.query.from : "", to: typeof request.query?.to === "string" ? request.query.to : "", start: pilotStart, today });
+        const orders = await workshop.book();
+        await syncAnomalies(orders);
+        const [{ anomalies, rules }, byDay] = await Promise.all([improvement.state(), typeof teamFeed.missionsByDay === "function" ? teamFeed.missionsByDay() : {}]);
+        const missions = Object.entries(byDay).flatMap(([day, count]) => Array.from({ length: count }, () => ({ at: day })));
+        return { indicators: pilotIndicators({ anomalies, rules, orders, missions, ...period, today, minutesPerMission }), pilotStart: pilotStart || null };
+      } catch (error) {
+        return sendBookError(reply, error, "Pilot indicators unavailable.");
+      }
+    });
+
+    // A false alarm, said by the direction: counted apart, never analysed again.
+    app.post("/api/improvement/anomalies/:number/false-alarm", decisionRouteOptions(), async (request, reply) => {
+      const by = request.principal.userId ?? "direction";
+      try {
+        const anomaly = await improvement.dismiss(request.params.number, { note: typeof request.body?.note === "string" ? request.body.note : "", by });
+        await teamFeed.log({ agent: SPECIALISTS[anomaly.owner] ? anomaly.owner : "director", kind: "amelioration", text: `Anomalie n° ${anomaly.number} marquée fausse alerte par la direction : ${anomaly.falseAlarm.note}.`, ref: `anomalie:${anomaly.number}`, by });
+        return reply.code(200).send({ anomaly });
+      } catch (error) {
+        return sendBookError(reply, error, "False alarm failed.");
       }
     });
 

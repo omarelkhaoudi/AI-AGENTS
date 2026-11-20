@@ -1616,7 +1616,52 @@ const improvementStats = document.querySelector("#improvement-stats");
 const improvementList = document.querySelector("#improvement-list");
 const improvementCount = document.querySelector("#improvement-count");
 const improvementView = { data: null, filter: null, busy: new Set() };
+const pilotTiles = document.querySelector("#pilot-tiles");
+const pilotPeriodForm = document.querySelector("#pilot-period");
 document.querySelector("#refresh-improvement").addEventListener("click", () => refreshImprovement());
+pilotPeriodForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  refreshPilot();
+});
+
+// The pilot's indicators (CDC V2 annex): each tile says what it counts.
+async function refreshPilot() {
+  const read = (name) => pilotPeriodForm.querySelector(`[name='${name}']`)?.value ?? "";
+  const query = new URLSearchParams(Object.entries({ from: read("from"), to: read("to") }).filter(([, value]) => value)).toString();
+  try {
+    const response = await fetch(`/api/improvement/pilot${query ? `?${query}` : ""}`, { headers: await authHeaders() });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error ?? "Les indicateurs du pilote n'ont pas pu être calculés.");
+    }
+    renderPilot(payload.indicators);
+  } catch (error) {
+    pilotTiles.innerHTML = `<p class="muted text-[13px]">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderPilot(indicators) {
+  const { period, lateOrders, resolution, anomalies, procedures, recurrence, timeSaved, falseAlarms } = indicators;
+  const fromField = pilotPeriodForm.querySelector("[name='from']");
+  const toField = pilotPeriodForm.querySelector("[name='to']");
+  if (fromField && !fromField.value) fromField.value = period.from;
+  if (toField && !toField.value) toField.value = period.to;
+  const percent = (value) => (value === null ? "—" : `${String(value).replace(".", ",")} %`);
+  const plural = (count, word) => `${count} ${word}${count > 1 ? "s" : ""}`;
+  const kinds = Object.entries(anomalies.byKind).map(([kind, count]) => `${kind} ${count}`).join(" · ");
+  const tiles = [
+    ["Commandes en retard", percent(lateOrders.percent), `${lateOrders.late} sur ${plural(lateOrders.worked, "commande")} suivie${lateOrders.worked > 1 ? "s" : ""}${lateOrders.numbers.length > 0 ? ` : BC ${lateOrders.numbers.join(", ")}` : ""}`],
+    ["Délai moyen de résolution", resolution.averageDays === null ? "—" : `${String(resolution.averageDays).replace(".", ",")} j`, `${plural(resolution.resolved, "anomalie")} levée${resolution.resolved > 1 ? "s" : ""} · ${resolution.stillOpen} encore ouverte${resolution.stillOpen > 1 ? "s" : ""}`],
+    ["Anomalies détectées", String(anomalies.detected), [kinds, anomalies.severe > 0 ? `${anomalies.severe} de gravité haute` : ""].filter(Boolean).join(" · ") || "aucune sur la période"],
+    ["Procédures approuvées", percent(procedures.percent), `${procedures.approved} validée${procedures.approved > 1 ? "s" : ""}, ${procedures.refused} refusée${procedures.refused > 1 ? "s" : ""}${procedures.pending > 0 ? `, ${procedures.pending} à valider` : ""}`],
+    ["Incidents récurrents", String(recurrence.count), recurrence.count > 0 ? `revenus malgré une règle en vigueur (${percent(recurrence.percent)} des anomalies)` : "aucun retour malgré une règle"],
+    ["Temps administratif économisé", timeSaved.hours === null ? plural(timeSaved.missions, "mission") : `${String(timeSaved.hours).replace(".", ",")} h`, timeSaved.minutesPerMission === null ? "missions des agents ; durée gagnée par mission à fixer (HKIDS_PILOT_MINUTES_PER_MISSION)" : `${plural(timeSaved.missions, "mission")} × ${timeSaved.minutesPerMission} min, hypothèse de la direction`],
+    ["Fausses alertes", percent(falseAlarms.percent), `${plural(falseAlarms.count, "alerte")} écartée${falseAlarms.count > 1 ? "s" : ""} par la direction`]
+  ];
+  pilotTiles.innerHTML = tiles.map(([label, value, hint]) => `
+    <div class="pilot-tile"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(hint)}</small></div>
+  `).join("") + `<p class="pilot-foot muted">Du ${escapeHtml(formatIsoDay(period.from))} au ${escapeHtml(formatIsoDay(period.to))} (${period.days} jours).</p>`;
+}
 improvementStats.addEventListener("click", (event) => {
   const tile = event.target.closest?.("[data-filter]");
   if (tile) {
@@ -1644,8 +1689,16 @@ improvementList.addEventListener("submit", async (event) => {
   await refreshImprovement();
 });
 improvementList.addEventListener("click", async (event) => {
-  const target = event.target.closest?.("[data-rule-decision], [data-analyse], [data-lift], [data-task-move], [data-closure]");
+  const target = event.target.closest?.("[data-rule-decision], [data-analyse], [data-lift], [data-task-move], [data-closure], [data-false-alarm]");
   if (!target) {
+    return;
+  }
+  if (target.dataset.falseAlarm) {
+    const note = globalThis.prompt?.("Pourquoi est-ce une fausse alerte ? (ex. : étape finie mais pas cochée)");
+    if (!note?.trim()) {
+      return;
+    }
+    await sendImprovementChange(`/api/improvement/anomalies/${target.dataset.falseAlarm}/false-alarm`, { note }, "Fausse alerte notée : elle sort des anomalies et compte dans les indicateurs du pilote.");
     return;
   }
   if (target.dataset.taskMove) {
@@ -1691,6 +1744,7 @@ improvementList.addEventListener("click", async (event) => {
 });
 
 async function refreshImprovement() {
+  refreshPilot();
   try {
     const response = await fetch("/api/improvement", { headers: await authHeaders() });
     if (!response.ok) {
@@ -1762,7 +1816,7 @@ function renderImprovement(data) {
     sections.push(`
       <details class="panel improvement-history">
         <summary><strong>Historique</strong><small>${past.length} élément${past.length > 1 ? "s" : ""} : anomalies levées, règles refusées ou retirées</small></summary>
-        <ul>${past.map((entry) => `<li><small>${escapeHtml(formatIsoDay((entry.liftedAt ?? entry.decidedAt ?? "").slice(0, 10)))}</small> ${entry.fact ? `Anomalie n° ${entry.number} levée : ${escapeHtml(entry.fact)}` : `Règle n° ${entry.number} « ${escapeHtml(entry.title)} » ${entry.status === "refusee" ? "refusée" : "retirée"}`}</li>`).join("")}</ul>
+        <ul>${past.map((entry) => `<li><small>${escapeHtml(formatIsoDay((entry.liftedAt ?? entry.decidedAt ?? "").slice(0, 10)))}</small> ${entry.fact ? `Anomalie n° ${entry.number} ${entry.falseAlarm ? `fausse alerte (${escapeHtml(entry.falseAlarm.note)})` : "levée"} : ${escapeHtml(entry.fact)}` : `Règle n° ${entry.number} « ${escapeHtml(entry.title)} » ${entry.status === "refusee" ? "refusée" : "retirée"}`}</li>`).join("")}</ul>
       </details>
     `);
   }
@@ -1833,6 +1887,7 @@ function anomalyCard(anomaly, canAnalyse) {
           <button type="button" class="primary" data-closure="${anomaly.number}:confirmer">${icon("check")}Confirmer la clôture</button>
           <button type="button" class="link-button" data-closure="${anomaly.number}:rouvrir">Rouvrir</button>` : ""}
         ${anomaly.source === "signalee" && !anomaly.task ? `<button type="button" class="link-button" data-lift="${anomaly.number}">Marquer réglée</button>` : ""}
+        ${isOpenAnomaly(anomaly) && !anomaly.falseAlarm ? `<button type="button" class="link-button" data-false-alarm="${anomaly.number}">Fausse alerte</button>` : ""}
       </div>
     </article>
   `;

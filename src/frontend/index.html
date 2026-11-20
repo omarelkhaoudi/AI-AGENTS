@@ -414,6 +414,20 @@
             <p>Chaque retard ou blocage devient une anomalie : l'agent responsable en cherche la cause et propose une règle pour qu'elle ne se reproduise pas. Une règle ne s'applique qu'une fois que vous l'avez validée ; elle est ensuite donnée à son agent à chaque mission.</p>
             <button type="button" class="secondary" id="refresh-improvement"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Rafraîchir</button>
           </header>
+          <section id="pilot-panel" class="panel pilot-panel" aria-labelledby="pilot-title">
+            <header class="pilot-head">
+              <div class="min-w-0 flex-1">
+                <h3 id="pilot-title">Indicateurs du pilote</h3>
+                <p class="muted text-[13px]">Comptés sur les carnets du cockpit, sur la période choisie (30 à 60 jours). Un tiret : rien à compter.</p>
+              </div>
+              <form id="pilot-period" class="pilot-period">
+                <label>Du<input name="from" type="date"></label>
+                <label>Au<input name="to" type="date"></label>
+                <button type="submit" class="secondary">Afficher</button>
+              </form>
+            </header>
+            <div id="pilot-tiles" class="pilot-tiles"></div>
+          </section>
           <div id="improvement-stats" class="stat-tiles stat-tiles-4" role="group" aria-label="Filtrer"></div>
           <div id="improvement-list" class="plans-list"></div>
         </section>

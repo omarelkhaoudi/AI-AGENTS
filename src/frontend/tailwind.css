@@ -2551,6 +2551,47 @@
     @apply opacity-60;
   }
 
+  /* The pilot's indicators, above the anomalies. */
+  .pilot-head {
+    @apply mb-4 flex flex-wrap items-end gap-4;
+  }
+
+  .pilot-head h3 {
+    @apply font-display text-[18px] font-semibold text-ink;
+  }
+
+  .pilot-period {
+    @apply flex flex-wrap items-end gap-2;
+  }
+
+  .pilot-period label {
+    @apply flex flex-col gap-1 text-[12px] text-ink-2;
+  }
+
+  .pilot-tiles {
+    @apply grid grid-cols-[repeat(auto-fill,minmax(170px,1fr))] gap-3;
+  }
+
+  .pilot-tile {
+    @apply flex min-w-0 flex-col gap-1 rounded-2xl border border-line bg-surface-2 px-4 py-3;
+  }
+
+  .pilot-tile span {
+    @apply text-[12px] font-medium text-ink-2;
+  }
+
+  .pilot-tile strong {
+    @apply font-display text-[24px] leading-none font-semibold text-ink tabular-nums;
+  }
+
+  .pilot-tile small {
+    @apply text-[12px] leading-snug text-muted;
+  }
+
+  .pilot-foot {
+    @apply col-span-full text-[12px];
+  }
+
   .team-plan {
     @apply mb-4 text-[13px] text-ink-2;
   }

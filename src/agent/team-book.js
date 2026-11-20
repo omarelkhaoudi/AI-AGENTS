@@ -81,6 +81,13 @@ function createTeamBook({ book, clock, agents }) {
       return book.change((state) => push(state, { at: clock().toISOString(), agent, kind, text: text(line).slice(0, 400), detail: text(detail).slice(0, 700), ref: text(ref), by }));
     },
 
+    // The agents' missions counted per day, for the pilot's indicators: the
+    // feed keeps its last lines only, the count keeps every day.
+    async missionsByDay() {
+      const state = await book.load();
+      return { ...(state.missionsByDay ?? countMissions(state.activity)) };
+    },
+
     async activity({ agent = null, limit = 50, since = null } = {}) {
       return (await book.load()).activity
         .filter((entry) => (!agent || entry.agent === agent) && (!since || entry.at >= since))
@@ -99,8 +106,25 @@ function createTeamBook({ book, clock, agents }) {
   });
 }
 
+function countMissions(activity) {
+  const days = {};
+  for (const entry of activity ?? []) {
+    if (entry.kind === "mission") {
+      const day = entry.at.slice(0, 10);
+      days[day] = (days[day] ?? 0) + 1;
+    }
+  }
+  return days;
+}
+
 function push(state, entry) {
   const line = Object.freeze({ id: randomUUID(), ...entry });
+  if (line.kind === "mission") {
+    // Started from what the feed still holds, the first time.
+    state.missionsByDay ??= countMissions(state.activity);
+    const day = line.at.slice(0, 10);
+    state.missionsByDay[day] = (state.missionsByDay[day] ?? 0) + 1;
+  }
   state.activity.push(line);
   if (state.activity.length > MAX_ACTIVITY) {
     state.activity.splice(0, state.activity.length - MAX_ACTIVITY);

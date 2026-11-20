@@ -183,6 +183,32 @@ demande à l'agent concerné d'en chercher la cause (appel à OpenAI). Pour coup
 cette analyse automatique : `HKIDS_AUTO_ANALYSIS=off` dans `.env` ; les anomalies
 restent alors listées et s'analysent à la demande depuis l'onglet Amélioration.
 
+### Indicateurs du pilote
+
+En tête de l'onglet Amélioration, le panneau « Indicateurs du pilote » donne
+les sept chiffres que l'annexe V2 du cahier des charges demande de suivre
+pendant 30 à 60 jours. Ils sont comptés sur la période choisie, à partir des
+carnets du cockpit ; un tiret veut dire qu'il n'y a rien à compter.
+
+| Indicateur | Ce qui est compté |
+| --- | --- |
+| Commandes en retard | Commandes suivies sur la période (en cours, ou finies dedans) dont une étape a fini après sa date prévue ou la dépasse. |
+| Délai moyen de résolution | De la détection d'une anomalie à sa levée (clôture confirmée, ou carnet d'atelier revenu à la normale). |
+| Anomalies détectées | Par type et gravité, hors fausses alertes. |
+| Procédures approuvées | Règles proposées sur la période : validées sur validées + refusées. Une règle retirée plus tard avait été validée. |
+| Incidents récurrents | Anomalies revenues alors que la règle qui devait l'empêcher était en vigueur. |
+| Temps administratif économisé | Missions confiées aux agents × minutes gagnées par mission (`HKIDS_PILOT_MINUTES_PER_MISSION`, une hypothèse de la direction). Sans elle, seul le nombre de missions est donné. |
+| Fausses alertes | Anomalies que la direction a marquées « Fausse alerte », sur toutes celles détectées. |
+
+- La période par défaut va de `HKIDS_PILOT_START` (AAAA-MM-JJ, le premier jour
+  du pilote) à aujourd'hui, ou couvre les 30 derniers jours sans ce réglage.
+- « Fausse alerte » (direction seule, avec une raison) sort l'anomalie de la
+  liste et ferme sa tâche. Tant que le carnet d'atelier montre le même fait,
+  elle ne revient pas ; si le fait disparaît puis revient, c'est une nouvelle
+  anomalie.
+- Le nombre de missions est gardé jour par jour dans `data/equipe.json`, au-delà
+  des dernières lignes du fil de l'équipe.
+
 ### WhatsApp Business
 
 Le cockpit se branche sur l'**API officielle WhatsApp Business** (Cloud API de

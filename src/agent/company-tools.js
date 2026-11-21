@@ -5,6 +5,7 @@ import { CASH_CATEGORIES, CASH_METHODS, CONFIDENTIAL_CATEGORIES, CashBookError, 
 import { ANOMALY_STATUSES, ImprovementError, RULE_STATUSES, SEVERITIES, TASK_STATUSES, rulesInstruction, taskBoard } from "./improvement-book.js";
 import { normalizeWhatsAppNumber } from "./whatsapp.js";
 import { TeamBookError } from "./team-book.js";
+import { quantityText as stockQuantity } from "./stock-book.js";
 import { FOLLOW_UP_CHANNELS, QUOTE_STATES, SalesBookError, frenchDay as salesDay, isoDay, quotePipeline, salesReport } from "./sales-book.js";
 
 // The tools of Hiba's three requests of 09/11/2026, as the Director and its
@@ -667,6 +668,7 @@ export async function directorBriefing({ books, workshop = null, documentService
   const reports = recent.filter((entry) => entry.kind === "compte_rendu").slice(0, 8).reverse();
   const waiting = state.rules.filter((rule) => rule.status === "proposee").length;
   const toAnalyse = state.anomalies.filter((anomaly) => anomaly.status === "a_analyser").length;
+  const lowStock = (await books.stock?.overview().catch(() => null))?.alerts ?? [];
   return [
     linked.length > 0
       ? `Responsables humains reliés aux agents : ${linked.map(([agent, member]) => `${SPECIALISTS[agent].label} → ${member.name}${member.role ? ` (${member.role})` : ""}`).join(" ; ")}.`
@@ -681,6 +683,7 @@ export async function directorBriefing({ books, workshop = null, documentService
     taskLines(taskBoard(state.anomalies, clock())),
     withoutLead.length > 0 ? `Bons de commande en cours sans chef de charge : n° ${withoutLead.slice(0, 8).join(", ")} (equipe_commande quand la direction le désigne).` : "",
     cncWaiting.length > 0 ? `${cncWaiting.length} fichier(s) CNC attendent la validation de la direction dans le cockpit (BC n° ${[...new Set(cncWaiting)].join(", ")}) : la découpe ne peut pas commencer avant.` : "",
+    lowStock.length > 0 ? `Matières au niveau ou sous leur minimum au registre de stock : ${lowStock.slice(0, 8).map((item) => `${item.name} (${stockQuantity(item.onHand, item.unit)} pour un minimum de ${stockQuantity(item.minimum, item.unit)})`).join(", ")}. Signale-les dans tout point de situation ; l'agent Achats prépare la commande fournisseur (registre_stock pour le détail).` : "",
     rulesInstruction(rules),
     waiting > 0 ? `${waiting} règle(s) d'amélioration attendent la validation de la direction (vue Amélioration du cockpit).` : "",
     toAnalyse > 0 ? `${toAnalyse} anomalie(s) restent à analyser (lister_anomalies).` : ""

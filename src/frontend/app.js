@@ -705,6 +705,7 @@ async function sendToAgent(message) {
     refreshImprovement();
     refreshTeam();
     refreshHr();
+    refreshStock();
     if (response.directorResponse) {
       state.current = { ...response.directorResponse, receivedAt: Date.now() };
       state.history = [state.current, ...state.history].slice(0, 8);
@@ -1344,6 +1345,100 @@ async function submitCashMovement(confirmDuplicate) {
   }
 }
 
+// --- Stock view ------------------------------------------------------------------
+// The register of the materials: what is on hand, under its minimum, what came
+// in and went out lately, and what each purchase order took. It is kept by
+// speaking to the Director; this view reads it.
+const stockStats = document.querySelector("#stock-stats");
+const stockBody = document.querySelector("#stock-body");
+const stockCount = document.querySelector("#stock-count");
+document.querySelector("#refresh-stock").addEventListener("click", () => refreshStock());
+
+async function refreshStock() {
+  try {
+    const response = await fetch("/api/stock", { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("Impossible de charger le stock.");
+    }
+    renderStock(await response.json());
+  } catch (error) {
+    stockBody.innerHTML = card("Stock indisponible", escapeHtml(error.message), "warning");
+  }
+}
+
+const STOCK_KINDS = Object.freeze({ entree: "Entrée", sortie: "Sortie", inventaire: "Inventaire" });
+// « 8 panneaux » from 2 on, as the register writes it (stock-book.js).
+const pluralUnit = (unit) => String(unit).split(" ").map((word) => (word.length <= 2 || !/^[\p{L}-]+$/u.test(word) || /[sxz]$/i.test(word) ? word : /(eau|au|eu)$/i.test(word) ? `${word}x` : `${word}s`)).join(" ");
+const stockQuantity = (quantity, unit) => `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 3 }).format(quantity)} ${escapeHtml(Math.abs(quantity) >= 2 ? pluralUnit(unit) : unit)}`;
+const stockDh = (amount) => `${new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount)} DH`;
+
+function stockMovementLine(movement) {
+  const what = movement.kind === "inventaire"
+    ? `${stockQuantity(movement.counted, movement.unit)} comptés (écart ${movement.quantity > 0 ? "+" : ""}${stockQuantity(movement.quantity, movement.unit)})`
+    : stockQuantity(Math.abs(movement.quantity), movement.unit);
+  return [
+    `<small>${formatIsoDay(movement.day)}</small> n° ${movement.number} ${STOCK_KINDS[movement.kind]} · ${escapeHtml(movement.name)} : ${what}`,
+    movement.orderNumber ? ` · BC n° ${escapeHtml(movement.orderNumber)}` : "",
+    movement.supplier ? ` · ${escapeHtml(movement.supplier)}` : "",
+    movement.unitCost !== null ? ` · ${stockDh(movement.unitCost)} HT l'unité` : "",
+    movement.note ? ` (${escapeHtml(movement.note)})` : "",
+    movement.cancelled ? ` — annulée : ${escapeHtml(movement.cancelled.reason)}` : ""
+  ].join("");
+}
+
+function renderStock({ overview }) {
+  stockCount.textContent = String(overview.alerts.length);
+  stockCount.hidden = overview.alerts.length === 0;
+  if (overview.items.length === 0) {
+    stockStats.innerHTML = "";
+    stockBody.innerHTML = `
+      <div class="all-clear">
+        <span class="badge">${icon("package")}</span>
+        <h3>Aucune matière suivie</h3>
+        <p>Dites au Director quelles matières vous gardez en stock, avec leur unité et, si vous voulez une alerte, le minimum : « on suit le MDF 18 mm, en panneaux, minimum 10, livré en 5 jours ». Puis donnez le stock réel : « on a compté 14 panneaux ».</p>
+      </div>
+    `;
+    return;
+  }
+  const tiles = [
+    ["Matières suivies", overview.items.length, "au registre"],
+    ["À commander", overview.alerts.length, "au niveau ou sous le minimum"],
+    ["Valeur du stock", overview.value !== null ? stockDh(overview.value) : "—", overview.unpriced > 0 ? `HT, sans ${overview.unpriced} matière(s) sans prix` : "HT, au coût moyen d'achat"],
+    ["Mouvements", overview.recent.length, "ces 30 derniers jours"]
+  ];
+  stockStats.innerHTML = tiles.map(([label, value, hint], index) => `
+    <div class="stat-tile ${index === 1 && value > 0 ? "is-alert" : ""}"><strong>${value}</strong><span>${escapeHtml(label)}</span><small>${escapeHtml(hint)}</small></div>
+  `).join("");
+  const table = (head, rows) => `<div class="answer-table"><table><thead><tr>${head.map((value) => `<th>${escapeHtml(value)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+  const sections = [];
+  if (overview.alerts.length > 0) {
+    sections.push(improvementSection("À commander", "Au niveau ou sous le minimum que vous avez fixé. L'agent Achats prépare la commande fournisseur.", overview.alerts.map((item) => `
+      <article class="rule-card">
+        <p><strong>${escapeHtml(item.name)}</strong> — ${item.status === "rupture" ? `<span class="tag warning">rupture</span> ` : ""}${stockQuantity(item.onHand, item.unit)} en stock pour un minimum de ${stockQuantity(item.minimum, item.unit)}${item.supplier ? ` · ${escapeHtml(item.supplier)}` : ""}${item.arrivesBy ? ` · commandé aujourd'hui, arrive vers le ${formatIsoDay(item.arrivesBy)}` : " · délai du fournisseur non renseigné"}</p>
+      </article>
+    `).join("")));
+  }
+  sections.push(improvementSection("Matières", "Le stock est la somme des entrées, des sorties et des écarts d'inventaire. Le coût moyen est pondéré sur les entrées qui ont un prix.", table(
+    ["Matière", "En stock", "Minimum", "Fournisseur", "Délai", "Coût moyen HT"],
+    overview.items.map((item) => `<tr><td>${escapeHtml(item.name)}${item.status !== "ok" ? ` <span class="tag warning">${item.status === "rupture" ? "rupture" : "à commander"}</span>` : ""}</td><td class="num">${stockQuantity(item.onHand, item.unit)}</td><td class="num">${item.minimum !== null ? stockQuantity(item.minimum, item.unit) : "—"}</td><td>${escapeHtml(item.supplier || "—")}</td><td class="num">${item.leadTimeDays !== null ? `${item.leadTimeDays} j` : "—"}</td><td class="num">${item.averageCost !== null ? stockDh(item.averageCost) : "—"}</td></tr>`)
+  )));
+  if (overview.consumption.length > 0) {
+    sections.push(improvementSection("Consommation par bon de commande", "Les sorties notées pour chaque BC.", table(
+      ["BC", "Matières sorties"],
+      overview.consumption.slice(0, 20).map((order) => `<tr><td>n° ${escapeHtml(order.orderNumber)}</td><td>${order.lines.map((line) => `${stockQuantity(line.quantity, line.unit)} de ${escapeHtml(line.name)}`).join(", ")}</td></tr>`)
+    )));
+  }
+  if (overview.recent.length > 0) {
+    sections.push(`
+      <details class="panel improvement-history">
+        <summary><strong>30 derniers jours</strong><small>${overview.recent.length} mouvement(s)</small></summary>
+        <ul>${overview.recent.map((movement) => `<li class="${movement.cancelled ? "line-through text-muted" : ""}">${stockMovementLine(movement)}</li>`).join("")}</ul>
+      </details>
+    `);
+  }
+  stockBody.innerHTML = sections.join("");
+}
+
 // --- Équipe RH view ---------------------------------------------------------------
 // The team's book: who works here, who is away today, leave balances (Code du
 // travail), leave requests the direction decides on, and the month's payroll
@@ -1669,6 +1764,7 @@ async function refreshCommercialRules() {
 }
 
 // What each kind of anomaly is called in the cards.
+const ANOMALY_SOURCE_LABELS = Object.freeze({ commercial: "Alerte commerciale", stock: "Alerte de stock" });
 const ANOMALY_KIND_LABELS = Object.freeze({
   retard: "retard",
   blocage: "blocage",
@@ -1676,7 +1772,9 @@ const ANOMALY_KIND_LABELS = Object.freeze({
   remise_hors_plafond: "remise hors plafond",
   marge_sous_seuil: "marge sous le seuil",
   ecart_devis_commande: "écart devis / commande",
-  client_en_double: "client en double"
+  client_en_double: "client en double",
+  stock_sous_minimum: "stock sous le minimum",
+  rupture_stock: "rupture de stock"
 });
 
 // The pilot's indicators (CDC V2 annex): each tile says what it counts.
@@ -1862,7 +1960,7 @@ function renderImprovement(data) {
   }
   const listed = improvementView.filter === "analyse" ? waiting : open;
   if ((show("open") || show("analyse")) && listed.length > 0) {
-    sections.push(improvementSection(improvementView.filter === "analyse" ? "À analyser" : "Anomalies ouvertes", "Un retard ou un blocage du carnet d'atelier, une alerte commerciale, ou un problème signalé au Director.", listed.map((anomaly) => anomalyCard(anomaly, data.analysis)).join("")));
+    sections.push(improvementSection(improvementView.filter === "analyse" ? "À analyser" : "Anomalies ouvertes", "Un retard ou un blocage du carnet d'atelier, une alerte commerciale ou de stock, ou un problème signalé au Director.", listed.map((anomaly) => anomalyCard(anomaly, data.analysis)).join("")));
   }
   if (show("rules") && inForce.length > 0) {
     sections.push(improvementSection("Règles en vigueur", "Données à leur agent, et au Director, à chaque mission.", inForce.map((rule) => ruleCard(rule, anomalyOf)).join("")));
@@ -1928,7 +2026,7 @@ function anomalyCard(anomaly, canAnalyse) {
     <article class="anomaly-card" data-kind="${escapeHtml(anomaly.kind)}">
       <span class="anomaly-icon" aria-hidden="true">${icon(anomaly.kind === "retard" ? "clock" : anomaly.kind === "blocage" ? "alert" : "bulb")}</span>
       <div class="min-w-0 flex-1">
-        <span class="eyebrow">${anomaly.source === "commercial" ? "Alerte commerciale" : "Anomalie"} n° ${anomaly.number} · ${escapeHtml(ANOMALY_KIND_LABELS[anomaly.kind] ?? anomaly.kind)} · le ${escapeHtml(formatIsoDay(anomaly.detectedAt.slice(0, 10)))} <span class="tag ${severity === "haute" ? "warning" : ""}">gravité ${escapeHtml(severity)}</span></span>
+        <span class="eyebrow">${ANOMALY_SOURCE_LABELS[anomaly.source] ?? "Anomalie"} n° ${anomaly.number} · ${escapeHtml(ANOMALY_KIND_LABELS[anomaly.kind] ?? anomaly.kind)} · le ${escapeHtml(formatIsoDay(anomaly.detectedAt.slice(0, 10)))} <span class="tag ${severity === "haute" ? "warning" : ""}">gravité ${escapeHtml(severity)}</span></span>
         <p class="anomaly-fact">${escapeHtml(anomaly.fact)}</p>
         ${anomaly.cause
           ? `<p class="anomaly-cause"><b>Cause</b> (${escapeHtml(formatAgent(anomaly.analysedBy))}) : ${escapeHtml(anomaly.cause)}${anomaly.rule ? ` · règle n° ${anomaly.rule}` : ""}</p>`
@@ -1942,7 +2040,7 @@ function anomalyCard(anomaly, canAnalyse) {
         ${anomaly.task?.status === "resolue" ? `
           <button type="button" class="primary" data-closure="${anomaly.number}:confirmer">${icon("check")}Confirmer la clôture</button>
           <button type="button" class="link-button" data-closure="${anomaly.number}:rouvrir">Rouvrir</button>` : ""}
-        ${["signalee", "commercial"].includes(anomaly.source) && !anomaly.task ? `<button type="button" class="link-button" data-lift="${anomaly.number}">Marquer réglée</button>` : ""}
+        ${["signalee", "commercial", "stock"].includes(anomaly.source) && !anomaly.task ? `<button type="button" class="link-button" data-lift="${anomaly.number}">Marquer réglée</button>` : ""}
         ${isOpenAnomaly(anomaly) && !anomaly.falseAlarm ? `<button type="button" class="link-button" data-false-alarm="${anomaly.number}">Fausse alerte</button>` : ""}
       </div>
     </article>
@@ -4841,13 +4939,14 @@ const COCKPIT_VIEWS = Object.freeze({
   file: "Dossier commercial",
   team: "Équipe IA",
   hr: "Équipe RH",
+  stock: "Stock des matières",
   saas: "Abonnements"
 });
 
 // On a phone the tab bar keeps the four views of every day; the others open
 // from « Plus », which stays lit while one of them is shown. The cash of the
 // day is on the briefing's first card.
-const SHEET_VIEWS = Object.freeze(["cash", "saas", "whatsapp", "improvement", "hr", "team", "documents", "quotes", "file"]);
+const SHEET_VIEWS = Object.freeze(["cash", "saas", "whatsapp", "improvement", "stock", "hr", "team", "documents", "quotes", "file"]);
 const moreButton = document.querySelector("#more-button");
 const moreSheet = document.querySelector("#more-sheet");
 
@@ -4890,6 +4989,9 @@ function showView(name) {
   }
   if (view === "hr") {
     refreshHr();
+  }
+  if (view === "stock") {
+    refreshStock();
   }
   if (view === "saas") {
     refreshSaas();
@@ -5231,6 +5333,8 @@ async function loadPanels() {
   refreshImprovement();
   refreshWhatsApp();
   refreshRegister();
+  refreshStock();
+  refreshHr();
   renderHistory();
   await refreshApprovals();
 }

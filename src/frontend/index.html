@@ -108,6 +108,10 @@
               <svg class="i" aria-hidden="true"><use href="#i-bulb"/></svg><span class="nav-label">Amélioration</span>
               <span class="nav-badge" id="improvement-count" hidden>0</span>
             </button>
+            <button type="button" class="nav-item max-md:hidden" data-view="stock">
+              <svg class="i" aria-hidden="true"><use href="#i-package"/></svg><span class="nav-label">Stock</span>
+              <span class="nav-badge" id="stock-count" hidden>0</span>
+            </button>
             <button type="button" class="nav-item max-md:hidden" data-view="hr">
               <svg class="i" aria-hidden="true"><use href="#i-user-check"/></svg><span class="nav-label">Équipe RH</span>
               <span class="nav-badge" id="hr-count" hidden>0</span>
@@ -137,6 +141,7 @@
             <button type="button" class="sheet-item" data-view="saas" id="saas-sheet" hidden><svg class="i" aria-hidden="true"><use href="#i-receipt"/></svg>Abonnements</button>
             <button type="button" class="sheet-item" data-view="whatsapp"><svg class="i" aria-hidden="true"><use href="#i-chat"/></svg>WhatsApp</button>
             <button type="button" class="sheet-item" data-view="improvement"><svg class="i" aria-hidden="true"><use href="#i-bulb"/></svg>Amélioration</button>
+            <button type="button" class="sheet-item" data-view="stock"><svg class="i" aria-hidden="true"><use href="#i-package"/></svg>Stock</button>
             <button type="button" class="sheet-item" data-view="hr"><svg class="i" aria-hidden="true"><use href="#i-user-check"/></svg>Équipe RH</button>
             <button type="button" class="sheet-item" data-view="team"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg>Équipe IA</button>
             <button type="button" class="sheet-item" data-view="documents"><svg class="i" aria-hidden="true"><use href="#i-file"/></svg>Documents</button>
@@ -440,6 +445,16 @@
           </details>
           <div id="improvement-stats" class="stat-tiles stat-tiles-4" role="group" aria-label="Filtrer"></div>
           <div id="improvement-list" class="plans-list"></div>
+        </section>
+
+        <section class="view flex animate-rise flex-col gap-6" data-view-panel="stock" hidden aria-labelledby="stock-title">
+          <header class="view-head">
+            <h2 id="stock-title" class="visually-hidden">Stock</h2>
+            <p>Les matières suivies, ce qui est entré, ce qui est sorti pour chaque bon de commande, et les inventaires. On le tient en le disant au Director : « livraison de 20 panneaux MDF 18 mm à 310 DH HT », « 6 panneaux sortis pour le BC 164 », « on a compté 14 panneaux ». Une matière sous son minimum devient une alerte dans Amélioration.</p>
+            <button type="button" class="secondary" id="refresh-stock"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Rafraîchir</button>
+          </header>
+          <div id="stock-stats" class="stat-tiles stat-tiles-4" aria-live="polite"></div>
+          <div id="stock-body" class="plans-list"></div>
         </section>
 
         <section class="view flex animate-rise flex-col gap-6" data-view-panel="hr" hidden aria-labelledby="hr-title">

@@ -208,6 +208,35 @@ indicateurs du pilote. Celles qui ne sont plus vraies sont levées toutes seules
   règles en vigueur. Une alerte de gravité haute est envoyée à la direction
   par WhatsApp, comme toute anomalie grave.
 
+### Registre de stock
+
+Le registre de stock (CDC V1 section 1, V2 section 9) suit les matières que
+l'entreprise garde en stock : ce qui entre, ce qui sort pour chaque bon de
+commande, et les inventaires. Il est gardé dans `data/stock.json` et se tient
+en parlant au Director, à l'agent Achats ou à l'agent Production :
+« livraison de 20 panneaux MDF 18 mm à 300 DH HT », « 6 panneaux sortis pour
+le BC 164 », « on a compté 14 panneaux ». L'onglet **Stock** du cockpit le
+montre, en lecture.
+
+| Mouvement | Effet sur le stock |
+| --- | --- |
+| Entrée | Ajoute la quantité livrée ; le prix HT, s'il est dit, entre dans le coût moyen pondéré. |
+| Sortie | Retire la quantité, pour un BC (consommation par commande) ou hors commande (casse, perte). Refusée si elle dépasse le stock connu. |
+| Inventaire | Note la quantité comptée ; le registre enregistre l'écart. |
+
+- Le stock d'une matière est la somme de ses mouvements, jamais un chiffre
+  tapé par-dessus. Une ligne notée par erreur est annulée, pas effacée.
+- Le minimum, le fournisseur et son délai sont ceux que dit la direction.
+  Une matière sans minimum ne donne jamais d'alerte.
+- Une matière au niveau ou sous son minimum devient une alerte de
+  l'onglet Amélioration (« Alerte de stock »), confiée à l'agent Achats, avec
+  la date d'arrivée si le délai du fournisseur est connu. Plus rien en stock :
+  rupture, de gravité haute, envoyée à la direction par WhatsApp. Marquée
+  réglée (commande passée), elle ne revient pas avant que la livraison soit
+  notée.
+- Les outils : `registre_stock` et `mouvement_stock` pour Achats et Production,
+  `matiere_stock` et `annuler_mouvement_stock` pour Achats et le Director.
+
 ### Indicateurs du pilote
 
 En tête de l'onglet Amélioration, le panneau « Indicateurs du pilote » donne

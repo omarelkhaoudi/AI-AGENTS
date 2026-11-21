@@ -33,6 +33,14 @@ const TASK_MOVES = Object.freeze({
   rouvrir: ["resolue", "cloturee"]
 });
 
+// The sources whose facts sync reads, beside the workshop book: what their
+// journal says when an alert is found and when its fact is gone.
+const SOURCE_TEXTS = Object.freeze({
+  atelier: { found: "Anomalie détectée au carnet d'atelier.", gone: "Le carnet ne la signale plus : anomalie levée." },
+  commercial: { found: "Alerte commerciale relevée sur les documents émis.", gone: "Les documents ne la montrent plus : alerte levée." },
+  stock: { found: "Alerte de stock relevée au registre de stock.", gone: "Le registre de stock ne la montre plus : alerte levée." }
+});
+
 export class ImprovementError extends Error {
   constructor(message, code) {
     super(message);
@@ -67,12 +75,13 @@ function createImprovementBook({ book, clock }) {
     // anomaly gets one; an open anomaly whose step is back on track is lifted.
     // Returns the anomalies just found, for their agent to analyse.
     //
-    // The commercial alerts (commercial-alerts.js) come with it when given;
-    // only the sources given are lifted, so a read of the workshop alone
-    // never lifts a commercial alert.
-    async sync(orders, { commercial } = {}) {
-      const facts = [...workshopFacts(orders), ...(Array.isArray(commercial) ? commercial : [])];
-      const managed = new Set(["atelier", ...(Array.isArray(commercial) ? ["commercial"] : [])]);
+    // The commercial alerts (commercial-alerts.js) and the stock alerts
+    // (stock-book.js) come with it when given; only the sources given are
+    // lifted, so a read of the workshop alone never lifts one of them.
+    async sync(orders, sources = {}) {
+      const given = Object.entries(sources).filter(([source, facts]) => SOURCE_TEXTS[source] && Array.isArray(facts));
+      const facts = [...workshopFacts(orders), ...given.flatMap(([, entries]) => entries)];
+      const managed = new Set(["atelier", ...given.map(([source]) => source)]);
       return book.change((state) => {
         const at = now();
         const found = [];
@@ -82,7 +91,7 @@ function createImprovementBook({ book, clock }) {
           // same fact; once the fact is gone, a new one is a new anomaly.
           const dismissed = state.anomalies.some((entry) => entry.key === fact.key && ((entry.falseAlarm && !entry.falseAlarm.endedAt) || entry.heldUntilGone));
           if (!open && !dismissed) {
-            const anomaly = { id: randomUUID(), number: nextNumber(state.anomalies), ...fact, severity: fact.severity ?? (fact.kind === "blocage" ? "haute" : "moyenne"), status: "a_analyser", detectedAt: at, journal: [{ at, by: "director", text: fact.source === "commercial" ? "Alerte commerciale relevée sur les documents émis." : "Anomalie détectée au carnet d'atelier." }] };
+            const anomaly = { id: randomUUID(), number: nextNumber(state.anomalies), ...fact, severity: fact.severity ?? (fact.kind === "blocage" ? "haute" : "moyenne"), status: "a_analyser", detectedAt: at, journal: [{ at, by: "director", text: (SOURCE_TEXTS[fact.source] ?? SOURCE_TEXTS.atelier).found }] };
             state.anomalies.push(anomaly);
             found.push(Object.freeze({ ...anomaly }));
           }
@@ -101,7 +110,7 @@ function createImprovementBook({ book, clock }) {
           if (anomaly.status !== "levee") {
             anomaly.status = "levee";
             anomaly.liftedAt = at;
-            anomaly.journal.push({ at, by: "director", text: anomaly.source === "commercial" ? "Les documents ne la montrent plus : alerte levée." : "Le carnet ne la signale plus : anomalie levée." });
+            anomaly.journal.push({ at, by: "director", text: (SOURCE_TEXTS[anomaly.source] ?? SOURCE_TEXTS.atelier).gone });
             // A task given for it is resolved by the book; the direction
             // still confirms its closure.
             if (anomaly.task && ["ouverte", "prise_en_charge"].includes(anomaly.task.status)) {
@@ -231,9 +240,10 @@ function createImprovementBook({ book, clock }) {
           anomaly.liftedAt = at;
           anomaly.journal.push({ at, by, text: "Anomalie levée." });
         }
-        // A commercial alert dealt with stays so while the documents show the
-        // same fact (a duplicate name cannot be unwritten).
-        if (anomaly.source === "commercial") {
+        // A commercial or stock alert dealt with stays so while the documents
+        // or the register show the same fact (a duplicate name cannot be
+        // unwritten; a material ordered is still low until it arrives).
+        if (anomaly.source === "commercial" || anomaly.source === "stock") {
           anomaly.heldUntilGone = true;
         }
         if (anomaly.task && anomaly.task.status !== "cloturee") {

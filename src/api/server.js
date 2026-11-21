@@ -47,6 +47,7 @@ import { ANOMALY_STATUSES, ImprovementError, RULE_STATUSES, SEVERITIES, TASK_STA
 import { TeamBookError, createMemoryTeamBook } from "../agent/team-book.js";
 import { minutesPerMissionFromEnv, pilotIndicators, pilotPeriod } from "../agent/pilot-indicators.js";
 import { COMMERCIAL_RULE_LIMITS, commercialFacts, readCommercialRules } from "../agent/commercial-alerts.js";
+import { createMemoryStockBook, stockFacts } from "../agent/stock-book.js";
 import { orderMargins } from "../agent/business-analysis.js";
 import { SPECIALISTS, SPECIALIST_IDS } from "../agent/agent-team.js";
 import { createMemoryWhatsAppInbox } from "../agent/whatsapp-inbox.js";
@@ -145,6 +146,8 @@ export function buildApi({
   followUpBook = null,
   // The team's book: employees, absences, leave (data/rh.json for the server process).
   hrBook = null,
+  // The register of the materials in stock (data/stock.json for the server process).
+  stockBook = null,
   // The workshop profile of the dessinateur méthodes (data/atelier-profil.json).
   designProfileBook = null,
   // What the AI costs, call by call (data/couts-ia.json), or a ledger a test gives.
@@ -396,6 +399,7 @@ export function buildApi({
   });
   const followUps = followUpBook ?? createMemoryFollowUpBook({ clock });
   const hr = hrBook ?? createMemoryHrBook({ clock });
+  const stock = stockBook ?? createMemoryStockBook({ clock });
   const sellsSubscriptions = saasOperator ?? subscription === null;
   const subscriptions = subscriptionBook ?? createMemorySubscriptionBook({ clock });
   const improvementRecords = improvementBook ?? createMemoryImprovementBook({ clock });
@@ -415,10 +419,19 @@ export function buildApi({
       return undefined;
     }
   };
+  // The materials under the minimum the direction set (stock-book.js).
+  const readStockFacts = async () => {
+    try {
+      return stockFacts(await stock.overview());
+    } catch {
+      return undefined;
+    }
+  };
   const improvement = Object.freeze({
     ...improvementRecords,
     async sync(orders) {
-      const found = await improvementRecords.sync(orders, { commercial: await readCommercialFacts(orders) });
+      const [commercial, stockAlerts] = await Promise.all([readCommercialFacts(orders), readStockFacts()]);
+      const found = await improvementRecords.sync(orders, { commercial, stock: stockAlerts });
       await whatsApp.alertLeads(found, orders);
       await whatsApp.alertSevere(found);
       for (const anomaly of found.filter((entry) => entry.kind === "retard")) {
@@ -517,6 +530,7 @@ export function buildApi({
     teamBook: teamFeed,
     followUpBook: followUps,
     hrBook: hr,
+    stockBook: stock,
     documentArchive: archive,
     designProfileBook,
     aiUsage: usage,
@@ -1898,6 +1912,19 @@ export function buildApi({
           return reply.code(error.code === "HR_LEAVE_NOT_FOUND" ? 404 : 400).send({ error: error.message, code: error.code });
         }
         throw error;
+      }
+    });
+
+    // --- Stock: the register of the materials (src/agent/stock-book.js) -----
+    // Everyone signed in reads it; it is kept by speaking to the Director, to
+    // Achats or to Production. A material under its minimum is an alert in
+    // Amélioration, read afresh here.
+    app.get("/api/stock", readRouteOptions(), async (request, reply) => {
+      try {
+        await syncAnomalies(await workshop.book());
+        return { overview: await stock.overview() };
+      } catch (error) {
+        return sendDomainError(reply, "Stock register unavailable.", error);
       }
     });
 

@@ -2535,6 +2535,58 @@
     @apply mt-3;
   }
 
+  .budgets-panel h3 {
+    @apply mt-4 mb-2 text-[13px] font-semibold text-ink first:mt-0;
+  }
+
+  .budgets-panel ul {
+    @apply flex flex-col gap-3;
+  }
+
+  .budget-row-head {
+    @apply flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-[13.5px];
+  }
+
+  .budget-row-head .num {
+    @apply text-[12.5px] text-ink-2 tabular-nums;
+  }
+
+  .budget-bar {
+    @apply mt-1.5 h-1.5 overflow-hidden rounded-full bg-line;
+  }
+
+  .budget-bar > span {
+    @apply block h-full rounded-full bg-brand;
+  }
+
+  .budget-row.is-over .budget-bar > span {
+    @apply bg-warn;
+  }
+
+  .budget-cash {
+    @apply text-[13.5px] text-ink-2;
+  }
+
+  .budgets-panel > .commercial-rules {
+    @apply mt-5 border-t border-line pt-4;
+  }
+
+  .budget-form {
+    @apply mt-4 flex flex-col gap-4;
+  }
+
+  .budget-form fieldset {
+    @apply flex flex-col gap-1;
+  }
+
+  .budget-form legend {
+    @apply text-[12.5px] font-semibold text-ink;
+  }
+
+  .budget-form .commercial-rules-form {
+    @apply mt-1;
+  }
+
   .commercial-rules-form {
     @apply mt-4 flex flex-wrap items-end gap-3;
   }

@@ -38,7 +38,8 @@ const TASK_MOVES = Object.freeze({
 const SOURCE_TEXTS = Object.freeze({
   atelier: { found: "Anomalie détectée au carnet d'atelier.", gone: "Le carnet ne la signale plus : anomalie levée." },
   commercial: { found: "Alerte commerciale relevée sur les documents émis.", gone: "Les documents ne la montrent plus : alerte levée." },
-  stock: { found: "Alerte de stock relevée au registre de stock.", gone: "Le registre de stock ne la montre plus : alerte levée." }
+  stock: { found: "Alerte de stock relevée au registre de stock.", gone: "Le registre de stock ne la montre plus : alerte levée." },
+  budget: { found: "Alerte budgétaire relevée sur la caisse et les budgets de la direction.", gone: "La caisse ne la montre plus : alerte levée." }
 });
 
 export class ImprovementError extends Error {
@@ -75,9 +76,10 @@ function createImprovementBook({ book, clock }) {
     // anomaly gets one; an open anomaly whose step is back on track is lifted.
     // Returns the anomalies just found, for their agent to analyse.
     //
-    // The commercial alerts (commercial-alerts.js) and the stock alerts
-    // (stock-book.js) come with it when given; only the sources given are
-    // lifted, so a read of the workshop alone never lifts one of them.
+    // The commercial alerts (commercial-alerts.js), the stock alerts
+    // (stock-book.js) and the budget alerts (budget-book.js) come with it
+    // when given; only the sources given are lifted, so a read of the
+    // workshop alone never lifts one of them.
     async sync(orders, sources = {}) {
       const given = Object.entries(sources).filter(([source, facts]) => SOURCE_TEXTS[source] && Array.isArray(facts));
       const facts = [...workshopFacts(orders), ...given.flatMap(([, entries]) => entries)];
@@ -240,10 +242,11 @@ function createImprovementBook({ book, clock }) {
           anomaly.liftedAt = at;
           anomaly.journal.push({ at, by, text: "Anomalie levée." });
         }
-        // A commercial or stock alert dealt with stays so while the documents
-        // or the register show the same fact (a duplicate name cannot be
-        // unwritten; a material ordered is still low until it arrives).
-        if (anomaly.source === "commercial" || anomaly.source === "stock") {
+        // A commercial, stock or budget alert dealt with stays so while the
+        // documents, the register or the cash book show the same fact (a
+        // duplicate name cannot be unwritten; a material ordered is still low
+        // until it arrives).
+        if (["commercial", "stock", "budget"].includes(anomaly.source)) {
           anomaly.heldUntilGone = true;
         }
         if (anomaly.task && anomaly.task.status !== "cloturee") {

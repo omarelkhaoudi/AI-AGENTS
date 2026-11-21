@@ -48,6 +48,7 @@ import { TeamBookError, createMemoryTeamBook } from "../agent/team-book.js";
 import { minutesPerMissionFromEnv, pilotIndicators, pilotPeriod } from "../agent/pilot-indicators.js";
 import { COMMERCIAL_RULE_LIMITS, commercialFacts, readCommercialRules } from "../agent/commercial-alerts.js";
 import { createMemoryStockBook, stockFacts } from "../agent/stock-book.js";
+import { BUDGET_CATEGORIES, BudgetBookError, budgetFacts, budgetStatus, createMemoryBudgetBook } from "../agent/budget-book.js";
 import { orderMargins } from "../agent/business-analysis.js";
 import { SPECIALISTS, SPECIALIST_IDS } from "../agent/agent-team.js";
 import { createMemoryWhatsAppInbox } from "../agent/whatsapp-inbox.js";
@@ -148,6 +149,8 @@ export function buildApi({
   hrBook = null,
   // The register of the materials in stock (data/stock.json for the server process).
   stockBook = null,
+  // The direction's budgets and minimum cash (data/budgets.json for the server process).
+  budgetBook = null,
   // The workshop profile of the dessinateur méthodes (data/atelier-profil.json).
   designProfileBook = null,
   // What the AI costs, call by call (data/couts-ia.json), or a ledger a test gives.
@@ -400,6 +403,7 @@ export function buildApi({
   const followUps = followUpBook ?? createMemoryFollowUpBook({ clock });
   const hr = hrBook ?? createMemoryHrBook({ clock });
   const stock = stockBook ?? createMemoryStockBook({ clock });
+  const budgets = budgetBook ?? createMemoryBudgetBook({ clock });
   const sellsSubscriptions = saasOperator ?? subscription === null;
   const subscriptions = subscriptionBook ?? createMemorySubscriptionBook({ clock });
   const improvementRecords = improvementBook ?? createMemoryImprovementBook({ clock });
@@ -427,11 +431,20 @@ export function buildApi({
       return undefined;
     }
   };
+  // The budgets overrun and the cash forecast under the minimum (budget-book.js).
+  const readBudgetFacts = async (orders) => {
+    try {
+      const [state, entries] = await Promise.all([budgets.state(), cashRecords.entries()]);
+      return budgetFacts(budgetStatus(state, entries, orders, { today: clock() }));
+    } catch {
+      return undefined;
+    }
+  };
   const improvement = Object.freeze({
     ...improvementRecords,
     async sync(orders) {
-      const [commercial, stockAlerts] = await Promise.all([readCommercialFacts(orders), readStockFacts()]);
-      const found = await improvementRecords.sync(orders, { commercial, stock: stockAlerts });
+      const [commercial, stockAlerts, budgetAlerts] = await Promise.all([readCommercialFacts(orders), readStockFacts(), readBudgetFacts(orders)]);
+      const found = await improvementRecords.sync(orders, { commercial, stock: stockAlerts, budget: budgetAlerts });
       await whatsApp.alertLeads(found, orders);
       await whatsApp.alertSevere(found);
       for (const anomaly of found.filter((entry) => entry.kind === "retard")) {
@@ -531,6 +544,7 @@ export function buildApi({
     followUpBook: followUps,
     hrBook: hr,
     stockBook: stock,
+    budgetBook: budgets,
     documentArchive: archive,
     designProfileBook,
     aiUsage: usage,
@@ -1912,6 +1926,39 @@ export function buildApi({
           return reply.code(error.code === "HR_LEAVE_NOT_FOUND" ? 404 : 400).send({ error: error.message, code: error.code });
         }
         throw error;
+      }
+    });
+
+    // --- Budgets: the direction's, read against the cash book (budget-book.js)
+    // Everyone signed in reads them (a salary budget's amounts for the
+    // direction only); the direction alone sets them.
+    const readBudgets = async (request) => {
+      const orders = await workshop.book();
+      await syncAnomalies(orders);
+      const [state, entries] = await Promise.all([budgets.state(), cashRecords.entries()]);
+      return { status: budgetStatus(state, entries, orders, { today: clock(), confidential: seesConfidential(request) }), categories: BUDGET_CATEGORIES, canDecide: seesConfidential(request) };
+    };
+    app.get("/api/budgets", readRouteOptions(), async (request, reply) => {
+      try {
+        return await readBudgets(request);
+      } catch (error) {
+        return sendDomainError(reply, "Budgets unavailable.", error);
+      }
+    });
+
+    app.put("/api/budgets", decisionRouteOptions(), async (request, reply) => {
+      const body = request.body ?? {};
+      const map = (value) => (value && typeof value === "object" && !Array.isArray(value) ? value : undefined);
+      try {
+        const by = request.principal.userId ?? "direction";
+        await budgets.set({ monthly: map(body.monthly), orders: map(body.orders), cashFloor: body.cashFloor }, { by });
+        await teamFeed.log({ agent: "finance", kind: "equipe", text: "Budgets modifiés par la direction (cockpit).", by });
+        return await readBudgets(request);
+      } catch (error) {
+        if (error instanceof BudgetBookError) {
+          return reply.code(400).send({ error: error.message, details: { code: error.code } });
+        }
+        return sendDomainError(reply, "Budgets unavailable.", error);
       }
     });
 

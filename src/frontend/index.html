@@ -330,6 +330,40 @@
             </div>
           </header>
           <div id="cash-balance" class="cash-balance" aria-live="polite"></div>
+          <section id="budgets-panel" class="panel budgets-panel" aria-labelledby="budgets-title">
+            <div class="panel-heading">
+              <div>
+                <h2 id="budgets-title"><svg class="i" aria-hidden="true"><use href="#i-scale"/></svg>Budgets</h2>
+                <p id="budgets-hint">Ce que la direction autorise à dépenser chaque mois par catégorie, par bon de commande, et la trésorerie à garder. Un dépassement devient une alerte dans Amélioration.</p>
+              </div>
+            </div>
+            <div id="budget-lines" class="budget-lines" aria-live="polite"></div>
+            <details id="budget-settings" class="commercial-rules" hidden>
+              <summary><strong>Fixer les budgets</strong><small class="muted">un champ vide : pas de budget, pas d'alerte</small></summary>
+              <form id="budget-form" class="budget-form">
+                <fieldset>
+                  <legend>Budget du mois par catégorie</legend>
+                  <div id="budget-monthly-fields" class="commercial-rules-form"></div>
+                </fieldset>
+                <fieldset>
+                  <legend>Trésorerie</legend>
+                  <div class="commercial-rules-form">
+                    <label>Trésorerie minimale<span class="input-unit"><input name="cashFloor" type="number" min="0" step="100" inputmode="decimal" placeholder="ex. 20000"><small>DH</small></span></label>
+                  </div>
+                  <p class="muted text-[12.5px]">Sans minimum, l'alerte part quand la prévision des 15 prochains jours passe sous zéro.</p>
+                </fieldset>
+                <fieldset>
+                  <legend>Budget d'un bon de commande</legend>
+                  <div class="commercial-rules-form">
+                    <label>BC n°<input name="orderNumber" inputmode="numeric" placeholder="164" class="w-24"></label>
+                    <label>Budget de dépenses<span class="input-unit"><input name="orderBudget" type="number" min="0" step="100" inputmode="decimal" placeholder="ex. 12000"><small>DH</small></span></label>
+                  </div>
+                  <p class="muted text-[12.5px]">Les dépenses de la caisse notées avec ce numéro de BC. Le numéro avec un budget vide retire le budget de ce BC.</p>
+                </fieldset>
+                <button type="submit" class="secondary self-start">Enregistrer</button>
+              </form>
+            </details>
+          </section>
           <section id="cash-pending" class="panel cash-pending" aria-labelledby="cash-pending-title" hidden>
             <div class="panel-heading mb-4!">
               <div>

@@ -1184,6 +1184,7 @@ function localIsoDay(date = new Date()) {
 }
 
 async function refreshCash() {
+  refreshBudgets();
   try {
     const day = cashDay.value ? `?day=${encodeURIComponent(cashDay.value)}` : "";
     const response = await fetch(`/api/cash${day}`, { headers: await authHeaders() });
@@ -1719,6 +1720,88 @@ pilotPeriodForm.addEventListener("submit", (event) => {
   refreshPilot();
 });
 
+// --- Budgets (Caisse view) ----------------------------------------------------
+// The direction's budgets read against the cash book: the month by category,
+// each purchase order, and the cash forecast against the minimum. The
+// direction sets them here or by telling the Director.
+const budgetLines = document.querySelector("#budget-lines");
+const budgetSettings = document.querySelector("#budget-settings");
+const budgetForm = document.querySelector("#budget-form");
+const budgetMonthlyFields = document.querySelector("#budget-monthly-fields");
+
+budgetForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const value = (name) => budgetForm.querySelector(`[name='${name}']`)?.value ?? "";
+  const monthly = Object.fromEntries([...budgetMonthlyFields.querySelectorAll("input[data-category]")].map((input) => [input.dataset.category, input.value]));
+  const body = { monthly, cashFloor: value("cashFloor") };
+  if (value("orderNumber").trim()) {
+    body.orders = { [value("orderNumber").trim()]: value("orderBudget") };
+  }
+  try {
+    const response = await fetch("/api/budgets", { method: "PUT", headers: { "content-type": "application/json", ...(await authHeaders()) }, body: JSON.stringify(body) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error ?? "Les budgets n'ont pas été enregistrés.");
+    }
+    budgetForm.querySelector("[name='orderNumber']").value = "";
+    budgetForm.querySelector("[name='orderBudget']").value = "";
+    showToast("Budgets enregistrés : les alertes sont recalculées.");
+    renderBudgets(payload);
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+});
+
+async function refreshBudgets() {
+  try {
+    const response = await fetch("/api/budgets", { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("Impossible de charger les budgets.");
+    }
+    renderBudgets(await response.json());
+  } catch (error) {
+    budgetLines.innerHTML = card("Budgets indisponibles", escapeHtml(error.message), "warning");
+  }
+}
+
+const MONTH_NAMES = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+
+function budgetRow(label, spent, budget, percent, over, masked = false) {
+  const width = Math.min(100, Math.max(0, percent ?? (over ? 100 : 0)));
+  return `
+    <li class="budget-row ${over ? "is-over" : ""}">
+      <div class="budget-row-head"><span>${label}</span><span class="num">${masked ? "réservé à la direction" : `${formatDh(spent)} / ${formatDh(budget)}${percent !== null ? ` · ${String(percent).replace(".", ",")} %` : ""}`}${over ? ` <span class="tag warning">dépassé</span>` : ""}</span></div>
+      ${masked ? "" : `<div class="budget-bar" role="presentation"><span style="width:${width}%"></span></div>`}
+    </li>`;
+}
+
+function renderBudgets({ status, categories, canDecide }) {
+  const month = `${MONTH_NAMES[Number(status.month.slice(5, 7)) - 1]} ${status.month.slice(0, 4)}`;
+  const parts = [];
+  parts.push(status.categories.length > 0
+    ? `<h3>Mois de ${escapeHtml(month)}</h3><ul>${status.categories.map((line) => budgetRow(escapeHtml(line.label), line.spent, line.budget, line.percent, line.over, line.masked)).join("")}</ul>`
+    : `<p class="muted">Aucun budget mensuel fixé${canDecide ? " : ouvrez « Fixer les budgets » ou dites-le au Director (« budget transport 3 000 DH par mois »)" : ""}.</p>`);
+  if (status.orders.length > 0) {
+    parts.push(`<h3>Bons de commande</h3><ul>${status.orders.map((line) => budgetRow(`BC n° ${escapeHtml(line.number)}${line.client ? ` · ${escapeHtml(line.client)}` : ""}`, line.spent, line.budget, line.percent, line.over)).join("")}</ul>`);
+  }
+  const cash = status.cash;
+  parts.push(`<h3>Trésorerie</h3><p class="budget-cash ${cash.below ? "is-over" : ""}">${cash.hasBook
+    ? `Solde du jour ${formatDh(cash.balance)} · au plus bas ${formatDh(cash.lowest.balance)} le ${formatIsoDay(cash.lowest.day)} sur les ${cash.days} prochains jours · minimum ${cash.floor !== null ? formatDh(cash.floor) : "non fixé (alerte sous zéro)"}${cash.below ? ` <span class="tag warning">insuffisante</span>` : ""}`
+    : "Le journal de caisse est vide : pas encore de prévision."}</p>`);
+  budgetLines.innerHTML = parts.join("");
+  budgetSettings.hidden = !canDecide;
+  if (canDecide) {
+    const set = Object.fromEntries(status.categories.map((line) => [line.category, line.budget]));
+    budgetMonthlyFields.innerHTML = Object.entries(categories).map(([id, label]) => `
+      <label>${escapeHtml(label)}<span class="input-unit"><input data-category="${escapeHtml(id)}" type="number" min="0" step="100" inputmode="decimal" value="${set[id] ?? ""}"><small>DH</small></span></label>
+    `).join("");
+    const floor = budgetForm.querySelector("[name='cashFloor']");
+    if (document.activeElement !== floor) {
+      floor.value = cash.floor ?? "";
+    }
+  }
+}
+
 // The direction's commercial rules, which the commercial alerts follow.
 const commercialRulesForm = document.querySelector("#commercial-rules-form");
 const commercialRulesSummary = document.querySelector("#commercial-rules-summary");
@@ -1764,7 +1847,7 @@ async function refreshCommercialRules() {
 }
 
 // What each kind of anomaly is called in the cards.
-const ANOMALY_SOURCE_LABELS = Object.freeze({ commercial: "Alerte commerciale", stock: "Alerte de stock" });
+const ANOMALY_SOURCE_LABELS = Object.freeze({ commercial: "Alerte commerciale", stock: "Alerte de stock", budget: "Alerte budgétaire" });
 const ANOMALY_KIND_LABELS = Object.freeze({
   retard: "retard",
   blocage: "blocage",
@@ -1773,6 +1856,8 @@ const ANOMALY_KIND_LABELS = Object.freeze({
   marge_sous_seuil: "marge sous le seuil",
   ecart_devis_commande: "écart devis / commande",
   client_en_double: "client en double",
+  budget_depasse: "budget dépassé",
+  tresorerie_insuffisante: "trésorerie insuffisante",
   stock_sous_minimum: "stock sous le minimum",
   rupture_stock: "rupture de stock"
 });
@@ -1960,7 +2045,7 @@ function renderImprovement(data) {
   }
   const listed = improvementView.filter === "analyse" ? waiting : open;
   if ((show("open") || show("analyse")) && listed.length > 0) {
-    sections.push(improvementSection(improvementView.filter === "analyse" ? "À analyser" : "Anomalies ouvertes", "Un retard ou un blocage du carnet d'atelier, une alerte commerciale ou de stock, ou un problème signalé au Director.", listed.map((anomaly) => anomalyCard(anomaly, data.analysis)).join("")));
+    sections.push(improvementSection(improvementView.filter === "analyse" ? "À analyser" : "Anomalies ouvertes", "Un retard ou un blocage du carnet d'atelier, une alerte commerciale, de stock ou budgétaire, ou un problème signalé au Director.", listed.map((anomaly) => anomalyCard(anomaly, data.analysis)).join("")));
   }
   if (show("rules") && inForce.length > 0) {
     sections.push(improvementSection("Règles en vigueur", "Données à leur agent, et au Director, à chaque mission.", inForce.map((rule) => ruleCard(rule, anomalyOf)).join("")));
@@ -2040,7 +2125,7 @@ function anomalyCard(anomaly, canAnalyse) {
         ${anomaly.task?.status === "resolue" ? `
           <button type="button" class="primary" data-closure="${anomaly.number}:confirmer">${icon("check")}Confirmer la clôture</button>
           <button type="button" class="link-button" data-closure="${anomaly.number}:rouvrir">Rouvrir</button>` : ""}
-        ${["signalee", "commercial", "stock"].includes(anomaly.source) && !anomaly.task ? `<button type="button" class="link-button" data-lift="${anomaly.number}">Marquer réglée</button>` : ""}
+        ${["signalee", "commercial", "stock", "budget"].includes(anomaly.source) && !anomaly.task ? `<button type="button" class="link-button" data-lift="${anomaly.number}">Marquer réglée</button>` : ""}
         ${isOpenAnomaly(anomaly) && !anomaly.falseAlarm ? `<button type="button" class="link-button" data-false-alarm="${anomaly.number}">Fausse alerte</button>` : ""}
       </div>
     </article>

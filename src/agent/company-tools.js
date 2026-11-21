@@ -669,6 +669,7 @@ export async function directorBriefing({ books, workshop = null, documentService
   const waiting = state.rules.filter((rule) => rule.status === "proposee").length;
   const toAnalyse = state.anomalies.filter((anomaly) => anomaly.status === "a_analyser").length;
   const lowStock = (await books.stock?.overview().catch(() => null))?.alerts ?? [];
+  const budgetAlerts = state.anomalies.filter((anomaly) => anomaly.source === "budget" && anomaly.status !== "levee" && !anomaly.heldUntilGone);
   return [
     linked.length > 0
       ? `Responsables humains reliés aux agents : ${linked.map(([agent, member]) => `${SPECIALISTS[agent].label} → ${member.name}${member.role ? ` (${member.role})` : ""}`).join(" ; ")}.`
@@ -684,6 +685,7 @@ export async function directorBriefing({ books, workshop = null, documentService
     withoutLead.length > 0 ? `Bons de commande en cours sans chef de charge : n° ${withoutLead.slice(0, 8).join(", ")} (equipe_commande quand la direction le désigne).` : "",
     cncWaiting.length > 0 ? `${cncWaiting.length} fichier(s) CNC attendent la validation de la direction dans le cockpit (BC n° ${[...new Set(cncWaiting)].join(", ")}) : la découpe ne peut pas commencer avant.` : "",
     lowStock.length > 0 ? `Matières au niveau ou sous leur minimum au registre de stock : ${lowStock.slice(0, 8).map((item) => `${item.name} (${stockQuantity(item.onHand, item.unit)} pour un minimum de ${stockQuantity(item.minimum, item.unit)})`).join(", ")}. Signale-les dans tout point de situation ; l'agent Achats prépare la commande fournisseur (registre_stock pour le détail).` : "",
+    budgetAlerts.length > 0 ? `Alertes budgétaires ouvertes : ${budgetAlerts.slice(0, 6).map((anomaly) => anomaly.fact).join(" ")} Signale-les dans tout point de situation (budgets pour le détail).` : "",
     rulesInstruction(rules),
     waiting > 0 ? `${waiting} règle(s) d'amélioration attendent la validation de la direction (vue Amélioration du cockpit).` : "",
     toAnalyse > 0 ? `${toAnalyse} anomalie(s) restent à analyser (lister_anomalies).` : ""

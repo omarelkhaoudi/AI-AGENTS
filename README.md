@@ -237,6 +237,31 @@ montre, en lecture.
 - Les outils : `registre_stock` et `mouvement_stock` pour Achats et Production,
   `matiere_stock` et `annuler_mouvement_stock` pour Achats et le Director.
 
+### Budgets
+
+Les budgets (CDC V2 section 6) sont ceux de la direction, comparés aux
+dépenses du journal de caisse : rien n'est ressaisi. Ils sont gardés dans
+`data/budgets.json` et se fixent dans **Caisse → Budgets → Fixer les budgets**
+(direction seule) ou en le disant au Director : « budget transport 3 000 DH par
+mois », « pas plus de 12 000 DH de dépenses sur le BC 164 », « garde toujours
+20 000 DH en caisse ».
+
+| Budget | Comparé à | Alerte |
+| --- | --- | --- |
+| Du mois, par catégorie de dépense | Les sorties de la catégorie dans le mois en cours | Budget dépassé (une par catégorie et par mois) |
+| D'un bon de commande | Les sorties notées avec son numéro de BC | Budget du BC dépassé |
+| Trésorerie minimale | La prévision de trésorerie des 15 prochains jours (encaissements attendus des commandes, dépenses au rythme des 30 derniers jours) | Trésorerie insuffisante ; sans minimum fixé, quand la prévision passe sous zéro |
+
+- Un budget laissé vide n'existe pas et ne donne aucune alerte.
+- Les alertes, de gravité haute, deviennent des anomalies de l'onglet
+  Amélioration (« Alerte budgétaire ») confiées à l'agent Finance, et partent
+  à la direction par WhatsApp. Marquée réglée, une alerte ne revient pas tant
+  que la caisse montre le même fait.
+- Le budget des salaires reste confidentiel : ses montants ne sont montrés
+  qu'à la direction, et son alerte n'en cite aucun.
+- Les outils : `budgets` (lecture) pour Finance et le Director, `fixer_budget`
+  pour le Director, sur les mots de la direction.
+
 ### Indicateurs du pilote
 
 En tête de l'onglet Amélioration, le panneau « Indicateurs du pilote » donne

@@ -1847,7 +1847,7 @@ async function refreshCommercialRules() {
 }
 
 // What each kind of anomaly is called in the cards.
-const ANOMALY_SOURCE_LABELS = Object.freeze({ commercial: "Alerte commerciale", stock: "Alerte de stock", budget: "Alerte budgétaire" });
+const ANOMALY_SOURCE_LABELS = Object.freeze({ commercial: "Alerte commerciale", stock: "Alerte de stock", budget: "Alerte budgétaire", planning: "Alerte de planning" });
 const ANOMALY_KIND_LABELS = Object.freeze({
   retard: "retard",
   blocage: "blocage",
@@ -1856,6 +1856,7 @@ const ANOMALY_KIND_LABELS = Object.freeze({
   marge_sous_seuil: "marge sous le seuil",
   ecart_devis_commande: "écart devis / commande",
   client_en_double: "client en double",
+  date_promise_intenable: "date promise intenable",
   budget_depasse: "budget dépassé",
   tresorerie_insuffisante: "trésorerie insuffisante",
   stock_sous_minimum: "stock sous le minimum",
@@ -2045,7 +2046,7 @@ function renderImprovement(data) {
   }
   const listed = improvementView.filter === "analyse" ? waiting : open;
   if ((show("open") || show("analyse")) && listed.length > 0) {
-    sections.push(improvementSection(improvementView.filter === "analyse" ? "À analyser" : "Anomalies ouvertes", "Un retard ou un blocage du carnet d'atelier, une alerte commerciale, de stock ou budgétaire, ou un problème signalé au Director.", listed.map((anomaly) => anomalyCard(anomaly, data.analysis)).join("")));
+    sections.push(improvementSection(improvementView.filter === "analyse" ? "À analyser" : "Anomalies ouvertes", "Un retard ou un blocage du carnet d'atelier, une alerte commerciale, de stock, budgétaire ou de planning, ou un problème signalé au Director.", listed.map((anomaly) => anomalyCard(anomaly, data.analysis)).join("")));
   }
   if (show("rules") && inForce.length > 0) {
     sections.push(improvementSection("Règles en vigueur", "Données à leur agent, et au Director, à chaque mission.", inForce.map((rule) => ruleCard(rule, anomalyOf)).join("")));
@@ -2125,7 +2126,7 @@ function anomalyCard(anomaly, canAnalyse) {
         ${anomaly.task?.status === "resolue" ? `
           <button type="button" class="primary" data-closure="${anomaly.number}:confirmer">${icon("check")}Confirmer la clôture</button>
           <button type="button" class="link-button" data-closure="${anomaly.number}:rouvrir">Rouvrir</button>` : ""}
-        ${["signalee", "commercial", "stock", "budget"].includes(anomaly.source) && !anomaly.task ? `<button type="button" class="link-button" data-lift="${anomaly.number}">Marquer réglée</button>` : ""}
+        ${["signalee", "commercial", "stock", "budget", "planning"].includes(anomaly.source) && !anomaly.task ? `<button type="button" class="link-button" data-lift="${anomaly.number}">Marquer réglée</button>` : ""}
         ${isOpenAnomaly(anomaly) && !anomaly.falseAlarm ? `<button type="button" class="link-button" data-false-alarm="${anomaly.number}">Fausse alerte</button>` : ""}
       </div>
     </article>
@@ -3017,7 +3018,69 @@ ordersFilters.addEventListener("click", (event) => {
   }
 });
 
+// --- Charge de l'atelier (Commandes view) ---------------------------------------
+// The schedule of the open orders from the direction's step durations, and
+// whether each promised delivery holds. The direction sets the durations.
+const capacityLines = document.querySelector("#capacity-lines");
+const capacitySettings = document.querySelector("#capacity-settings");
+const capacityForm = document.querySelector("#capacity-form");
+const capacityFields = document.querySelector("#capacity-fields");
+
+capacityForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const steps = Object.fromEntries([...capacityFields.querySelectorAll("[data-step]")].map((row) => [row.dataset.step, {
+    days: row.querySelector("[name='days']").value,
+    parallel: row.querySelector("[name='parallel']").value
+  }]));
+  try {
+    const response = await fetch("/api/workshop-capacity", { method: "PUT", headers: { "content-type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ steps }) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error ?? "Les durées n'ont pas été enregistrées.");
+    }
+    showToast("Durées enregistrées : les dates promises sont recalculées.");
+    renderCapacity(payload);
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+});
+
+async function refreshCapacity() {
+  try {
+    const response = await fetch("/api/workshop-capacity", { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("Impossible de charger la charge de l'atelier.");
+    }
+    renderCapacity(await response.json());
+  } catch (error) {
+    capacityLines.innerHTML = card("Charge de l'atelier indisponible", escapeHtml(error.message), "warning");
+  }
+}
+
+const CAPACITY_VERDICTS = Object.freeze({ tenable: ["tenable", ""], intenable: ["intenable", "warning"], sans_date: ["pas de date promise", ""], inconnu: ["non estimable", ""] });
+
+function renderCapacity({ settings, schedule, steps, canDecide }) {
+  if (!schedule.configured) {
+    capacityLines.innerHTML = `<p class="muted">Aucune durée d'étape fixée : l'atelier ne peut pas encore être planifié.${canDecide ? " Ouvrez « Durée des étapes » ci-dessous, ou dites-le au Director (« l'assemblage prend 3 jours, deux commandes à la fois »)." : ""}</p>`;
+  } else if (schedule.orders.length === 0) {
+    capacityLines.innerHTML = `<p class="muted">Aucune commande en cours.</p>`;
+  } else {
+    capacityLines.innerHTML = `<div class="answer-table"><table><thead><tr><th>BC</th><th>Client</th><th>Promise le</th><th>Fin estimée</th><th>Date promise</th></tr></thead><tbody>${schedule.orders.map((entry) => {
+      const [label, tone] = CAPACITY_VERDICTS[entry.verdict];
+      return `<tr><td>n° ${escapeHtml(entry.number)}</td><td>${escapeHtml(entry.client || "—")}</td><td class="num">${entry.promised ? formatIsoDay(entry.promised) : "—"}</td><td class="num">${entry.end ? formatIsoDay(entry.end) : "—"}</td><td><span class="tag ${tone}">${escapeHtml(label)}${entry.verdict === "intenable" ? ` · ${entry.lateBy} j de trop` : ""}</span>${entry.verdict === "inconnu" ? ` <small class="muted">durée manquante : ${escapeHtml(entry.missing.join(", "))}</small>` : ""}${entry.blocked ? ` <small class="muted">étape bloquée supposée relancée aujourd'hui</small>` : ""}</td></tr>`;
+    }).join("")}</tbody></table></div>`;
+  }
+  capacitySettings.hidden = !canDecide;
+  if (canDecide && !capacitySettings.contains(document.activeElement)) {
+    capacityFields.innerHTML = Object.entries(steps).map(([id, label]) => {
+      const value = settings.steps?.[id];
+      return `<div class="capacity-row" data-step="${escapeHtml(id)}"><span>${escapeHtml(label)}</span><label><span class="input-unit"><input name="days" type="number" min="1" max="120" step="1" inputmode="numeric" value="${value?.days ?? ""}" aria-label="Jours ouvrables pour ${escapeHtml(label)}"><small>jours</small></span></label><label><span class="input-unit"><input name="parallel" type="number" min="1" max="20" step="1" inputmode="numeric" value="${value?.parallel ?? ""}" placeholder="1" aria-label="Commandes en même temps pour ${escapeHtml(label)}"><small>en même temps</small></span></label></div>`;
+    }).join("");
+  }
+}
+
 async function refreshOrders() {
+  refreshCapacity();
   try {
     const response = await fetch("/api/workshop", { headers: await authHeaders() });
     if (!response.ok) {

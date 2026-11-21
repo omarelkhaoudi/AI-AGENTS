@@ -262,6 +262,32 @@ mois », « pas plus de 12 000 DH de dépenses sur le BC 164 », « garde toujou
 - Les outils : `budgets` (lecture) pour Finance et le Director, `fixer_budget`
   pour le Director, sur les mots de la direction.
 
+### Capacité de l'atelier
+
+Une date de livraison promise est-elle tenable avec ce que l'atelier a déjà à
+faire (CDC V2 sections 5 et 9) ? La direction fixe, pour chaque étape du
+parcours, combien de jours ouvrables elle prend pour une commande et combien
+de commandes l'équipe y mène en même temps : **Commandes → Charge de l'atelier
+→ Durée des étapes** (direction seule), ou au Director : « l'assemblage prend
+3 jours, deux commandes à la fois ». Les durées sont gardées dans
+`data/capacite-atelier.json`.
+
+- Les commandes en cours sont planifiées l'une après l'autre, la date promise
+  la plus proche d'abord, sur les jours ouvrables (lundi à samedi, jours
+  fériés du registre RH exclus). Une étape en cours garde sa place pour ce
+  qu'il lui reste ; une étape bloquée est comptée comme relancée aujourd'hui.
+- Aucune durée n'est inventée : une étape sans durée laisse la fin « non
+  estimable » et dit laquelle manque.
+- Une date promise plus tôt que la fin estimée devient une anomalie de
+  l'onglet Amélioration (« Alerte de planning »), confiée à Production et
+  envoyée à la direction par WhatsApp ; elle est levée quand la promesse
+  redevient tenable.
+- Pour une nouvelle vente, Commercial et Production demandent à l'outil
+  `capacite_atelier` (« peut-on livrer avant le 20/12 ? ») : fin estimée, date
+  tenable ou non, et les commandes qu'elle ferait manquer. Le Director fixe les
+  durées avec `fixer_capacite_atelier`. C'est une estimation, que l'atelier
+  confirme avant de promettre.
+
 ### Indicateurs du pilote
 
 En tête de l'onglet Amélioration, le panneau « Indicateurs du pilote » donne

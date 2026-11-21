@@ -30,6 +30,8 @@ import { createMemoryStockBook } from "./stock-book.js";
 import { DIRECTOR_STOCK_TOOLS, STOCK_TOOL_NAMES, runStockTool, stockTools } from "./stock-tools.js";
 import { createMemoryBudgetBook } from "./budget-book.js";
 import { BUDGET_TOOL_NAMES, DIRECTOR_BUDGET_TOOLS, budgetTools, runBudgetTool } from "./budget-tools.js";
+import { createMemoryCapacityBook } from "./workshop-capacity.js";
+import { CAPACITY_TOOL_NAMES, DIRECTOR_CAPACITY_TOOLS, capacityTools, runCapacityTool } from "./capacity-tools.js";
 import { ANALYSIS_TOOL_NAMES, FORECAST_TOOL, MARGINS_TOOL, analysisTools, runAnalysisTool } from "./analysis-tools.js";
 import {
   ANOMALIES_TOOL,
@@ -585,6 +587,7 @@ const TOOLS = Object.freeze([
   ...DIRECTOR_HR_TOOLS,
   ...DIRECTOR_STOCK_TOOLS,
   ...DIRECTOR_BUDGET_TOOLS,
+  ...DIRECTOR_CAPACITY_TOOLS,
   {
     type: "function",
     name: "point_entreprise",
@@ -686,7 +689,7 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, hrBook = undefined, stockBook = undefined, budgetBook = undefined, documentArchive = undefined, designProfileBook = null, aiUsage = null, social = null, agentConfig = null, automation = null, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, hrBook = undefined, stockBook = undefined, budgetBook = undefined, capacityBook = undefined, documentArchive = undefined, designProfileBook = null, aiUsage = null, social = null, agentConfig = null, automation = null, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
@@ -694,7 +697,7 @@ export function createDirectorAgentFromEnv({ env = process.env, documentService,
   // The dessinateur méthodes' engine runs with the Python of DESSINATEUR_PYTHON.
   const python = defaultPython(env);
   const designOffice = createDesignOffice({ book: designProfileBook ?? createMemoryDesignProfileBook(), engine: (request) => runEngine(request, { python }) });
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, hrBook, stockBook, budgetBook, documentArchive, designOffice, aiUsage, social, agentConfig, automation, autoAnalyse, publicBaseUrl, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, hrBook, stockBook, budgetBook, capacityBook, documentArchive, designOffice, aiUsage, social, agentConfig, automation, autoAnalyse, publicBaseUrl, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -721,6 +724,8 @@ export function createDirectorAgent({
   stockBook = null,
   // The direction's budgets and minimum cash (data/budgets.json).
   budgetBook = null,
+  // The workshop's step durations and capacity (data/capacite-atelier.json).
+  capacityBook = null,
   // The register of the documents issued; read only from documentService
   // when not given.
   documentArchive = null,
@@ -754,7 +759,8 @@ export function createDirectorAgent({
     followUps: followUpBook ?? createMemoryFollowUpBook({ clock }),
     hr: hrBook ?? createMemoryHrBook({ clock }),
     stock: stockBook ?? createMemoryStockBook({ clock }),
-    budget: budgetBook ?? createMemoryBudgetBook({ clock })
+    budget: budgetBook ?? createMemoryBudgetBook({ clock }),
+    capacity: capacityBook ?? createMemoryCapacityBook({ clock })
   });
   const configured = () => Boolean(client) || apiKey !== "";
   // The context every tool runs in; a turn adds its own outcome and user.
@@ -1117,6 +1123,9 @@ async function runTool(call, context) {
     }
     if (HR_TOOL_NAMES.includes(call.name)) {
       return await runHrTool(call.name, args, context, context.userId ?? "director");
+    }
+    if (CAPACITY_TOOL_NAMES.includes(call.name)) {
+      return await runCapacityTool(call.name, args, context, context.userId ?? "director");
     }
     if (BUDGET_TOOL_NAMES.includes(call.name)) {
       return await runBudgetTool(call.name, args, context, context.userId ?? "director");
@@ -2133,7 +2142,7 @@ function agentToolParams(agentId, context) {
     agentId,
     extraTools: [
       ...(context.agentConfig ? configTools(context, agentId) : []),
-      ...(books ? [...(agentId === "finance" ? [...cashTools(context, agentId), ...analysisTools(context)] : []), ...(agentId === "commercial" ? salesTools(context, agentId) : []), ...(agentId === "hr" ? hrTools(context, agentId) : []), ...stockTools(context, agentId), ...budgetTools(context, agentId), ...improvementTools(context, agentId)] : []),
+      ...(books ? [...(agentId === "finance" ? [...cashTools(context, agentId), ...analysisTools(context)] : []), ...(agentId === "commercial" ? salesTools(context, agentId) : []), ...(agentId === "hr" ? hrTools(context, agentId) : []), ...stockTools(context, agentId), ...budgetTools(context, agentId), ...capacityTools(context, agentId), ...improvementTools(context, agentId)] : []),
       ...(context.social ? socialTools(context, agentId) : []),
       ...(SPECIALISTS[agentId].keepsRegister ? [{ tool: SEARCH_DOCUMENT_TOOL, run: (searchArgs) => searchDocument(searchArgs, context) }] : []),
       ...(SPECIALISTS[agentId].coordinatesDesign ? [{ tool: DESIGN_DELEGATE_TOOL, run: async (args) => {

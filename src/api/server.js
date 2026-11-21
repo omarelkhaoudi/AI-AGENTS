@@ -49,6 +49,7 @@ import { minutesPerMissionFromEnv, pilotIndicators, pilotPeriod } from "../agent
 import { COMMERCIAL_RULE_LIMITS, commercialFacts, readCommercialRules } from "../agent/commercial-alerts.js";
 import { createMemoryStockBook, stockFacts } from "../agent/stock-book.js";
 import { BUDGET_CATEGORIES, BudgetBookError, budgetFacts, budgetStatus, createMemoryBudgetBook } from "../agent/budget-book.js";
+import { CapacityError, STEP_LABELS as CAPACITY_STEP_LABELS, capacityFacts, createMemoryCapacityBook, workshopSchedule } from "../agent/workshop-capacity.js";
 import { orderMargins } from "../agent/business-analysis.js";
 import { SPECIALISTS, SPECIALIST_IDS } from "../agent/agent-team.js";
 import { createMemoryWhatsAppInbox } from "../agent/whatsapp-inbox.js";
@@ -151,6 +152,8 @@ export function buildApi({
   stockBook = null,
   // The direction's budgets and minimum cash (data/budgets.json for the server process).
   budgetBook = null,
+  // The workshop's step durations and capacity (data/capacite-atelier.json for the server process).
+  capacityBook = null,
   // The workshop profile of the dessinateur méthodes (data/atelier-profil.json).
   designProfileBook = null,
   // What the AI costs, call by call (data/couts-ia.json), or a ledger a test gives.
@@ -404,6 +407,7 @@ export function buildApi({
   const hr = hrBook ?? createMemoryHrBook({ clock });
   const stock = stockBook ?? createMemoryStockBook({ clock });
   const budgets = budgetBook ?? createMemoryBudgetBook({ clock });
+  const capacity = capacityBook ?? createMemoryCapacityBook({ clock });
   const sellsSubscriptions = saasOperator ?? subscription === null;
   const subscriptions = subscriptionBook ?? createMemorySubscriptionBook({ clock });
   const improvementRecords = improvementBook ?? createMemoryImprovementBook({ clock });
@@ -440,11 +444,24 @@ export function buildApi({
       return undefined;
     }
   };
+  // The workshop's schedule from the direction's step durations, with the
+  // public holidays of the RH book (workshop-capacity.js).
+  const readSchedule = async (orders) => {
+    const [settings, team] = await Promise.all([capacity.state(), hr.state()]);
+    return { settings, schedule: workshopSchedule(orders, settings, { today: clock(), holidays: team.holidays ?? [] }) };
+  };
+  const readCapacityFacts = async (orders) => {
+    try {
+      return capacityFacts((await readSchedule(orders)).schedule);
+    } catch {
+      return undefined;
+    }
+  };
   const improvement = Object.freeze({
     ...improvementRecords,
     async sync(orders) {
-      const [commercial, stockAlerts, budgetAlerts] = await Promise.all([readCommercialFacts(orders), readStockFacts(), readBudgetFacts(orders)]);
-      const found = await improvementRecords.sync(orders, { commercial, stock: stockAlerts, budget: budgetAlerts });
+      const [commercial, stockAlerts, budgetAlerts, planning] = await Promise.all([readCommercialFacts(orders), readStockFacts(), readBudgetFacts(orders), readCapacityFacts(orders)]);
+      const found = await improvementRecords.sync(orders, { commercial, stock: stockAlerts, budget: budgetAlerts, planning });
       await whatsApp.alertLeads(found, orders);
       await whatsApp.alertSevere(found);
       for (const anomaly of found.filter((entry) => entry.kind === "retard")) {
@@ -545,6 +562,7 @@ export function buildApi({
     hrBook: hr,
     stockBook: stock,
     budgetBook: budgets,
+    capacityBook: capacity,
     documentArchive: archive,
     designProfileBook,
     aiUsage: usage,
@@ -1926,6 +1944,36 @@ export function buildApi({
           return reply.code(error.code === "HR_LEAVE_NOT_FOUND" ? 404 : 400).send({ error: error.message, code: error.code });
         }
         throw error;
+      }
+    });
+
+    // --- Capacity of the workshop (workshop-capacity.js) ----------------------
+    // Everyone signed in reads the schedule; the direction sets the durations.
+    const readCapacity = async (request) => {
+      const orders = await workshop.book();
+      await syncAnomalies(orders);
+      const { settings, schedule } = await readSchedule(orders);
+      return { settings, schedule, steps: CAPACITY_STEP_LABELS, canDecide: seesConfidential(request) };
+    };
+    app.get("/api/workshop-capacity", readRouteOptions(), async (request, reply) => {
+      try {
+        return await readCapacity(request);
+      } catch (error) {
+        return sendDomainError(reply, "Workshop capacity unavailable.", error);
+      }
+    });
+
+    app.put("/api/workshop-capacity", decisionRouteOptions(), async (request, reply) => {
+      const steps = request.body?.steps;
+      try {
+        await capacity.set(steps && typeof steps === "object" && !Array.isArray(steps) ? steps : {}, { by: request.principal.userId ?? "direction" });
+        await teamFeed.log({ agent: "production", kind: "equipe", text: "Durées des étapes de l'atelier modifiées par la direction (cockpit).", by: request.principal.userId ?? "direction" });
+        return await readCapacity(request);
+      } catch (error) {
+        if (error instanceof CapacityError) {
+          return reply.code(400).send({ error: error.message, details: { code: error.code } });
+        }
+        return sendDomainError(reply, "Workshop capacity unavailable.", error);
       }
     });
 

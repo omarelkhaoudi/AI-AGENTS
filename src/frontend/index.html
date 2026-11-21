@@ -314,6 +314,22 @@
             <p>Chaque bon de commande validé, de l'étude technique à l'installation. L'avancement compte les étapes terminées : changez-les ici, ou dites simplement au Director ce qui a avancé.</p>
             <button type="button" class="secondary" id="refresh-orders"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Rafraîchir</button>
           </header>
+          <section id="capacity-panel" class="panel budgets-panel" aria-labelledby="capacity-title">
+            <div class="panel-heading">
+              <div>
+                <h2 id="capacity-title"><svg class="i" aria-hidden="true"><use href="#i-clock"/></svg>Charge de l'atelier</h2>
+                <p>La fin estimée de chaque commande, d'après la durée de chaque étape que vous fixez, et si la date de livraison promise est tenable. Une estimation à faire confirmer par l'atelier. Pour une nouvelle vente, demandez au Director : « peut-on livrer avant le 20/12 ? »</p>
+              </div>
+            </div>
+            <div id="capacity-lines" aria-live="polite"></div>
+            <details id="capacity-settings" class="commercial-rules" hidden>
+              <summary><strong>Durée des étapes</strong><small class="muted">jours ouvrables pour une commande ; une étape sans durée laisse l'estimation inconnue</small></summary>
+              <form id="capacity-form" class="budget-form">
+                <div id="capacity-fields" class="capacity-fields"></div>
+                <button type="submit" class="secondary self-start">Enregistrer</button>
+              </form>
+            </details>
+          </section>
           <div id="orders-filters" class="stat-tiles" role="group" aria-label="Filtrer les commandes"></div>
           <div id="orders-list" class="plans-list"></div>
         </section>

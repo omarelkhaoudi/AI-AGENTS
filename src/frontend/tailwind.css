@@ -2583,6 +2583,38 @@
     @apply max-sm:col-span-2;
   }
 
+  .reports-settings {
+    @apply flex flex-col gap-2;
+  }
+
+  .report-kind {
+    @apply flex flex-wrap items-center justify-between gap-2;
+  }
+
+  .reports-list {
+    @apply mt-4 flex flex-col gap-2 empty:hidden;
+  }
+
+  .reports-heading {
+    @apply text-[13px] font-semibold text-ink;
+  }
+
+  .report-entry {
+    @apply rounded-xl border border-line px-4 py-3;
+  }
+
+  .report-entry > summary {
+    @apply flex cursor-pointer list-none flex-wrap items-baseline gap-x-3 gap-y-1;
+  }
+
+  .report-entry h3 {
+    @apply mt-3 mb-1 text-[13px] font-semibold text-ink;
+  }
+
+  .report-entry ul {
+    @apply flex list-disc flex-col gap-1 pl-5 text-[13px] text-ink-2;
+  }
+
   .budget-form {
     @apply mt-4 flex flex-col gap-4;
   }

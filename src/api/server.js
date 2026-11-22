@@ -48,6 +48,7 @@ import { TeamBookError, createMemoryTeamBook } from "../agent/team-book.js";
 import { minutesPerMissionFromEnv, pilotIndicators, pilotPeriod } from "../agent/pilot-indicators.js";
 import { COMMERCIAL_RULE_LIMITS, commercialFacts, readCommercialRules } from "../agent/commercial-alerts.js";
 import { createMemoryStockBook, stockFacts } from "../agent/stock-book.js";
+import { REPORT_KINDS, ReportError, composeReport, createMemoryReportBook, reportDue, reportPeriod } from "../agent/periodic-reports.js";
 import { BUDGET_CATEGORIES, BudgetBookError, budgetFacts, budgetStatus, createMemoryBudgetBook } from "../agent/budget-book.js";
 import { CapacityError, STEP_LABELS as CAPACITY_STEP_LABELS, capacityFacts, createMemoryCapacityBook, workshopSchedule } from "../agent/workshop-capacity.js";
 import { orderMargins } from "../agent/business-analysis.js";
@@ -152,6 +153,8 @@ export function buildApi({
   stockBook = null,
   // The direction's budgets and minimum cash (data/budgets.json for the server process).
   budgetBook = null,
+  // The direction's scheduled reports and their settings (data/rapports.json).
+  reportBook = null,
   // The workshop's step durations and capacity (data/capacite-atelier.json for the server process).
   capacityBook = null,
   // The workshop profile of the dessinateur méthodes (data/atelier-profil.json).
@@ -408,6 +411,7 @@ export function buildApi({
   const stock = stockBook ?? createMemoryStockBook({ clock });
   const budgets = budgetBook ?? createMemoryBudgetBook({ clock });
   const capacity = capacityBook ?? createMemoryCapacityBook({ clock });
+  const reports = reportBook ?? createMemoryReportBook({ clock });
   const sellsSubscriptions = saasOperator ?? subscription === null;
   const subscriptions = subscriptionBook ?? createMemorySubscriptionBook({ clock });
   const improvementRecords = improvementBook ?? createMemoryImprovementBook({ clock });
@@ -449,6 +453,28 @@ export function buildApi({
   const readSchedule = async (orders) => {
     const [settings, team] = await Promise.all([capacity.state(), hr.state()]);
     return { settings, schedule: workshopSchedule(orders, settings, { today: clock(), holidays: team.holidays ?? [] }) };
+  };
+  // What the direction's reports are made of, read afresh each time
+  // (periodic-reports.js).
+  const readReportData = async () => {
+    const [issued, state, entries, orders, team, improvementState, overview, pending, settings] = await Promise.all([
+      hkidsDocuments.listIssued().catch(() => []),
+      followUps.state(),
+      cashRecords.entries(),
+      workshop.book().catch(() => []),
+      hr.state(),
+      improvementRecords.state(),
+      stock.overview().catch(() => null),
+      cashRecords.pending({ confidential: true }).catch(() => null),
+      capacity.state()
+    ]);
+    const holidays = team.holidays ?? [];
+    const schedule = workshopSchedule(orders, settings, { today: clock(), holidays });
+    return { holidays, data: { issued, followUps: state, followUpDays: followUps.days, entries, orders, schedule, anomalies: improvementState.anomalies, stockAlerts: overview?.alerts ?? [], pending } };
+  };
+  const periodicReport = async (kind) => {
+    const { holidays, data } = await readReportData();
+    return composeReport(kind, reportPeriod(kind, clock(), holidays), data, { today: clock() });
   };
   const readCapacityFacts = async (orders) => {
     try {
@@ -563,6 +589,7 @@ export function buildApi({
     stockBook: stock,
     budgetBook: budgets,
     capacityBook: capacity,
+    periodicReport,
     documentArchive: archive,
     designProfileBook,
     aiUsage: usage,
@@ -673,6 +700,33 @@ export function buildApi({
     const fresh = await followUps.claimReminders(dueReminders(pipeline));
     await whatsApp.remindFollowUps(fresh.map((reminder) => reminder.quote), { days: followUps.days });
     return fresh;
+  });
+
+  // The direction's reports, on the timer during working hours: each kind
+  // turned on and due today is composed once for its period, kept for the
+  // cockpit and sent to the direction on WhatsApp when the number is set.
+  app.decorate("sweepReports", async () => {
+    if (!workingHours(clock())) {
+      return [];
+    }
+    const { settings } = await reports.state();
+    const { holidays, data } = await readReportData();
+    const sent = [];
+    for (const kind of Object.keys(REPORT_KINDS)) {
+      if (!settings[kind] || !reportDue(kind, clock(), holidays)) {
+        continue;
+      }
+      const report = composeReport(kind, reportPeriod(kind, clock(), holidays), data, { today: clock() });
+      if (!(await reports.keep(report))) {
+        continue;
+      }
+      if (whatsApp.configured) {
+        await whatsApp.tellDirection(report.text);
+        await reports.markSent(report.key, "whatsapp");
+      }
+      sent.push(report.key);
+    }
+    return sent;
   });
 
   // C1 - Edge. The limiter is global and runs BEFORE authentication, so an
@@ -2007,6 +2061,47 @@ export function buildApi({
           return reply.code(400).send({ error: error.message, details: { code: error.code } });
         }
         return sendDomainError(reply, "Budgets unavailable.", error);
+      }
+    });
+
+    // --- Rapports: the direction's scheduled reports (periodic-reports.js) ---
+    // The direction alone reads them, turns each kind on or off, and sees the
+    // report of a period now without sending it.
+    const readReports = async () => {
+      const state = await reports.state();
+      return { settings: state.settings, kinds: REPORT_KINDS, reports: (state.reports ?? []).slice(0, 60), whatsApp: whatsApp.configured };
+    };
+    app.get("/api/reports", decisionRouteOptions(), async (request, reply) => {
+      try {
+        return await readReports();
+      } catch (error) {
+        return sendDomainError(reply, "Reports unavailable.", error);
+      }
+    });
+
+    app.put("/api/reports", decisionRouteOptions(), async (request, reply) => {
+      try {
+        const by = request.principal.userId ?? "direction";
+        await reports.setSettings(request.body?.settings ?? {}, { by });
+        await teamFeed.log({ agent: "director", kind: "equipe", text: "Rapports programmés modifiés par la direction (cockpit).", by });
+        return await readReports();
+      } catch (error) {
+        if (error instanceof ReportError) {
+          return reply.code(400).send({ error: error.message, details: { code: error.code } });
+        }
+        return sendDomainError(reply, "Reports unavailable.", error);
+      }
+    });
+
+    app.post("/api/reports/preview", decisionRouteOptions(), async (request, reply) => {
+      const kind = String(request.body?.kind ?? "");
+      if (!REPORT_KINDS[kind]) {
+        return reply.code(400).send({ error: `Rapport inconnu : « ${kind} ».`, details: { code: "REPORT_KIND_UNKNOWN" } });
+      }
+      try {
+        return { report: await periodicReport(kind) };
+      } catch (error) {
+        return sendDomainError(reply, "Reports unavailable.", error);
       }
     });
 

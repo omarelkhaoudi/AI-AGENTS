@@ -14,6 +14,7 @@ import { createFileHrBook } from "./agent/hr-book.js";
 import { createFileStockBook } from "./agent/stock-book.js";
 import { createFileBudgetBook } from "./agent/budget-book.js";
 import { createFileCapacityBook } from "./agent/workshop-capacity.js";
+import { createFileReportBook } from "./agent/periodic-reports.js";
 import { createFileSubscriptionBook } from "./agent/subscription-book.js";
 import { createFileImprovementBook } from "./agent/improvement-book.js";
 import { createFileFollowUpBook } from "./agent/sales-book.js";
@@ -99,6 +100,7 @@ const automationBook = createFileAutomationBook();
 const hrBook = createFileHrBook();
 const stockBook = createFileStockBook();
 const budgetBook = createFileBudgetBook();
+const reportBook = createFileReportBook();
 const capacityBook = createFileCapacityBook();
 // The client companies' subscriptions, when this cockpit sells them (data/abonnements.json).
 const subscriptionBook = createFileSubscriptionBook();
@@ -107,7 +109,7 @@ const subscriptionBook = createFileSubscriptionBook();
 // DocumentsH-KIDS Administratif unless HKIDS_ARCHIVE_DIR says where.
 const archiveDir = process.env.HKIDS_ARCHIVE_DIR?.trim() || DEFAULT_ARCHIVE_DIR;
 
-const app = buildApi({ repository, companyId: process.env.HKIDS_COMPANY_ID?.trim() || "hkids", config, toolRegistry, planStore, conversationStore, workshopStore, designProfileBook, aiUsageBook, cashBook, improvementBook, teamBook, followUpBook, hrBook, stockBook, budgetBook, capacityBook, subscriptionBook, autoAnalyseAnomalies, whatsAppStore, socialStore, agentConfigStore, automationBook, archiveDir });
+const app = buildApi({ repository, companyId: process.env.HKIDS_COMPANY_ID?.trim() || "hkids", config, toolRegistry, planStore, conversationStore, workshopStore, designProfileBook, aiUsageBook, cashBook, improvementBook, teamBook, followUpBook, hrBook, stockBook, budgetBook, capacityBook, reportBook, subscriptionBook, autoAnalyseAnomalies, whatsAppStore, socialStore, agentConfigStore, automationBook, archiveDir });
 
 // Every half hour, the workshop book is read for steps that became late, and
 // the quotes for follow-ups that became due.
@@ -116,6 +118,7 @@ const sweep = setInterval(() => {
   app.sweepFollowUps().catch((error) => app.log.error(error));
   app.sweepTasks().catch((error) => app.log.error(error));
   app.sweepSubscriptions().catch((error) => app.log.error(error));
+  app.sweepReports().catch((error) => app.log.error(error));
   app.syncArchive();
 }, 30 * 60 * 1000);
 sweep.unref();

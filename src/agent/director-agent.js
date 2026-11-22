@@ -590,6 +590,17 @@ const TOOLS = Object.freeze([
   ...DIRECTOR_CAPACITY_TOOLS,
   {
     type: "function",
+    name: "rapport_periodique",
+    description: "Le rapport de la direction pour la dernière période close, composé des livres du cockpit : jour (la veille ouvrable ; un lundi couvre samedi et dimanche), semaine (lundi à dimanche précédents), mois (le mois précédent). Ventes (CA commandé, facturé et encaissé séparés, devis, transformation, relances), caisse, atelier, à traiter. Le même que celui envoyé automatiquement le matin. Réservé à la direction.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: { periode: { type: "string", enum: ["jour", "semaine", "mois"] } },
+      required: ["periode"]
+    }
+  },
+  {
+    type: "function",
     name: "point_entreprise",
     description: "Interroge l'équipe d'agents (commercial, finance, production, achats, RH, marketing, SAV, juridique) et renvoie la situation : ce qui va bien, retards, encaissements, achats, risques, décisions. À utiliser pour toute question sur l'état de l'entreprise.",
     parameters: {
@@ -689,7 +700,7 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, hrBook = undefined, stockBook = undefined, budgetBook = undefined, capacityBook = undefined, documentArchive = undefined, designProfileBook = null, aiUsage = null, social = null, agentConfig = null, automation = null, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, hrBook = undefined, stockBook = undefined, budgetBook = undefined, capacityBook = undefined, periodicReport = null, documentArchive = undefined, designProfileBook = null, aiUsage = null, social = null, agentConfig = null, automation = null, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
@@ -697,7 +708,7 @@ export function createDirectorAgentFromEnv({ env = process.env, documentService,
   // The dessinateur méthodes' engine runs with the Python of DESSINATEUR_PYTHON.
   const python = defaultPython(env);
   const designOffice = createDesignOffice({ book: designProfileBook ?? createMemoryDesignProfileBook(), engine: (request) => runEngine(request, { python }) });
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, hrBook, stockBook, budgetBook, capacityBook, documentArchive, designOffice, aiUsage, social, agentConfig, automation, autoAnalyse, publicBaseUrl, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, hrBook, stockBook, budgetBook, capacityBook, periodicReport, documentArchive, designOffice, aiUsage, social, agentConfig, automation, autoAnalyse, publicBaseUrl, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -726,6 +737,9 @@ export function createDirectorAgent({
   budgetBook = null,
   // The workshop's step durations and capacity (data/capacite-atelier.json).
   capacityBook = null,
+  // Composes the direction's report of a period (periodic-reports.js):
+  // (kind) => report; none in a test that does not ask for it.
+  periodicReport = null,
   // The register of the documents issued; read only from documentService
   // when not given.
   documentArchive = null,
@@ -784,6 +798,7 @@ export function createDirectorAgent({
     agentConfig,
     automation,
     books,
+    periodicReport,
     onNewAnomalies: (found) => queueAnalyses(found)
   });
   const freshOutcome = (photos = []) => ({ documents: [], found: [], exports: [], directorResponse: null, agentRuns: [], messages: [], plan: null, planId: null, alerts: null, photos });
@@ -1123,6 +1138,16 @@ async function runTool(call, context) {
     }
     if (HR_TOOL_NAMES.includes(call.name)) {
       return await runHrTool(call.name, args, context, context.userId ?? "director");
+    }
+    if (call.name === "rapport_periodique") {
+      if (context.confidential) {
+        return { ok: false, erreur: "Le rapport de la direction est réservé à la direction." };
+      }
+      if (!context.periodicReport) {
+        return { ok: false, erreur: "Les rapports ne sont pas disponibles : je n'ai pas l'information." };
+      }
+      const report = await context.periodicReport(args.periode);
+      return { ok: true, source: "livres du cockpit (documents émis, journal de caisse, carnet d'atelier, Amélioration, stock)", rapport: report.text };
     }
     if (CAPACITY_TOOL_NAMES.includes(call.name)) {
       return await runCapacityTool(call.name, args, context, context.userId ?? "director");

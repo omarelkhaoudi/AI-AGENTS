@@ -288,6 +288,33 @@ de commandes l'équipe y mène en même temps : **Commandes → Charge de l'atel
   durées avec `fixer_capacite_atelier`. C'est une estimation, que l'atelier
   confirme avant de promettre.
 
+### Rapports de la direction
+
+Les rapports programmés (CDC V2 sections 5 et 6) sont composés des livres du
+cockpit seulement : documents émis, relances, journal de caisse, carnet
+d'atelier, charge de l'atelier, Amélioration et stock. Un chiffre que les
+livres n'ont pas est dit manquant, jamais deviné.
+
+| Rapport | Envoyé | Couvre |
+| --- | --- | --- |
+| Du jour | Chaque matin ouvrable, à partir de 8 h | La veille ouvrable (le lundi : samedi et dimanche) |
+| De la semaine | Le premier jour ouvrable de la semaine | Lundi à dimanche précédents |
+| Du mois | Le premier jour ouvrable du mois | Le mois précédent |
+
+- Chaque rapport donne les ventes (devis émis, CA commandé, CA facturé moins
+  les avoirs, CA encaissé d'après les acomptes, soldes et ventes au comptant de
+  la caisse, taux de transformation, devis à relancer), la caisse (entrées,
+  sorties, solde), l'atelier (commandes en cours,
+  livrées, en retard, bloquées, dates promises intenables) et ce qui reste à
+  traiter (anomalies, tâches en retard, stock, budgets, justificatifs manquants). Un salaire est compté
+  dans les totaux, jamais nommé.
+- Il est gardé dans `data/rapports.json` et visible dans **Briefing → Rapports
+  de la direction** (direction seule), et envoyé à la direction sur WhatsApp
+  quand le numéro est connecté ; jamais deux fois pour la même période.
+- La direction active ou arrête chaque rapport, et peut en voir un tout de
+  suite sans l'envoyer (« Voir maintenant »), ou le demander au Director
+  (outil `rapport_periodique`).
+
 ### Indicateurs du pilote
 
 En tête de l'onglet Amélioration, le panneau « Indicateurs du pilote » donne

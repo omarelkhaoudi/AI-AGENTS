@@ -242,6 +242,19 @@
             <div id="overview" class="overview-grid"></div>
           </section>
 
+          <!-- The direction's scheduled reports: the direction alone sees them. -->
+          <section id="reports-panel" class="panel reports-panel" aria-labelledby="reports-title" hidden>
+            <div class="panel-heading">
+              <div>
+                <h2 id="reports-title"><svg class="i" aria-hidden="true"><use href="#i-history"/></svg>Rapports de la direction</h2>
+                <p>Composés des livres du cockpit : documents émis, journal de caisse, carnet d'atelier, Amélioration et stock. Le CA commandé, facturé et encaissé y sont séparés.</p>
+              </div>
+            </div>
+            <form id="reports-form" class="reports-settings" aria-label="Rapports programmés"></form>
+            <div id="reports-preview" class="reports-list" aria-live="polite"></div>
+            <div id="reports-list" class="reports-list"></div>
+          </section>
+
           <!-- The report of a "point entreprise": shown once there is one. -->
           <div id="briefing-report" class="flex flex-col gap-6 [&>*]:min-w-0" hidden>
           <div class="director-layout grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">

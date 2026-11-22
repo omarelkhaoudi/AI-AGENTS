@@ -5472,6 +5472,84 @@ async function applyCompanyPaymentPlans() {
   }
 }
 
+// --- Rapports de la direction (Briefing view) -------------------------------
+// The reports sent each working morning, each Monday and each first working
+// day of a month, composed by the server from the books. The direction alone
+// sees them, turns each on or off, and looks at one now without sending it.
+const reportsPanel = document.querySelector("#reports-panel");
+const reportsForm = document.querySelector("#reports-form");
+const reportsPreview = document.querySelector("#reports-preview");
+const reportsList = document.querySelector("#reports-list");
+const REPORT_WHEN = Object.freeze({ jour: "chaque matin ouvrable, sur la veille", semaine: "le lundi, sur la semaine passée", mois: "le premier jour ouvrable, sur le mois passé" });
+
+function reportHtml(report, { open = false, meta = "" } = {}) {
+  return `<details class="report-entry"${open ? " open" : ""}><summary><strong>${escapeHtml(report.title)}</strong>${meta ? `<small class="muted">${escapeHtml(meta)}</small>` : ""}</summary>${report.sections.map((section) => `<h3>${escapeHtml(section.title)}</h3><ul>${section.lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`).join("")}</details>`;
+}
+
+async function refreshReports() {
+  try {
+    const response = await fetch("/api/reports", { headers: await authHeaders() });
+    if (response.status === 401 || response.status === 403) {
+      reportsPanel.hidden = true;
+      return;
+    }
+    if (!response.ok) {
+      throw new Error("Impossible de charger les rapports.");
+    }
+    renderReports(await response.json());
+  } catch (error) {
+    reportsPanel.hidden = false;
+    reportsList.innerHTML = card("Rapports indisponibles", escapeHtml(error.message), "warning");
+  }
+}
+
+function renderReports({ settings, kinds, reports, whatsApp }) {
+  reportsPanel.hidden = false;
+  reportsForm.innerHTML = `${Object.entries(kinds).map(([kind, label]) => `<div class="report-kind"><label class="cash-confidential"><input type="checkbox" name="${escapeHtml(kind)}"${settings[kind] ? " checked" : ""}><span>${escapeHtml(label)} <small>${REPORT_WHEN[kind] ?? ""}</small></span></label><button type="button" class="secondary" data-report-preview="${escapeHtml(kind)}">Voir maintenant</button></div>`).join("")}<p class="muted text-[12.5px]">${whatsApp ? "Envoyés à la direction sur WhatsApp, à partir de 8 h, et gardés ici." : "WhatsApp n'est pas connecté : les rapports sont gardés ici, à partir de 8 h."}</p>`;
+  reportsList.innerHTML = reports.length === 0
+    ? `<p class="muted">Aucun rapport envoyé pour l'instant : le premier part au prochain matin ouvrable, à partir de 8 h.</p>`
+    : `<h3 class="reports-heading">Envoyés</h3>${reports.map((report) => reportHtml(report, { meta: `${formatStamp(report.at)} · ${report.sentBy === "whatsapp" ? "WhatsApp et cockpit" : "cockpit"}` })).join("")}`;
+}
+
+reportsForm.addEventListener("change", async (event) => {
+  const input = event.target;
+  if (!input.matches("input[type='checkbox']")) {
+    return;
+  }
+  try {
+    const response = await fetch("/api/reports", { method: "PUT", headers: { "content-type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ settings: { [input.name]: input.checked } }) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error ?? "Le réglage n'a pas été enregistré.");
+    }
+    showToast(input.checked ? "Rapport activé." : "Rapport arrêté : il ne sera plus envoyé.");
+    renderReports(payload);
+  } catch (error) {
+    input.checked = !input.checked;
+    showToast(error.message, "warn");
+  }
+});
+
+reportsForm.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-report-preview]");
+  if (!button) {
+    return;
+  }
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/reports/preview", { method: "POST", headers: { "content-type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ kind: button.dataset.reportPreview }) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error ?? "Le rapport n'a pas pu être composé.");
+    }
+    reportsPreview.innerHTML = reportHtml(payload.report, { open: true, meta: "aperçu, non envoyé" });
+  } catch (error) {
+    showToast(error.message, "warn");
+  } finally {
+    button.disabled = false;
+  }
+});
+
 async function loadPanels() {
   await checkAgentStatus();
   applyCompanyPaymentPlans();
@@ -5483,6 +5561,7 @@ async function loadPanels() {
   refreshRegister();
   refreshStock();
   refreshHr();
+  refreshReports();
   renderHistory();
   await refreshApprovals();
 }

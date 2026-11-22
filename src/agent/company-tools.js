@@ -6,7 +6,8 @@ import { ANOMALY_STATUSES, ImprovementError, RULE_STATUSES, SEVERITIES, TASK_STA
 import { normalizeWhatsAppNumber } from "./whatsapp.js";
 import { TeamBookError } from "./team-book.js";
 import { quantityText as stockQuantity } from "./stock-book.js";
-import { FOLLOW_UP_CHANNELS, QUOTE_STATES, SalesBookError, frenchDay as salesDay, isoDay, quotePipeline, salesReport } from "./sales-book.js";
+import { REPORT_AXES, UNLINKED, UNSET, commercialReport, describeRow } from "./commercial-report.js";
+import { FOLLOW_UP_CHANNELS, QUOTE_STATES, SALE_CHANNELS, SalesBookError, frenchDay as salesDay, isoDay, quotePipeline, salesReport } from "./sales-book.js";
 
 // The tools of Hiba's three requests of 09/11/2026, as the Director and its
 // agents call them: the cash book Finance keeps, the anomalies each head of
@@ -199,9 +200,138 @@ export const FOLLOW_UP_TOOL = Object.freeze({
   }
 });
 
+// The complete commercial report (commercial-report.js): by product,
+// channel, client, seller and campaign, against the period before and the
+// month's target.
+export const COMMERCIAL_ANALYSIS_TOOL = Object.freeze({
+  type: "function",
+  name: "analyse_commerciale",
+  description: "Rapport commercial complet et vérifiable d'une période : prospects, devis émis, taux de transformation, CA commandé, CA facturé (avoirs déduits) et CA encaissé, trois chiffres séparés, comparés à la période précédente de même durée et à l'objectif du mois ; analysés par produit, canal, client, vendeur ou campagne. Chaque chiffre cite ses documents. À appeler pour « quels produits se vendent le mieux », « d'où viennent mes clients », « pourquoi les ventes ont baissé », « où en est l'objectif ».",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      du: { type: "string", description: "Début JJ/MM/AAAA ; chaîne vide pour le mois en cours." },
+      au: { type: "string", description: "Fin JJ/MM/AAAA ; chaîne vide pour le mois en cours." },
+      axe: { type: "string", enum: ["produit", "canal", "client", "vendeur", "campagne", "tous"], description: "L'axe d'analyse ; tous pour chacun." }
+    },
+    required: ["du", "au", "axe"]
+  }
+});
+
+export const ATTRIBUTE_QUOTE_TOOL = Object.freeze({
+  type: "function",
+  name: "qualifier_devis",
+  description: `Note d'où vient une vente, seulement quand la direction ou le Commercial le dit (« le devis 170 vient d'Instagram, campagne rentrée scolaire, vendu par Nadia ») : canal (${Object.keys(SALE_CHANNELS).join(", ")}), vendeur, campagne. Jamais deviné : un champ non dit reste vide.`,
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      devis: { type: "string", description: "Numéro du devis." },
+      canal: { type: "string", description: `Un de : ${Object.keys(SALE_CHANNELS).join(", ")} ; chaîne vide si non dit ; « - » pour l'effacer.` },
+      vendeur: { type: "string", description: "Prénom de la personne qui a vendu ; chaîne vide si non dit." },
+      campagne: { type: "string", description: "Nom de la campagne (publicité, promotion, salon) ; chaîne vide si non dite." }
+    },
+    required: ["devis", "canal", "vendeur", "campagne"]
+  }
+});
+
+export const SALES_TARGET_TOOL = Object.freeze({
+  type: "function",
+  name: "objectif_commercial",
+  description: "Fixe, seulement quand la DIRECTION le dit, l'objectif de CA commandé d'un mois (« objectif de 100 000 DH de ventes en décembre ») ; montant vide ou 0 pour l'enlever. analyse_commerciale le compare ensuite aux ventes signées.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      mois: { type: "string", description: "MM/AAAA ; chaîne vide pour le mois en cours." },
+      montant: { type: "string", description: "Montant TTC en DH." }
+    },
+    required: ["mois", "montant"]
+  }
+});
+
+export async function commercialAnalysisFor(args, { books, documentService, social = null, clock = () => new Date() }) {
+  const today = clock();
+  const month = isoDay(today).slice(0, 7);
+  const last = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
+  const from = isoDay(text(args.du)) ?? `${month}-01`;
+  const to = isoDay(text(args.au)) ?? `${month}-${String(last).padStart(2, "0")}`;
+  if (from > to) {
+    return { ok: false, erreur: "Le début de la période est après sa fin." };
+  }
+  const [issued, followUps, entries, prospects] = await Promise.all([
+    documentService.listIssued(),
+    books.followUps.state(),
+    books.cash?.entries?.() ?? [],
+    social?.prospects?.({ limit: 5000 }).catch(() => []) ?? []
+  ]);
+  const report = commercialReport({ issued, followUps, entries, prospects, from, to, today, days: books.followUps.days });
+  const axes = text(args.axe) && text(args.axe) !== "tous" ? [text(args.axe)] : Object.keys(REPORT_AXES);
+  const variation = (now, before) => (before === 0 ? (now === 0 ? "stable" : "nouveau") : `${now >= before ? "+" : ""}${Math.round(((now - before) / before) * 100)} %`);
+  const t = report.totals;
+  const p = report.previous.totals;
+  return {
+    ok: true,
+    periode: `du ${salesDay(from)} au ${salesDay(to)}`,
+    periode_precedente: `du ${salesDay(report.previous.from)} au ${salesDay(report.previous.to)}`,
+    source: "documents générés par le cockpit (devis, BC, factures, avoirs), journal de caisse (acomptes, soldes, ventes au comptant), fiches prospects des réseaux ; un document fait hors cockpit n'est pas compté",
+    totaux: {
+      prospects: `${t.prospects} (avant : ${p.prospects})`,
+      devis_emis: `${t.issued.count} pour ${formatDh(t.issued.totalTtc)} (avant : ${p.issued.count} pour ${formatDh(p.issued.totalTtc)})`,
+      taux_de_transformation: t.conversion === null ? "aucun devis émis" : `${t.conversion} % (avant : ${p.conversion === null ? "aucun devis" : `${p.conversion} %`})`,
+      ca_commande: `${formatDh(t.signed.totalTtc)}, ${t.signed.count} BC, ${variation(t.signed.totalTtc, p.signed.totalTtc)} (avant : ${formatDh(p.signed.totalTtc)}) — ${t.signed.refs.join(", ") || "aucun"}`,
+      ca_facture: `${formatDh(t.invoiced.totalTtc)}, ${variation(t.invoiced.totalTtc, p.invoiced.totalTtc)} (avant : ${formatDh(p.invoiced.totalTtc)}) — ${t.invoiced.refs.join(", ") || "aucun"}`,
+      ca_encaisse: `${formatDh(t.paid.total)}, ${variation(t.paid.total, p.paid.total)} (avant : ${formatDh(p.paid.total)})`,
+      devis_perdus: `${t.lost.count} pour ${formatDh(t.lost.totalTtc)}`
+    },
+    objectif: report.objective ? `${formatDh(report.objective.target)} de CA commandé pour ${salesDay(`${report.objective.month}-01`).slice(3)} : ${formatDh(report.objective.achieved)} atteints, soit ${report.objective.percent} %` : "aucun objectif fixé pour cette période (objectif_commercial quand la direction en donne un)",
+    analyse: Object.fromEntries(axes.map((axis) => [axis, report.axes[axis].map((row) => `${row.label} : ${describeRow(row)}${row.signed.refs.length > 0 ? ` [${row.signed.refs.join(", ")}]` : ""}`)])),
+    ...(report.unattributed.quotes.length > 0 ? { canal_inconnu: `devis n° ${report.unattributed.quotes.slice(0, 15).join(", ")} : canal non renseigné (qualifier_devis quand on le sait ; ne jamais le deviner)` } : {}),
+    rappel: `« ${UNLINKED} » : facture ou encaissement sans devis du cockpit ; « ${UNSET} » : information jamais donnée.`
+  };
+}
+
+export async function attributeQuote(args, { books, documentService, clock = () => new Date() }, by) {
+  const number = text(args.devis);
+  const quote = quotePipeline(await documentService.listIssued(), await books.followUps.state(), { today: clock() }).find((entry) => entry.number === number);
+  if (!quote) {
+    return { ok: false, erreur: `Aucun devis n° ${number} n'a été généré par le cockpit : je n'ai pas l'information.` };
+  }
+  try {
+    const saved = await books.followUps.attribute(number, { channel: text(args.canal), seller: text(args.vendeur), campaign: text(args.campagne) }, { by });
+    const line = `Devis n° ${number} (${quote.client}) : canal ${saved.channel ? SALE_CHANNELS[saved.channel] : UNSET}, vendeur ${saved.seller || UNSET}, campagne ${saved.campaign || `${UNSET}e`}.`;
+    await books.team?.log({ agent: "commercial", kind: "equipe", text: line, ref: `devis:${number}`, by }).catch(() => {});
+    return { ok: true, enregistre: line };
+  } catch (error) {
+    if (error instanceof SalesBookError) {
+      return { ok: false, erreur: error.message };
+    }
+    throw error;
+  }
+}
+
+export async function setSalesTarget(args, { books, clock = () => new Date() }, by) {
+  const given = text(args.mois);
+  const match = /^(\d{1,2})\/(\d{4})$/.exec(given);
+  const month = given ? (match ? `${match[2]}-${match[1].padStart(2, "0")}` : given) : isoDay(clock()).slice(0, 7);
+  try {
+    const targets = await books.followUps.setTarget(month, text(args.montant), { by });
+    const set = targets[month];
+    return { ok: true, enregistre: set ? `Objectif de CA commandé ${salesDay(`${month}-01`).slice(3)} : ${formatDh(set.amount)}.` : `Objectif de ${salesDay(`${month}-01`).slice(3)} retiré.` };
+  } catch (error) {
+    if (error instanceof SalesBookError) {
+      return { ok: false, erreur: error.message };
+    }
+    throw error;
+  }
+}
+
 export function salesTools(context, agentId) {
   return [
     { tool: SALES_REPORT_TOOL, run: (args) => salesReportFor(args, context) },
+    { tool: COMMERCIAL_ANALYSIS_TOOL, run: (args) => commercialAnalysisFor(args, context) },
+    { tool: ATTRIBUTE_QUOTE_TOOL, run: (args) => attributeQuote(args, context, agentId) },
     { tool: FOLLOW_UP_TOOL, run: (args) => recordFollowUp(args, context, agentId) }
   ];
 }

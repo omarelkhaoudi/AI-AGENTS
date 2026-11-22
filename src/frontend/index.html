@@ -684,6 +684,29 @@
 
         <!-- Devis -->
         <section class="view flex animate-rise flex-col gap-6" data-view-panel="quotes" hidden aria-labelledby="datasheet-title">
+          <section id="sales-panel" class="panel pilot-panel" aria-labelledby="sales-title">
+            <header class="pilot-head">
+              <div class="min-w-0 flex-[1_1_260px]">
+                <h3 id="sales-title">Bilan commercial</h3>
+                <p class="muted text-[13px]">Prospects, devis, CA commandé, facturé et encaissé, comparés à la période précédente de même durée. Chaque ligne s'ouvre sur ses documents.</p>
+              </div>
+              <form id="sales-period" class="pilot-period">
+                <label>Du<input name="from" type="date"></label>
+                <label>Au<input name="to" type="date"></label>
+                <button type="submit" class="secondary">Afficher</button>
+              </form>
+            </header>
+            <div id="sales-tiles" class="pilot-tiles sales-tiles" aria-live="polite"></div>
+            <p id="sales-objective" class="sales-objective" hidden></p>
+            <form id="sales-target-form" class="sales-target" hidden>
+              <label>Objectif de CA commandé<input name="month" type="month" required></label>
+              <label><span class="input-unit"><input name="amount" type="number" min="0" step="1" inputmode="numeric" placeholder="ex. 100000" aria-label="Montant de l'objectif"><small>DH</small></span></label>
+              <button type="submit" class="secondary">Fixer</button>
+            </form>
+            <div id="sales-axes" class="sales-axes" role="tablist" aria-label="Axe d'analyse"></div>
+            <div id="sales-table" aria-live="polite"></div>
+            <p id="sales-hint" class="muted text-[12.5px]" hidden></p>
+          </section>
           <section class="panel">
             <div class="panel-heading">
               <div>

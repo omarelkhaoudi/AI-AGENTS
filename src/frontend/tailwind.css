@@ -2583,6 +2583,50 @@
     @apply max-sm:col-span-2;
   }
 
+  .pilot-tiles.sales-tiles {
+    @apply max-sm:grid-cols-2;
+  }
+
+  .sales-tiles .pilot-tile strong {
+    @apply max-sm:text-[18px];
+  }
+
+  .sales-objective {
+    @apply mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13.5px] text-ink-2;
+  }
+
+  .sales-meter {
+    @apply block h-1.5 w-full overflow-hidden rounded-full bg-line;
+  }
+
+  .sales-meter > span {
+    @apply block h-full rounded-full bg-brand;
+  }
+
+  .sales-target {
+    @apply mt-4 flex flex-wrap items-end gap-2 text-[12px] text-ink-2;
+  }
+
+  .sales-target label {
+    @apply flex flex-col gap-1;
+  }
+
+  .sales-axes {
+    @apply mt-5 mb-3 flex flex-wrap gap-2;
+  }
+
+  .sales-axes [aria-selected="true"] {
+    @apply border-brand bg-brand text-brand-ink;
+  }
+
+  .sales-refs > summary {
+    @apply cursor-pointer;
+  }
+
+  .sales-refs small {
+    @apply mt-1 block max-w-[48ch] text-[12px] leading-snug text-muted;
+  }
+
   .reports-settings {
     @apply flex flex-col gap-2;
   }

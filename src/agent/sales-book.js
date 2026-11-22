@@ -21,6 +21,19 @@ import { DATA_DIR, createFileJsonBook, createMemoryJsonBook } from "./json-book.
 export const DEFAULT_FOLLOW_UP_DAYS = 5;
 export const DEFAULT_FOLLOW_UP_PATH = join(DATA_DIR, "relances.json");
 export const FOLLOW_UP_CHANNELS = Object.freeze({ whatsapp: "WhatsApp", telephone: "téléphone", email: "e-mail", visite: "visite", autre: "autre" });
+// Where a sale came from, as the Commercial or the direction says it: the
+// commercial report counts each channel apart, and « non renseigné » apart.
+export const SALE_CHANNELS = Object.freeze({
+  instagram: "Instagram",
+  facebook: "Facebook",
+  whatsapp: "WhatsApp",
+  telephone: "Téléphone",
+  showroom: "Showroom / visite",
+  recommandation: "Recommandation",
+  site: "Site web",
+  autre: "Autre"
+});
+const MAX_TARGET = 100_000_000;
 export const QUOTE_STATES = Object.freeze({ ouvert: "ouvert", commande: "commandé", perdu: "perdu" });
 
 export class SalesBookError extends Error {
@@ -71,6 +84,48 @@ function createFollowUpBook({ book, clock, days }) {
 
     async state() {
       return book.load();
+    },
+
+    // Where a quote came from: its channel, the person who sold it, the
+    // campaign that brought it. A field left empty stays as it was; "-"
+    // removes it.
+    async attribute(number, { channel = "", seller = "", campaign = "" } = {}, { by = "direction" } = {}) {
+      const key = text(channel).toLowerCase();
+      if (key && key !== "-" && !SALE_CHANNELS[key]) {
+        throw new SalesBookError(`Canal inconnu : ${channel}. Canaux : ${Object.keys(SALE_CHANNELS).join(", ")}.`, "SALE_CHANNEL_UNKNOWN");
+      }
+      return book.change((state) => {
+        const entry = record(state, number);
+        const current = { channel: "", seller: "", campaign: "", ...entry.attribution };
+        const apply = (value, field) => {
+          const given = text(value);
+          if (given === "-") current[field] = "";
+          else if (given) current[field] = field === "channel" ? given.toLowerCase() : given;
+        };
+        apply(channel, "channel");
+        apply(seller, "seller");
+        apply(campaign, "campaign");
+        entry.attribution = { ...current, at: clock().toISOString(), by };
+        return structuredClone(entry.attribution);
+      });
+    },
+
+    // The direction's target of CA commandé for a month (AAAA-MM); 0 or ""
+    // removes it.
+    async setTarget(month, amount, { by = "direction" } = {}) {
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(text(month))) {
+        throw new SalesBookError("Mois attendu au format AAAA-MM.", "SALE_TARGET_MONTH_INVALID");
+      }
+      const raw = typeof amount === "number" ? amount : Number(text(amount).replace(/\s/g, "").replace(",", "."));
+      if (text(String(amount ?? "")) !== "" && (!Number.isFinite(raw) || raw < 0 || raw > MAX_TARGET)) {
+        throw new SalesBookError(`Objectif illisible « ${amount} » : un montant en DH est attendu.`, "SALE_TARGET_INVALID");
+      }
+      return book.change((state) => {
+        state.targets ??= {};
+        if (!raw) delete state.targets[text(month)];
+        else state.targets[text(month)] = { amount: Math.round(raw * 100) / 100, at: clock().toISOString(), by };
+        return structuredClone(state.targets);
+      });
     },
 
     // The direction's commercial rules (validity of a quote, discount ceiling,

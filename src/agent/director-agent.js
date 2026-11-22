@@ -48,10 +48,16 @@ import {
   listAnomalies,
   reportAnomaly,
   ASSIGN_TASK_TOOL,
+  ATTRIBUTE_QUOTE_TOOL,
+  COMMERCIAL_ANALYSIS_TOOL,
   FOLLOW_UP_TOOL,
   SALES_REPORT_TOOL,
+  SALES_TARGET_TOOL,
   TASK_TOOL,
   assignTask,
+  attributeQuote,
+  commercialAnalysisFor,
+  setSalesTarget,
   recordFollowUp,
   updateTask,
   salesReportFor,
@@ -573,6 +579,9 @@ const TOOLS = Object.freeze([
   ORDER_TEAM_TOOL,
   PUBLISH_PHOTO_TOOL,
   SALES_REPORT_TOOL,
+  COMMERCIAL_ANALYSIS_TOOL,
+  ATTRIBUTE_QUOTE_TOOL,
+  SALES_TARGET_TOOL,
   FOLLOW_UP_TOOL,
   ASSIGN_TASK_TOOL,
   TASK_TOOL,
@@ -655,6 +664,7 @@ function instructions(today, briefing = []) {
     "Tâches et clôture (chaque anomalie est une tâche, même numéro) : le résumé des anomalies t'est donné à chaque message ; dans tout point de situation, dis ce qui est ouvert, grave, sans responsable, en retard, et résolu à confirmer. « Assigne l'anomalie 4 à la production, Samir, pour le 25/11 » → assigner_tache (la personne est prévenue sur WhatsApp). N'assigne jamais de toi-même : propose (à qui, pour quand) et laisse la direction décider. Un fait annoncé (« Samir s'en occupe », « c'est réglé, le chevet est remplacé ») → suivre_tache. Une tâche résolue n'est clôturée que par la direction : dans le cockpit (vue Amélioration) ou en répondant « clôture tâche N » sur WhatsApp ; ne dis jamais qu'elle est close avant.",
     "",
     "Bilan commercial et relances : « fais le bilan commercial du mois », « quels devis relancer ? », « où en sont les ventes » → bilan_commercial (chiffres calculés sur les documents du cockpit : cite les numéros, ne recalcule rien, ne complète jamais avec un chiffre supposé). « J'ai relancé Mme Alami pour le devis 170, elle réfléchit », « le client du devis 172 a refusé, trop cher » → enregistrer_relance toi-même (perdu avec son motif pour un refus). Un devis ouvert sans nouvelles depuis 5 jours est à relancer : le responsable commercial est prévenu sur WhatsApp, et la direction au bout de 10 jours ; pour rédiger les messages de relance, confie-les au commercial.",
+    "Analyse commerciale : « quels produits se vendent le mieux », « d'où viennent mes clients », « pourquoi les ventes ont baissé », « où en est l'objectif » → analyse_commerciale (prospects, CA commandé, facturé et encaissé séparés, par produit, canal, client, vendeur ou campagne, comparés à la période précédente et à l'objectif). « Le devis 170 vient d'Instagram, vendu par Nadia » → qualifier_devis ; « objectif de 100 000 DH en décembre » → objectif_commercial. Ne devine jamais un canal ni une campagne.",
     "",
     "Bureau d'études : Production coordonne deux agents IA distincts via deleguer_bureau_etudes : dessinateur_2d3d (plans et fiche technique à valider) et dessinateur_methodes (dossier de fabrication depuis la fiche validée, opérations nécessaires uniquement). Les demandes de fabrication, DXF, débit, calepinage et G-code sont confiées à production, qui rassemble les livrables par BC et version. Production présente les DXF à la direction avec leurs liens. Aucun G-code avant la validation humaine de tous les DXF courants ; paramètres réels CNC, post-processeur qualifié, simulation et validation du responsable atelier requis. Toute information manquante se demande avant génération. Tu ne valides jamais les fiches ou fichiers. Les dessinateurs sont des agents IA de l'ERP, pas des personnes : ne demande jamais à la direction de désigner un dessinateur ; les personnes qui valident sont la direction (fiche technique, DXF) et le responsable atelier (G-code).",
     "",
@@ -1205,6 +1215,18 @@ async function runTool(call, context) {
     }
     if (call.name === TASK_TOOL.name) {
       return await updateTask(args, context, "director");
+    }
+    if (call.name === COMMERCIAL_ANALYSIS_TOOL.name) {
+      return await commercialAnalysisFor(args, context);
+    }
+    if (call.name === ATTRIBUTE_QUOTE_TOOL.name) {
+      return await attributeQuote(args, context, "director");
+    }
+    if (call.name === SALES_TARGET_TOOL.name) {
+      if (context.confidential) {
+        return { ok: false, erreur: "L'objectif commercial est fixé par la direction seule." };
+      }
+      return await setSalesTarget(args, context, context.userId ?? "director");
     }
     if (call.name === SALES_REPORT_TOOL.name) {
       return await salesReportFor(args, context);

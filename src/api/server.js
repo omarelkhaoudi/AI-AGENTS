@@ -55,7 +55,8 @@ import { orderMargins } from "../agent/business-analysis.js";
 import { SPECIALISTS, SPECIALIST_IDS } from "../agent/agent-team.js";
 import { createMemoryWhatsAppInbox } from "../agent/whatsapp-inbox.js";
 import { createWhatsAppGateway } from "../agent/whatsapp-gateway.js";
-import { createMemoryFollowUpBook, dueReminders, isoDay, quotePipeline, salesReport } from "../agent/sales-book.js";
+import { SALE_CHANNELS, SalesBookError, createMemoryFollowUpBook, dueReminders, isoDay, quotePipeline, salesReport } from "../agent/sales-book.js";
+import { REPORT_AXES, commercialReport } from "../agent/commercial-report.js";
 import { assignTask, recordFollowUp, updateTask } from "../agent/company-tools.js";
 import { createOpenAiTranscriberFromEnv } from "../agent/transcriber.js";
 import { WhatsAppCloudError, createWhatsAppCloudClient, loadWhatsAppCloudConfig, verifyWebhookSignature } from "../integrations/whatsapp-cloud.js";
@@ -1596,6 +1597,46 @@ export function buildApi({
         };
       } catch (error) {
         return sendDomainError(reply, "Commercial report unavailable.", error);
+      }
+    });
+
+    // The complete report: totals against the period before and the month's
+    // target, and each axis (commercial-report.js). Everyone signed in reads
+    // it; the direction alone sets the target.
+    app.get("/api/commercial/report", readRouteOptions(), async (request, reply) => {
+      const today = clock();
+      const month = isoDay(today).slice(0, 7);
+      const last = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
+      const from = isoDay(typeof request.query?.from === "string" ? request.query.from : "") ?? `${month}-01`;
+      const to = isoDay(typeof request.query?.to === "string" ? request.query.to : "") ?? `${month}-${String(last).padStart(2, "0")}`;
+      if (from > to) {
+        return reply.code(400).send({ error: "Le début de la période est après sa fin.", details: { code: "PERIOD_INVALID" } });
+      }
+      try {
+        const [issued, state, entries, prospects] = await Promise.all([hkidsDocuments.listIssued(), followUps.state(), cashRecords.entries(), social.prospects({ limit: 5000 }).catch(() => [])]);
+        return {
+          report: commercialReport({ issued, followUps: state, entries, prospects, from, to, today, days: followUps.days }),
+          axes: REPORT_AXES,
+          channels: SALE_CHANNELS,
+          targets: state.targets ?? {},
+          canDecide: seesConfidential(request)
+        };
+      } catch (error) {
+        return sendDomainError(reply, "Commercial report unavailable.", error);
+      }
+    });
+
+    app.put("/api/commercial/targets", decisionRouteOptions(), async (request, reply) => {
+      try {
+        const by = request.principal.userId ?? "direction";
+        const targets = await followUps.setTarget(String(request.body?.month ?? ""), request.body?.amount ?? "", { by });
+        await teamFeed.log({ agent: "commercial", kind: "equipe", text: `Objectif commercial ${request.body?.month} modifié par la direction (cockpit).`, by });
+        return { targets };
+      } catch (error) {
+        if (error instanceof SalesBookError) {
+          return reply.code(400).send({ error: error.message, details: { code: error.code } });
+        }
+        return sendDomainError(reply, "Commercial target unavailable.", error);
       }
     });
 

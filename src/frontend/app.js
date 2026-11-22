@@ -5550,6 +5550,115 @@ reportsForm.addEventListener("click", async (event) => {
   }
 });
 
+// --- Bilan commercial (Devis view) --------------------------------------------
+// The complete report of a period from /api/commercial/report: the totals
+// against the period before and the month's target, and one axis at a time.
+const salesPeriodForm = document.querySelector("#sales-period");
+const salesTiles = document.querySelector("#sales-tiles");
+const salesObjective = document.querySelector("#sales-objective");
+const salesTargetForm = document.querySelector("#sales-target-form");
+const salesAxes = document.querySelector("#sales-axes");
+const salesTable = document.querySelector("#sales-table");
+const salesHint = document.querySelector("#sales-hint");
+const salesView = { data: null, axis: "produit" };
+
+salesPeriodForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  refreshSales();
+});
+
+salesAxes.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-axis]");
+  if (button && salesView.data) {
+    salesView.axis = button.dataset.axis;
+    renderSales(salesView.data);
+  }
+});
+
+salesTargetForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(salesTargetForm);
+  try {
+    const response = await fetch("/api/commercial/targets", { method: "PUT", headers: { "content-type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ month: form.get("month"), amount: form.get("amount") }) });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error ?? "L'objectif n'a pas été enregistré.");
+    }
+    showToast(Number(form.get("amount")) > 0 ? "Objectif enregistré." : "Objectif retiré.");
+    refreshSales();
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+});
+
+async function refreshSales() {
+  try {
+    const field = (name) => salesPeriodForm.querySelector?.(`[name='${name}']`)?.value ?? "";
+    const query = new URLSearchParams(Object.fromEntries([["from", field("from")], ["to", field("to")]].filter(([, value]) => value)));
+    const response = await fetch(`/api/commercial/report${query.size > 0 ? `?${query}` : ""}`, { headers: await authHeaders() });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error ?? "Impossible de charger le bilan commercial.");
+    }
+    salesView.data = payload;
+    renderSales(payload);
+  } catch (error) {
+    salesTiles.innerHTML = `<p class="muted text-[13px]">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function salesVariation(now, before) {
+  if (before === 0) {
+    return now === 0 ? "stable" : "nouveau";
+  }
+  const change = Math.round(((now - before) / before) * 100);
+  return `${change >= 0 ? "+" : ""}${change} %`;
+}
+
+function renderSales({ report, axes, targets, canDecide }) {
+  const fromField = salesPeriodForm.querySelector("[name='from']");
+  const toField = salesPeriodForm.querySelector("[name='to']");
+  if (fromField && !fromField.value) fromField.value = report.from;
+  if (toField && !toField.value) toField.value = report.to;
+  const now = report.totals;
+  const before = report.previous.totals;
+  const percent = (value) => (value === null ? "—" : `${value} %`);
+  const tiles = [
+    ["Prospects", String(now.prospects), `avant : ${before.prospects}`],
+    ["Devis émis", String(now.issued.count), `${formatDh(now.issued.totalTtc)} · avant : ${before.issued.count}`],
+    ["Transformation", percent(now.conversion), `avant : ${percent(before.conversion)}`],
+    ["CA commandé", formatDh(now.signed.totalTtc), `${now.signed.count} BC · ${salesVariation(now.signed.totalTtc, before.signed.totalTtc)} (avant : ${formatDh(before.signed.totalTtc)})`],
+    ["CA facturé", formatDh(now.invoiced.totalTtc), `avoirs déduits · ${salesVariation(now.invoiced.totalTtc, before.invoiced.totalTtc)}`],
+    ["CA encaissé", formatDh(now.paid.total), `caisse : acomptes, soldes, comptant · ${salesVariation(now.paid.total, before.paid.total)}`]
+  ];
+  salesTiles.innerHTML = tiles.map(([label, value, hint]) => `<div class="pilot-tile"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(hint)}</small></div>`).join("")
+    + `<p class="pilot-foot muted">Du ${escapeHtml(formatIsoDay(report.from))} au ${escapeHtml(formatIsoDay(report.to))}, comparé au ${escapeHtml(formatIsoDay(report.previous.from))} – ${escapeHtml(formatIsoDay(report.previous.to))}.</p>`;
+
+  salesObjective.hidden = !report.objective;
+  if (report.objective) {
+    salesObjective.innerHTML = `<strong>Objectif du mois : ${escapeHtml(formatDh(report.objective.target))}</strong> · ${escapeHtml(formatDh(report.objective.achieved))} commandés, soit ${report.objective.percent} %<span class="sales-meter" aria-hidden="true"><span style="width:${Math.min(100, report.objective.percent)}%"></span></span>`;
+  }
+  salesTargetForm.hidden = !canDecide;
+  if (canDecide && !salesTargetForm.contains(document.activeElement)) {
+    const month = report.from.slice(0, 7);
+    salesTargetForm.querySelector("[name='month']").value = month;
+    salesTargetForm.querySelector("[name='amount']").value = targets[month]?.amount ?? "";
+  }
+
+  salesAxes.innerHTML = Object.entries(axes).map(([axis, label]) => `<button type="button" role="tab" class="chip" data-axis="${escapeHtml(axis)}" aria-selected="${axis === salesView.axis}">${escapeHtml(label)}</button>`).join("");
+  const rows = report.axes[salesView.axis] ?? [];
+  salesTable.innerHTML = rows.length === 0
+    ? `<p class="muted">Rien à compter sur cette période.</p>`
+    : `<div class="answer-table"><table><thead><tr><th>${escapeHtml(axes[salesView.axis])}</th><th class="num">Prospects</th><th class="num">Devis émis</th><th class="num">Transfo.</th><th class="num">CA commandé</th><th class="num">CA facturé</th><th class="num">CA encaissé</th></tr></thead><tbody>${rows.map((row) => {
+        const refs = [...row.issued.refs, ...row.signed.refs, ...row.invoiced.refs, ...row.paid.refs, ...row.lost.refs.map((ref) => `${ref} (perdu)`)];
+        const label = refs.length > 0 ? `<details class="sales-refs"><summary>${escapeHtml(row.label)}</summary><small>${escapeHtml([...new Set(refs)].join(" · "))}</small></details>` : escapeHtml(row.label);
+        return `<tr><td>${label}</td><td class="num">${row.prospects || "—"}</td><td class="num">${row.issued.count}</td><td class="num">${percent(row.conversion)}</td><td class="num">${escapeHtml(formatDh(row.signed.totalTtc))}</td><td class="num">${escapeHtml(formatDh(row.invoiced.totalTtc))}</td><td class="num">${escapeHtml(formatDh(row.paid.total))}</td></tr>`;
+      }).join("")}</tbody></table></div>`;
+  const unknown = report.unattributed.quotes;
+  salesHint.hidden = !["canal", "vendeur", "campagne"].includes(salesView.axis) || unknown.length === 0;
+  salesHint.textContent = `Canal non renseigné pour le devis n° ${unknown.slice(0, 8).join(", ")}${unknown.length > 8 ? "…" : ""}. Dites-le au Director : « le devis ${unknown[0] ?? "170"} vient d'Instagram, campagne de la rentrée, vendu par Nadia ».`;
+}
+
 async function loadPanels() {
   await checkAgentStatus();
   applyCompanyPaymentPlans();
@@ -5562,6 +5671,7 @@ async function loadPanels() {
   refreshStock();
   refreshHr();
   refreshReports();
+  refreshSales();
   renderHistory();
   await refreshApprovals();
 }

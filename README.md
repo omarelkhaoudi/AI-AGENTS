@@ -288,6 +288,27 @@ de commandes l'équipe y mène en même temps : **Commandes → Charge de l'atel
   durées avec `fixer_capacite_atelier`. C'est une estimation, que l'atelier
   confirme avant de promettre.
 
+### Bilan commercial
+
+Le rapport commercial complet (CDC V2 section 5, « Bilans interactifs ») est
+dans **Devis → Bilan commercial**, pour la période choisie, et le Director ou
+le Commercial le donne avec l'outil `analyse_commerciale`.
+
+- Les totaux : prospects (fiches des réseaux), devis émis, taux de
+  transformation, CA commandé (bons de commande), CA facturé (factures, avoirs
+  déduits) et CA encaissé (acomptes, soldes et ventes au comptant de la caisse),
+  trois chiffres séparés, comparés à la période précédente de même durée.
+- L'analyse par produit (l'objet du devis), canal, client, vendeur et campagne ;
+  chaque ligne s'ouvre sur ses documents.
+- Le canal, le vendeur et la campagne d'une vente sont ceux qu'on dit au
+  Director ou au Commercial (« le devis 170 vient d'Instagram, campagne de la
+  rentrée, vendu par Nadia » : outil `qualifier_devis`), gardés dans
+  `data/relances.json`. Jamais devinés : sans eux, la vente est comptée « non
+  renseigné ». Une facture ou un encaissement qui ne se rattache à aucun devis
+  du cockpit est compté « non rattaché ».
+- L'objectif de CA commandé du mois est fixé par la direction, dans le panneau
+  ou au Director (`objectif_commercial`), et comparé aux ventes signées.
+
 ### Rapports de la direction
 
 Les rapports programmés (CDC V2 sections 5 et 6) sont composés des livres du

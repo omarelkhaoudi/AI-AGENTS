@@ -1,4 +1,4 @@
-import { ABSENCE_KINDS, HrBookError, LEAVE_KINDS, LEAVE_STATUSES, frenchDay } from "./hr-book.js";
+import { ABSENCE_KINDS, CANDIDATE_STATUSES, CONTRACT_KINDS, HrBookError, JOB_CATEGORIES, LEAVE_KINDS, LEAVE_STATUSES, POSITION_STATUSES, TRAINING_STATUSES, frenchDay } from "./hr-book.js";
 
 // The RH agent's tools and the Director's, on the team's book. Each answers in
 // the agents' words and never throws the book's own error.
@@ -6,7 +6,7 @@ import { ABSENCE_KINDS, HrBookError, LEAVE_KINDS, LEAVE_STATUSES, frenchDay } fr
 const OVERVIEW_TOOL = Object.freeze({
   type: "function",
   name: "equipe_rh",
-  description: "Le carnet RH réel : salariés (poste, date d'entrée, solde de congés payés selon le Code du travail), absents aujourd'hui, demandes de congé en attente, congés des 30 prochains jours, absences, retards et heures supplémentaires des 14 derniers jours. À lire avant toute réponse RH.",
+  description: "Le carnet RH réel : salariés (poste, date d'entrée, solde de congés payés selon le Code du travail), absents aujourd'hui, demandes de congé en attente, congés des 30 prochains jours, absences, retards et heures supplémentaires des 14 derniers jours, contrats et candidats (pour la direction), postes ouverts, formations et alertes RH (fins de contrat, fins d'essai, formations à renouveler). À lire avant toute réponse RH.",
   parameters: { type: "object", additionalProperties: false, properties: {}, required: [] }
 });
 
@@ -111,8 +111,73 @@ const HR_CORRECTION_TOOL = Object.freeze({
   }
 });
 
-const RH_AGENT = [OVERVIEW_TOOL, ADD_EMPLOYEE_TOOL, PRESENCE_TOOL, LEAVE_REQUEST_TOOL, PAYROLL_TOOL, HR_CORRECTION_TOOL];
-export const DIRECTOR_HR_TOOLS = Object.freeze([OVERVIEW_TOOL, ADD_EMPLOYEE_TOOL, PRESENCE_TOOL, LEAVE_REQUEST_TOOL, LEAVE_DECISION_TOOL, PAYROLL_TOOL, HR_CORRECTION_TOOL]);
+const CONTRACT_TOOL = Object.freeze({
+  type: "function",
+  name: "contrat_salarie",
+  description: "Enregistre le contrat d'un salarié sur ce que dit la direction (« Samir est en CDD du 01/12/2026 au 31/05/2027 », « on passe Karim en CDI au 01/01 »). Le nouveau contrat remplace celui en cours (renouvellement, passage en CDI). La période d'essai est celle dite, sinon celle de l'art. 14 du Code du travail selon le contrat et la catégorie. Les fins de contrat et de période d'essai remontent ensuite en alerte dans Amélioration. Réservé à la direction.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      salarie: { type: "string" },
+      type: { type: "string", enum: Object.keys(CONTRACT_KINDS) },
+      debut: { type: "string", description: "JJ/MM/AAAA." },
+      fin: { type: "string", description: "JJ/MM/AAAA ; chaîne vide pour un CDI. Obligatoire pour un CDD, un contrat ANAPEC ou un stage : la demander, ne jamais la supposer." },
+      categorie: { type: "string", enum: ["", ...Object.keys(JOB_CATEGORIES)], description: "cadre, employe ou ouvrier, si dit : fixe la période d'essai d'un CDI ; chaîne vide sinon." },
+      fin_essai: { type: "string", description: "JJ/MM/AAAA si la direction donne une autre fin d'essai ; chaîne vide sinon." },
+      note: { type: "string", description: "Ce que la direction précise ; jamais de salaire ; chaîne vide sinon." }
+    },
+    required: ["salarie", "type", "debut", "fin", "categorie", "fin_essai", "note"]
+  }
+});
+
+const RECRUITMENT_TOOL = Object.freeze({
+  type: "function",
+  name: "recrutement",
+  description: "Le recrutement, sur ce que dit la direction : ouvrir un poste (« on cherche un menuisier »), noter une candidature, en donner la suite (entretien avec sa date, retenu, non retenu, embauché avec sa date d'entrée : le salarié rejoint alors l'équipe), clore un poste, effacer une candidature sur demande ou celles des postes clos depuis plus de 12 mois. Du candidat, seulement nom, numéro WhatsApp, provenance et une courte note : jamais de CIN, d'âge, de photo, de situation familiale ni de santé (loi 09-08). Réservé à la direction.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      action: { type: "string", enum: ["ouvrir_poste", "candidature", "suite_candidature", "clore_poste", "effacer_candidature", "effacer_anciennes"] },
+      poste: { type: "string", description: "ouvrir_poste : l'intitulé ; candidature : le numéro du poste ; clore_poste : le numéro du poste ; chaîne vide sinon." },
+      numero: { type: "integer", description: "suite_candidature, effacer_candidature : numéro de la candidature ; 0 sinon." },
+      nom: { type: "string", description: "candidature : nom du candidat ; chaîne vide sinon." },
+      telephone: { type: "string", description: "candidature : numéro WhatsApp s'il est donné ; chaîne vide sinon." },
+      provenance: { type: "string", description: "candidature : d'où elle vient (ANAPEC, bouche-à-oreille, Instagram…) ; ouvrir_poste : le besoin en une phrase ; chaîne vide sinon." },
+      statut: { type: "string", enum: ["", "entretien", "retenu", "refuse", "embauche", "pourvu", "annule"], description: "suite_candidature : entretien, retenu, refuse ou embauche ; clore_poste : pourvu ou annule ; chaîne vide sinon." },
+      date: { type: "string", description: "JJ/MM/AAAA : date de l'entretien, ou date d'entrée pour une embauche ; chaîne vide sinon." },
+      contrat: { type: "string", enum: ["", ...Object.keys(CONTRACT_KINDS)], description: "ouvrir_poste : contrat prévu s'il est dit ; chaîne vide sinon." },
+      categorie: { type: "string", enum: ["", ...Object.keys(JOB_CATEGORIES)], description: "ouvrir_poste : catégorie si dite ; chaîne vide sinon." },
+      note: { type: "string", description: "Une courte note professionnelle (expérience, impression d'entretien) ; chaîne vide sinon." }
+    },
+    required: ["action", "poste", "numero", "nom", "telephone", "provenance", "statut", "date", "contrat", "categorie", "note"]
+  }
+});
+
+const TRAINING_TOOL = Object.freeze({
+  type: "function",
+  name: "formation",
+  description: "Les formations de l'équipe : en planifier une (« Samir et Karim font la formation sécurité machines le 10/12 »), la dire réalisée ou annulée. Une formation à durée de validité (habilitation, secourisme) remonte en alerte 30 jours avant son échéance.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      action: { type: "string", enum: ["planifier", "realisee", "annulee"] },
+      numero: { type: "integer", description: "realisee, annulee : numéro de la formation ; 0 pour planifier." },
+      intitule: { type: "string", description: "planifier : la formation ; chaîne vide sinon." },
+      salaries: { type: "array", items: { type: "string" }, description: "planifier : les noms des salariés ; liste vide sinon." },
+      du: { type: "string", description: "planifier : JJ/MM/AAAA ; chaîne vide sinon." },
+      au: { type: "string", description: "planifier : JJ/MM/AAAA, même jour si une journée ; chaîne vide sinon." },
+      organisme: { type: "string", description: "Qui la donne, si dit ; chaîne vide sinon." },
+      valable_jusqu_au: { type: "string", description: "JJ/MM/AAAA si la formation a une échéance ; chaîne vide sinon." }
+    },
+    required: ["action", "numero", "intitule", "salaries", "du", "au", "organisme", "valable_jusqu_au"]
+  }
+});
+
+const RH_AGENT = [OVERVIEW_TOOL, ADD_EMPLOYEE_TOOL, PRESENCE_TOOL, LEAVE_REQUEST_TOOL, PAYROLL_TOOL, HR_CORRECTION_TOOL, CONTRACT_TOOL, RECRUITMENT_TOOL, TRAINING_TOOL];
+export const DIRECTOR_HR_TOOLS = Object.freeze([OVERVIEW_TOOL, ADD_EMPLOYEE_TOOL, PRESENCE_TOOL, LEAVE_REQUEST_TOOL, LEAVE_DECISION_TOOL, PAYROLL_TOOL, HR_CORRECTION_TOOL, CONTRACT_TOOL, RECRUITMENT_TOOL, TRAINING_TOOL]);
 export const HR_TOOL_NAMES = Object.freeze(DIRECTOR_HR_TOOLS.map((tool) => tool.name));
 
 // The RH agent prepares, the direction decides: no leave decision for it.
@@ -187,6 +252,35 @@ export async function runHrTool(name, args, { books, confidential = true }, by) 
         const employee = await hr.leaveCompany(args.texte, { endDate: args.date, by });
         return { ok: true, depart: `${employee.name}, dernier jour le ${frenchDay(employee.endDate)}` };
       }
+      case CONTRACT_TOOL.name: {
+        if (confidential === false) {
+          return { ok: false, erreur: "Les contrats sont réservés à la direction." };
+        }
+        const contract = await hr.setContract({ who: args.salarie, kind: args.type, start: args.debut, end: args.fin, category: args.categorie, trial: args.fin_essai, note: args.note, by });
+        await books.team?.log({ agent: "hr", kind: "rh", text: `Contrat n° ${contract.number} (${CONTRACT_KINDS[contract.kind]}) enregistré pour ${contract.employee}.`, ref: `contrat:${contract.number}`, by }).catch(() => {});
+        return {
+          ok: true,
+          contrat: `n° ${contract.number} : ${CONTRACT_KINDS[contract.kind]} de ${contract.employee}, du ${frenchDay(contract.start)}${contract.end ? ` au ${frenchDay(contract.end)}` : ""}`,
+          periode_d_essai: contract.trialEnd ? `jusqu'au ${frenchDay(contract.trialEnd)}` : "aucune notée (la donner si le contrat en prévoit une)",
+          ...(contract.replaced.length > 0 ? { remplace: `contrat n° ${contract.replaced.join(", ")}` } : {}),
+          ...(contract.kind === "cdd" && contract.fixedTermCount > 2 ? { attention: `${contract.fixedTermCount}e CDD pour ${contract.employee} : vérifier avec le comptable ou le conseil juridique que le cas de recours et le renouvellement restent permis (art. 16 et 17 du Code du travail).` } : {}),
+          rappel: "Le contrat signé reste le document qui fait foi : ce carnet n'en garde que les dates."
+        };
+      }
+      case RECRUITMENT_TOOL.name:
+        if (confidential === false) {
+          return { ok: false, erreur: "Le recrutement est réservé à la direction." };
+        }
+        return await runRecruitment(args, hr, books, by);
+      case TRAINING_TOOL.name: {
+        if (args.action === "planifier") {
+          const training = await hr.planTraining({ title: args.intitule, who: args.salaries, from: args.du, to: args.au, provider: args.organisme, validUntil: args.valable_jusqu_au, by });
+          await books.team?.log({ agent: "hr", kind: "rh", text: `Formation « ${training.title} » planifiée pour ${training.names.join(", ")}.`, ref: `formation:${training.number}`, by }).catch(() => {});
+          return { ok: true, formation: describeTraining(training) };
+        }
+        const training = await hr.updateTraining(args.numero, { status: args.action, validUntil: args.valable_jusqu_au, by });
+        return { ok: true, formation: describeTraining(training) };
+      }
       default:
         return { ok: false, erreur: `Outil RH inconnu : ${name}.` };
     }
@@ -196,6 +290,46 @@ export async function runHrTool(name, args, { books, confidential = true }, by) 
     }
     throw error;
   }
+}
+
+async function runRecruitment(args, hr, books, by) {
+  switch (args.action) {
+    case "ouvrir_poste": {
+      const position = await hr.openPosition({ title: args.poste, category: args.categorie, kind: args.contrat, need: args.provenance || args.note, by });
+      await books.team?.log({ agent: "hr", kind: "rh", text: `Poste n° ${position.number} ouvert : ${position.title}.`, ref: `poste:${position.number}`, by }).catch(() => {});
+      return { ok: true, poste: `n° ${position.number} : ${position.title}${position.kind ? `, ${CONTRACT_KINDS[position.kind]}` : ""}`, suite: "Les candidatures se notent sur ce numéro de poste." };
+    }
+    case "candidature": {
+      const candidate = await hr.addCandidate({ position: args.poste, name: args.nom, phone: args.telephone, source: args.provenance, note: args.note, by });
+      return { ok: true, candidature: `n° ${candidate.number} : ${candidate.name}, poste ${candidate.position}${candidate.source ? `, via ${candidate.source}` : ""}` };
+    }
+    case "suite_candidature": {
+      const candidate = await hr.updateCandidate(args.numero, { status: args.statut, interview: args.date, note: args.note, startDate: args.date, by });
+      return {
+        ok: true,
+        candidature: `n° ${candidate.number} : ${candidate.name}, ${CANDIDATE_STATUSES[candidate.status]}${candidate.status === "entretien" ? ` le ${frenchDay(candidate.interview)}` : ""}`,
+        ...(candidate.employee ? { equipe: `${candidate.employee.name} ajouté(e) à l'équipe, ${candidate.employee.role}, entrée le ${frenchDay(candidate.employee.startDate)}`, suite: "Enregistrer son contrat (contrat_salarie) dès qu'il est signé." } : {})
+      };
+    }
+    case "clore_poste": {
+      const position = await hr.closePosition(args.poste, { status: args.statut, by });
+      return { ok: true, poste: `n° ${position.number} (${position.title}) ${POSITION_STATUSES[position.status]}`, rappel: "Les données des candidats non embauchés s'effacent 12 mois après la clôture (Amélioration le rappelle)." };
+    }
+    case "effacer_candidature": {
+      await hr.eraseCandidates(args.numero);
+      return { ok: true, efface: `candidature n° ${args.numero} et ses données` };
+    }
+    case "effacer_anciennes": {
+      const { erased } = await hr.eraseCandidates();
+      return { ok: true, efface: erased > 0 ? `${erased} candidature(s) de postes clos depuis plus de 12 mois` : "aucune candidature à effacer" };
+    }
+    default:
+      return { ok: false, erreur: "Action de recrutement inconnue." };
+  }
+}
+
+function describeTraining(training) {
+  return `n° ${training.number} : « ${training.title} » pour ${training.names.join(", ")}, ${training.from === training.to ? `le ${frenchDay(training.from)}` : `du ${frenchDay(training.from)} au ${frenchDay(training.to)}`}${training.provider ? `, par ${training.provider}` : ""}, ${TRAINING_STATUSES[training.status]}${training.validUntil ? `, valable jusqu'au ${frenchDay(training.validUntil)}` : ""}`;
 }
 
 function describeBalance(balance) {
@@ -215,6 +349,13 @@ function describeOverview(overview) {
     demandes_de_conge_en_attente: overview.pendingLeaves.map((leave) => `n° ${leave.number} : ${leave.name}, ${leave.kind}, du ${frenchDay(leave.from)} au ${frenchDay(leave.to)} (${leave.days} j)${leave.note ? ` — ${leave.note}` : ""}`),
     conges_a_venir: overview.upcomingLeaves.map((leave) => `${leave.name} : du ${frenchDay(leave.from)} au ${frenchDay(leave.to)} (${leave.days} j)`),
     derniers_14_jours: overview.recent.map((event) => `n° ${event.number} ${frenchDay(event.day)} ${event.name} : ${event.label}${event.hours ? ` ${event.hours} h` : ""}${event.kind === "absence" ? (event.justified ? " justifiée" : " non justifiée") : ""}${event.reason ? ` (${event.reason})` : ""}`),
-    jours_feries_a_venir_ajoutes: overview.holidays.map((holiday) => `${frenchDay(holiday.day)} ${holiday.label}`)
+    jours_feries_a_venir_ajoutes: overview.holidays.map((holiday) => `${frenchDay(holiday.day)} ${holiday.label}`),
+    ...(overview.contracts.length > 0 ? { contrats: overview.contracts.map((entry) => entry.number ? `${entry.name} : ${entry.label} n° ${entry.number} depuis le ${frenchDay(entry.start)}${entry.end ? `, fin le ${frenchDay(entry.end)}` : ""}${entry.trialEnd ? `, essai jusqu'au ${frenchDay(entry.trialEnd)}` : ""}` : `${entry.name} : aucun contrat noté`) } : {}),
+    postes_ouverts: overview.positions.map((position) => ({
+      poste: `n° ${position.number} : ${position.title}, ouvert le ${frenchDay(position.openedOn)}, ${position.applications} candidature(s)`,
+      ...(position.candidates.length > 0 ? { candidats: position.candidates.map((candidate) => `n° ${candidate.number} ${candidate.name} : ${candidate.label}${candidate.interview && candidate.status === "entretien" ? ` le ${frenchDay(candidate.interview)}` : ""}${candidate.source ? `, via ${candidate.source}` : ""}${candidate.note ? ` — ${candidate.note}` : ""}`) } : {})
+    })),
+    formations: overview.trainings.map(describeTraining),
+    alertes_rh: overview.alerts.map((alert) => alert.text)
   };
 }

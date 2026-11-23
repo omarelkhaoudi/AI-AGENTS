@@ -40,7 +40,8 @@ const SOURCE_TEXTS = Object.freeze({
   commercial: { found: "Alerte commerciale relevée sur les documents émis.", gone: "Les documents ne la montrent plus : alerte levée." },
   stock: { found: "Alerte de stock relevée au registre de stock.", gone: "Le registre de stock ne la montre plus : alerte levée." },
   budget: { found: "Alerte budgétaire relevée sur la caisse et les budgets de la direction.", gone: "La caisse ne la montre plus : alerte levée." },
-  planning: { found: "Date promise intenable d'après la charge de l'atelier.", gone: "La charge de l'atelier permet de nouveau la date promise : alerte levée." }
+  planning: { found: "Date promise intenable d'après la charge de l'atelier.", gone: "La charge de l'atelier permet de nouveau la date promise : alerte levée." },
+  rh: { found: "Alerte RH relevée au carnet RH.", gone: "Le carnet RH ne la montre plus : alerte levée." }
 });
 
 export class ImprovementError extends Error {
@@ -98,7 +99,7 @@ function createImprovementBook({ book, clock }) {
             const anomaly = { id: randomUUID(), number: nextNumber(state.anomalies), ...fact, severity: fact.severity ?? (fact.kind === "blocage" ? "haute" : "moyenne"), status: "a_analyser", detectedAt: at, journal: [{ at, by: "director", text: (SOURCE_TEXTS[fact.source] ?? SOURCE_TEXTS.atelier).found }] };
             state.anomalies.push(anomaly);
             found.push(Object.freeze({ ...anomaly }));
-          } else if (open && ["planning", "commercial"].includes(fact.source) && open.fact !== fact.fact) {
+          } else if (open && ["planning", "commercial", "rh"].includes(fact.source) && open.fact !== fact.fact) {
             // The estimated end moves with the workshop's load, a file gets
             // completed, an amount is invoiced: the open alert says what is
             // true today, not what was first found.
@@ -249,11 +250,11 @@ function createImprovementBook({ book, clock }) {
           anomaly.liftedAt = at;
           anomaly.journal.push({ at, by, text: "Anomalie levée." });
         }
-        // A commercial, stock, budget or planning alert dealt with stays so
+        // A commercial, stock, budget, planning or RH alert dealt with stays so
         // while the documents, the registers or the cash book show the same
         // fact (a duplicate name cannot be unwritten; a material ordered is
         // still low until it arrives).
-        if (["commercial", "stock", "budget", "planning"].includes(anomaly.source)) {
+        if (["commercial", "stock", "budget", "planning", "rh"].includes(anomaly.source)) {
           anomaly.heldUntilGone = true;
         }
         if (anomaly.task && anomaly.task.status !== "cloturee") {

@@ -1478,7 +1478,7 @@ async function refreshHr() {
 function renderHr({ overview, payroll, canDecide }) {
   hrCount.textContent = String(overview.pendingLeaves.length);
   hrCount.hidden = overview.pendingLeaves.length === 0;
-  if (overview.headcount === 0) {
+  if (overview.headcount === 0 && (overview.positions ?? []).length === 0) {
     hrStats.innerHTML = "";
     hrBody.innerHTML = `
       <div class="all-clear">
@@ -1493,7 +1493,7 @@ function renderHr({ overview, payroll, canDecide }) {
     ["Effectif", overview.headcount, "salariés en poste"],
     ["Absents aujourd'hui", overview.absentToday.length, "absence ou congé"],
     ["Congés à décider", overview.pendingLeaves.length, canDecide ? "par vous, ci-dessous" : "par la direction"],
-    ["Congés à venir", overview.upcomingLeaves.length, "dans les 30 jours"]
+    (overview.positions ?? []).length > 0 ? ["Postes ouverts", overview.positions.length, "au recrutement"] : ["Congés à venir", overview.upcomingLeaves.length, "dans les 30 jours"]
   ];
   hrStats.innerHTML = tiles.map(([label, value, hint], index) => `
     <div class="stat-tile ${index === 2 && value > 0 ? "is-alert" : ""}"><strong>${value}</strong><span>${escapeHtml(label)}</span><small>${escapeHtml(hint)}</small></div>
@@ -1508,6 +1508,9 @@ function renderHr({ overview, payroll, canDecide }) {
       </article>
     `).join("")));
   }
+  if ((overview.alerts ?? []).length > 0) {
+    sections.push(improvementSection("À traiter", "Fins de contrat, fins d'essai, formations à renouveler : elles sont aussi dans Amélioration.", `<ul class="flex flex-col gap-1">${overview.alerts.map((alert) => `<li>${alert.severity === "haute" ? `<span class="tag warning">urgent</span> ` : ""}${escapeHtml(alert.text)}</li>`).join("")}</ul>`));
+  }
   if (overview.absentToday.length > 0 || overview.upcomingLeaves.length > 0) {
     sections.push(improvementSection("Absences", "Aujourd'hui, puis les congés approuvés des 30 prochains jours.", `<ul class="flex flex-col gap-1">${[
       ...overview.absentToday.map((entry) => `<li><strong>${escapeHtml(entry.name)}</strong> : ${escapeHtml(entry.why)}</li>`),
@@ -1518,6 +1521,30 @@ function renderHr({ overview, payroll, canDecide }) {
     ["Salarié", "Poste", "Entrée", "Acquis", "Pris", "Reste"],
     overview.employees.map((employee) => `<tr><td>${escapeHtml(employee.name)}</td><td>${escapeHtml(employee.role || "—")}</td><td>${formatIsoDay(employee.startDate)}</td><td class="num">${employee.leave.earned}</td><td class="num">${employee.leave.taken}</td><td class="num">${employee.leave.eligible ? employee.leave.remaining : `${employee.leave.remaining} <small>(dû après 6 mois)</small>`}</td></tr>`)
   )));
+  if ((overview.contracts ?? []).length > 0) {
+    sections.push(improvementSection("Contrats", "Le contrat en cours de chacun, et la fin de sa période d'essai (art. 14 du Code du travail). Le contrat signé fait foi.", table(
+      ["Salarié", "Contrat", "Début", "Fin", "Fin d'essai"],
+      overview.contracts.map((entry) => entry.number
+        ? `<tr><td>${escapeHtml(entry.name)}</td><td>${escapeHtml(entry.label)} <small>n° ${entry.number}</small></td><td>${formatIsoDay(entry.start)}</td><td>${entry.end ? formatIsoDay(entry.end) : "—"}</td><td>${entry.trialEnd ? formatIsoDay(entry.trialEnd) : "—"}</td></tr>`
+        : `<tr><td>${escapeHtml(entry.name)}</td><td colspan="4"><small>Aucun contrat noté : « ${escapeHtml(entry.name.split(" ")[0])} est en CDI depuis le … »</small></td></tr>`)
+    )));
+  }
+  const positions = overview.positions ?? [];
+  if (positions.length > 0) {
+    sections.push(improvementSection("Recrutement", canDecide ? "Du candidat, seulement le nom, le numéro, la provenance et une note (loi 09-08). Ses données s'effacent 12 mois après la clôture du poste." : "Les postes ouverts. Les candidatures sont réservées à la direction.", positions.map((position) => `
+      <article class="rule-card">
+        <p><strong>Poste n° ${position.number} : ${escapeHtml(position.title)}</strong> <small>ouvert le ${formatIsoDay(position.openedOn)} · ${position.applications} candidature${position.applications > 1 ? "s" : ""}</small>${position.need ? `<br><small>${escapeHtml(position.need)}</small>` : ""}</p>
+        ${position.candidates.length > 0 ? `<ul class="flex flex-col gap-1">${position.candidates.map((candidate) => `<li>n° ${candidate.number} <strong>${escapeHtml(candidate.name)}</strong> — ${escapeHtml(candidate.label)}${candidate.status === "entretien" && candidate.interview ? ` le ${formatIsoDay(candidate.interview)}` : ""}${candidate.source ? ` <small>via ${escapeHtml(candidate.source)}</small>` : ""}${candidate.note ? ` <small>· ${escapeHtml(candidate.note)}</small>` : ""}</li>`).join("")}</ul>` : ""}
+      </article>
+    `).join("")));
+  }
+  const trainings = overview.trainings ?? [];
+  if (trainings.length > 0) {
+    sections.push(improvementSection("Formations", "Planifiées, et réalisées ces deux derniers mois.", table(
+      ["Formation", "Salariés", "Dates", "État", "Valable jusqu'au"],
+      trainings.map((training) => `<tr><td>${escapeHtml(training.title)} <small>n° ${training.number}${training.provider ? ` · ${escapeHtml(training.provider)}` : ""}</small></td><td>${escapeHtml(training.names.join(", "))}</td><td>${training.from === training.to ? formatIsoDay(training.from) : `${formatIsoDay(training.from)} → ${formatIsoDay(training.to)}`}</td><td>${escapeHtml(training.label)}</td><td>${training.validUntil ? formatIsoDay(training.validUntil) : "—"}</td></tr>`)
+    )));
+  }
   if (payroll) {
     const month = new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${payroll.month}-01T00:00:00Z`));
     sections.push(improvementSection(`Variables de paie — ${month}`, `${payroll.workingDays} jours ouvrables. Sans montant : la paie, la CNSS et l'IR sont calculés par le comptable.`, table(
@@ -1848,7 +1875,7 @@ async function refreshCommercialRules() {
 }
 
 // What each kind of anomaly is called in the cards.
-const ANOMALY_SOURCE_LABELS = Object.freeze({ commercial: "Alerte commerciale", stock: "Alerte de stock", budget: "Alerte budgétaire", planning: "Alerte de planning" });
+const ANOMALY_SOURCE_LABELS = Object.freeze({ commercial: "Alerte commerciale", stock: "Alerte de stock", budget: "Alerte budgétaire", planning: "Alerte de planning", rh: "Alerte RH" });
 const ANOMALY_KIND_LABELS = Object.freeze({
   retard: "retard",
   blocage: "blocage",
@@ -1857,6 +1884,10 @@ const ANOMALY_KIND_LABELS = Object.freeze({
   marge_sous_seuil: "marge sous le seuil",
   ecart_devis_commande: "écart devis / commande",
   client_en_double: "client en double",
+  fin_contrat: "fin de contrat",
+  fin_essai: "fin de période d'essai",
+  formation_a_renouveler: "formation à renouveler",
+  donnees_candidats: "données de candidats à effacer",
   ecart_commande_facture: "écart commande / facture",
   doublon_document: "document en double",
   dossier_incomplet: "dossier incomplet",
@@ -2131,7 +2162,7 @@ function anomalyCard(anomaly, canAnalyse) {
         ${anomaly.task?.status === "resolue" ? `
           <button type="button" class="primary" data-closure="${anomaly.number}:confirmer">${icon("check")}Confirmer la clôture</button>
           <button type="button" class="link-button" data-closure="${anomaly.number}:rouvrir">Rouvrir</button>` : ""}
-        ${["signalee", "commercial", "stock", "budget", "planning"].includes(anomaly.source) && !anomaly.task ? `<button type="button" class="link-button" data-lift="${anomaly.number}">Marquer réglée</button>` : ""}
+        ${["signalee", "commercial", "stock", "budget", "planning", "rh"].includes(anomaly.source) && !anomaly.task ? `<button type="button" class="link-button" data-lift="${anomaly.number}">Marquer réglée</button>` : ""}
         ${isOpenAnomaly(anomaly) && !anomaly.falseAlarm ? `<button type="button" class="link-button" data-false-alarm="${anomaly.number}">Fausse alerte</button>` : ""}
       </div>
     </article>

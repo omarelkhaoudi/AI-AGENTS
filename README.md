@@ -628,6 +628,44 @@ au Director. L'agent RH ne décide d'aucun congé.
 Le motif d'une absence n'est montré qu'à qui voit le confidentiel (loi 09-08).
 Tout est gardé dans `data/rh.json`.
 
+### Contrats, recrutement et formations
+
+Le même carnet garde aussi, sur ce que la direction dit au Director ou à
+l'agent RH :
+
+- **les contrats** (outil `contrat_salarie`) : CDI, CDD, contrat d'insertion
+  ANAPEC ou stage, avec leurs dates.
+  - Un nouveau contrat remplace celui en cours (renouvellement, passage en CDI).
+  - La période d'essai est celle que la direction donne. Sinon, c'est celle de
+    l'art. 14 du Code du travail :
+    - pour un CDI : 3 mois (cadre), 1 mois et demi (employé), 15 jours (ouvrier) ;
+    - pour un CDD : 1 jour par semaine, 2 semaines au plus, sous 6 mois ;
+      1 mois au-delà.
+  - Seules les dates sont gardées, jamais le salaire : le contrat signé fait foi.
+- **le recrutement** (outil `recrutement`) : postes ouverts, candidatures,
+  entretiens, puis embauche.
+  - Un candidat embauché rejoint l'équipe et son poste est pourvu.
+  - Du candidat, on ne garde que le nom, le numéro WhatsApp, la provenance et
+    une courte note (loi 09-08).
+  - Ses données s'effacent sur demande, ou 12 mois après la clôture du poste.
+- **les formations** (outil `formation`) : planifiées, réalisées ou annulées,
+  avec leur date de fin de validité s'il y en a une.
+
+Les contrats et les candidatures sont réservés à la direction. Les autres
+voient les postes ouverts et les formations.
+
+Les alertes RH remontent dans **Amélioration**, confiées à l'agent RH :
+
+| Alerte | Quand | Gravité |
+| --- | --- | --- |
+| Fin de contrat | un CDD, un contrat ANAPEC ou un stage finit dans les 30 jours, ou est fini alors que le salarié est toujours là | haute à 7 jours ou moins, sinon moyenne |
+| Fin de période d'essai | dans les 7 jours | moyenne |
+| Formation à renouveler | sa validité finit dans les 30 jours, sans nouvelle session prévue | moyenne |
+| Données de candidats | des candidatures de postes clos depuis plus de 12 mois | faible |
+
+Une alerte disparaît d'elle-même quand le carnet ne la montre plus : un
+contrat renouvelé, une session planifiée, des données effacées.
+
 ### Abonnements : facturer les entreprises clientes
 
 Le cockpit qui vend les abonnements (celui de H-KIDS, sans `HKIDS_PLAN`) a une

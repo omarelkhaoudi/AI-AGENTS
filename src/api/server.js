@@ -484,11 +484,20 @@ export function buildApi({
       return undefined;
     }
   };
+  // The contracts ending, the trials ending, the trainings to renew and the
+  // candidates' data kept too long (hr-book.js).
+  const readHrFacts = async () => {
+    try {
+      return await hr.facts();
+    } catch {
+      return undefined;
+    }
+  };
   const improvement = Object.freeze({
     ...improvementRecords,
     async sync(orders) {
-      const [commercial, stockAlerts, budgetAlerts, planning] = await Promise.all([readCommercialFacts(orders), readStockFacts(), readBudgetFacts(orders), readCapacityFacts(orders)]);
-      const found = await improvementRecords.sync(orders, { commercial, stock: stockAlerts, budget: budgetAlerts, planning });
+      const [commercial, stockAlerts, budgetAlerts, planning, rh] = await Promise.all([readCommercialFacts(orders), readStockFacts(), readBudgetFacts(orders), readCapacityFacts(orders), readHrFacts()]);
+      const found = await improvementRecords.sync(orders, { commercial, stock: stockAlerts, budget: budgetAlerts, planning, rh });
       await whatsApp.alertLeads(found, orders);
       await whatsApp.alertSevere(found);
       for (const anomaly of found.filter((entry) => entry.kind === "retard")) {

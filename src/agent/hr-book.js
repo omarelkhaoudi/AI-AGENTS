@@ -22,6 +22,24 @@ export const ABSENCE_KINDS = Object.freeze({ absence: "Absence", retard: "Retard
 export const LEAVE_KINDS = Object.freeze({ annuel: "Congé payé annuel", maladie: "Congé maladie", sans_solde: "Congé sans solde", exceptionnel: "Congé exceptionnel (mariage, naissance, décès…)" });
 export const LEAVE_STATUSES = Object.freeze({ demande: "demandé", approuve: "approuvé", refuse: "refusé", annule: "annulé" });
 
+// The contracts (Code du travail, art. 13 to 17) and the trial periods of
+// art. 14: for a CDI, three months for a cadre, a month and a half for an
+// employee, fifteen days for a worker, renewable once; for a CDD, a day per
+// week of work up to two weeks under six months, a month beyond.
+export const CONTRACT_KINDS = Object.freeze({ cdi: "CDI", cdd: "CDD", anapec: "Contrat d'insertion ANAPEC", stage: "Convention de stage" });
+export const CONTRACT_STATUSES = Object.freeze({ actif: "en cours", remplace: "remplacé", termine: "terminé" });
+export const JOB_CATEGORIES = Object.freeze({ cadre: "cadre ou assimilé", employe: "employé", ouvrier: "ouvrier" });
+
+// Recruitment keeps the least a choice needs (loi 09-08): a name, a WhatsApp
+// number, where the application came from and a short note. Never a CIN, an
+// age, a photo, a family or a health detail. Once the position is closed, the
+// candidates' data is kept CANDIDATE_KEEP_MONTHS, then erased on the
+// direction's word (Amélioration reminds it).
+export const POSITION_STATUSES = Object.freeze({ ouvert: "ouvert", pourvu: "pourvu", annule: "annulé" });
+export const CANDIDATE_STATUSES = Object.freeze({ recu: "candidature reçue", entretien: "entretien prévu", retenu: "retenu", refuse: "non retenu", embauche: "embauché" });
+export const CANDIDATE_KEEP_MONTHS = 12;
+export const TRAINING_STATUSES = Object.freeze({ planifiee: "planifiée", realisee: "réalisée", annulee: "annulée" });
+
 // The public holidays at a fixed date. The religious ones move with the moon:
 // the direction adds them each year (holidays in the book).
 const FIXED_HOLIDAYS = ["01-01", "01-11", "01-14", "05-01", "07-30", "08-14", "08-20", "08-21", "11-06", "11-18"];
@@ -34,7 +52,7 @@ export class HrBookError extends Error {
   }
 }
 
-const EMPTY = { employees: [], events: [], leaves: [], holidays: [] };
+const EMPTY = { employees: [], events: [], leaves: [], holidays: [], contracts: [], positions: [], candidates: [], trainings: [] };
 
 export function createMemoryHrBook({ clock = () => new Date() } = {}) {
   return hrBook(createMemoryJsonBook(EMPTY), clock);
@@ -61,6 +79,21 @@ function hrBook(book, clock) {
     }
     return found[0];
   };
+  const findPosition = (state, number) => {
+    const position = (state.positions ?? []).find((entry) => String(entry.number) === text(number));
+    if (!position) {
+      throw new HrBookError(`Aucun poste n° ${text(number)} au recrutement : l'ouvrir d'abord.`, "HR_POSITION_NOT_FOUND");
+    }
+    return position;
+  };
+  const pushEmployee = (state, { name, role, startDate, phone, by }) => {
+    if (state.employees.some((employee) => employee.active && normalized(employee.name) === normalized(name))) {
+      throw new HrBookError(`${text(name)} est déjà dans l'équipe.`, "HR_EMPLOYEE_EXISTS");
+    }
+    const employee = { id: randomUUID(), name: text(name), role: text(role), phone: text(phone).replace(/[^\d+]/g, ""), startDate, active: true, addedBy: text(by), addedAt: clock().toISOString() };
+    state.employees.push(employee);
+    return Object.freeze({ ...employee });
+  };
   const day = (value, fallback) => {
     if (!text(value)) {
       return fallback;
@@ -85,14 +118,7 @@ function hrBook(book, clock) {
       if (!start) {
         throw new HrBookError("La date d'entrée est obligatoire (JJ/MM/AAAA) : les congés en dépendent.", "HR_START_MISSING");
       }
-      return book.change((state) => {
-        if (state.employees.some((employee) => employee.active && normalized(employee.name) === normalized(name))) {
-          throw new HrBookError(`${text(name)} est déjà dans l'équipe.`, "HR_EMPLOYEE_EXISTS");
-        }
-        const employee = { id: randomUUID(), name: text(name), role: text(role), phone: text(phone).replace(/[^\d+]/g, ""), startDate: start, active: true, addedBy: text(by), addedAt: clock().toISOString() };
-        state.employees.push(employee);
-        return Object.freeze({ ...employee });
-      });
+      return book.change((state) => pushEmployee(state, { name, role, startDate: start, phone, by }));
     },
 
     async leaveCompany(who, { endDate = "", by = "direction" } = {}) {
@@ -101,6 +127,11 @@ function hrBook(book, clock) {
         employee.active = false;
         employee.endDate = day(endDate, today());
         employee.endedBy = text(by);
+        // Its contract in force ends with it.
+        for (const contract of (state.contracts ?? []).filter((entry) => entry.employeeId === employee.id && entry.status === "actif")) {
+          contract.status = "termine";
+          contract.endedOn = employee.endDate;
+        }
         return Object.freeze({ ...employee });
       });
     },
@@ -123,7 +154,7 @@ function hrBook(book, clock) {
         if (kind === "absence" && state.events.some((event) => !event.cancelled && event.employeeId === employee.id && event.kind === "absence" && event.day === when)) {
           throw new HrBookError(`L'absence de ${employee.name} le ${frenchDay(when)} est déjà notée.`, "HR_DUPLICATE");
         }
-        const event = { id: randomUUID(), number: state.events.reduce((max, other) => Math.max(max, other.number ?? 0), 0) + 1, employeeId: employee.id, kind, day: when, hours: kind === "absence" ? 0 : amount, reason: text(reason), justified: justified === true, by: text(by), at: clock().toISOString() };
+        const event = { id: randomUUID(), number: nextNumber(state.events), employeeId: employee.id, kind, day: when, hours: kind === "absence" ? 0 : amount, reason: text(reason), justified: justified === true, by: text(by), at: clock().toISOString() };
         state.events.push(event);
         return Object.freeze({ ...event, employee: employee.name });
       });
@@ -184,6 +215,196 @@ function hrBook(book, clock) {
       });
     },
 
+    // A contract for an employee: the new one replaces the one in force (a
+    // renewal, a CDD turned CDI). The trial period is the one said, or the
+    // one art. 14 gives for the kind and category.
+    async setContract({ who, kind, start = "", end = "", category = "", trial = "", note = "", by = "direction" }) {
+      if (!Object.hasOwn(CONTRACT_KINDS, kind)) {
+        throw new HrBookError(`Type de contrat : ${Object.values(CONTRACT_KINDS).join(", ")}.`, "HR_CONTRACT_KIND_UNKNOWN");
+      }
+      if (text(category) && !Object.hasOwn(JOB_CATEGORIES, text(category))) {
+        throw new HrBookError(`Catégorie : ${Object.values(JOB_CATEGORIES).join(", ")}.`, "HR_CATEGORY_UNKNOWN");
+      }
+      const from = day(start, null);
+      if (!from) {
+        throw new HrBookError("Donner la date de début du contrat (JJ/MM/AAAA).", "HR_CONTRACT_START_MISSING");
+      }
+      const to = day(end, null);
+      if (kind === "cdi" && to) {
+        throw new HrBookError("Un CDI n'a pas de date de fin : un départ se note à part.", "HR_CONTRACT_END_CDI");
+      }
+      if (kind !== "cdi" && !to) {
+        throw new HrBookError(`Un ${CONTRACT_KINDS[kind]} a une date de fin : la donner (JJ/MM/AAAA).`, "HR_CONTRACT_END_MISSING");
+      }
+      if (to && to < from) {
+        throw new HrBookError("La fin du contrat est avant son début.", "HR_CONTRACT_DATES");
+      }
+      const trialDay = day(trial, null) ?? trialEndFor(kind, text(category), from, to);
+      if (trialDay && (trialDay < from || (to && trialDay > to))) {
+        throw new HrBookError("La fin de la période d'essai doit tomber pendant le contrat.", "HR_TRIAL_DATES");
+      }
+      return book.change((state) => {
+        const employee = findEmployee(state, who);
+        const contracts = (state.contracts ??= []);
+        const previous = contracts.filter((contract) => contract.employeeId === employee.id && contract.status === "actif");
+        const contract = { id: randomUUID(), number: nextNumber(contracts), employeeId: employee.id, kind, category: text(category), start: from, end: to ?? null, trialEnd: trialDay ?? null, note: text(note), status: "actif", by: text(by), at: clock().toISOString() };
+        for (const other of previous) {
+          other.status = "remplace";
+          other.replacedBy = contract.number;
+        }
+        contracts.push(contract);
+        const fixedTerm = contracts.filter((other) => other.employeeId === employee.id && other.kind === "cdd").length;
+        return Object.freeze({ ...contract, employee: employee.name, replaced: previous.map((other) => other.number), fixedTermCount: fixedTerm });
+      });
+    },
+
+    async openPosition({ title, category = "", kind = "", need = "", by = "direction" }) {
+      if (!text(title)) {
+        throw new HrBookError("Dire le poste à pourvoir (« menuisier », « commercial showroom »).", "HR_POSITION_TITLE_MISSING");
+      }
+      if (text(category) && !Object.hasOwn(JOB_CATEGORIES, text(category))) {
+        throw new HrBookError(`Catégorie : ${Object.values(JOB_CATEGORIES).join(", ")}.`, "HR_CATEGORY_UNKNOWN");
+      }
+      if (text(kind) && !Object.hasOwn(CONTRACT_KINDS, text(kind))) {
+        throw new HrBookError(`Type de contrat : ${Object.values(CONTRACT_KINDS).join(", ")}.`, "HR_CONTRACT_KIND_UNKNOWN");
+      }
+      return book.change((state) => {
+        const positions = (state.positions ??= []);
+        if (positions.some((position) => position.status === "ouvert" && normalized(position.title) === normalized(title))) {
+          throw new HrBookError(`Un poste « ${text(title)} » est déjà ouvert.`, "HR_POSITION_EXISTS");
+        }
+        const position = { id: randomUUID(), number: nextNumber(positions), title: text(title), category: text(category), kind: text(kind), need: text(need), status: "ouvert", openedOn: today(), by: text(by) };
+        positions.push(position);
+        return Object.freeze({ ...position });
+      });
+    },
+
+    async closePosition(number, { status, by = "direction" }) {
+      if (!["pourvu", "annule"].includes(status)) {
+        throw new HrBookError("Un poste se clôt pourvu ou annulé.", "HR_POSITION_STATUS_UNKNOWN");
+      }
+      return book.change((state) => {
+        const position = findPosition(state, number);
+        if (position.status !== "ouvert") {
+          throw new HrBookError(`Le poste n° ${position.number} est déjà ${POSITION_STATUSES[position.status]}.`, "HR_POSITION_CLOSED");
+        }
+        Object.assign(position, { status, closedOn: today(), closedBy: text(by) });
+        return Object.freeze({ ...position });
+      });
+    },
+
+    async addCandidate({ position, name, phone = "", source = "", note = "", by = "direction" }) {
+      if (!text(name)) {
+        throw new HrBookError("Le nom du candidat est obligatoire.", "HR_CANDIDATE_NAME_MISSING");
+      }
+      return book.change((state) => {
+        const job = findPosition(state, position);
+        if (job.status !== "ouvert") {
+          throw new HrBookError(`Le poste n° ${job.number} (${job.title}) est ${POSITION_STATUSES[job.status]} : plus de candidature.`, "HR_POSITION_CLOSED");
+        }
+        const candidates = (state.candidates ??= []);
+        if (candidates.some((candidate) => candidate.positionNumber === job.number && normalized(candidate.name) === normalized(name))) {
+          throw new HrBookError(`${text(name)} a déjà candidaté au poste n° ${job.number}.`, "HR_CANDIDATE_EXISTS");
+        }
+        const candidate = { id: randomUUID(), number: nextNumber(candidates), positionNumber: job.number, name: text(name), phone: text(phone).replace(/[^\d+]/g, ""), source: text(source), note: text(note), status: "recu", interview: null, receivedOn: today(), updatedOn: today(), by: text(by) };
+        candidates.push(candidate);
+        return Object.freeze({ ...candidate, position: job.title });
+      });
+    },
+
+    // A candidate moves on: an interview (its date), kept, not kept, or hired.
+    // Hired, the candidate joins the team with the position as job, and the
+    // position is filled.
+    async updateCandidate(number, { status, interview = "", note = "", startDate = "", by = "direction" }) {
+      if (!Object.hasOwn(CANDIDATE_STATUSES, status) || status === "recu") {
+        throw new HrBookError("Suite d'une candidature : entretien, retenu, non retenu ou embauché.", "HR_CANDIDATE_STATUS_UNKNOWN");
+      }
+      const meeting = day(interview, null);
+      if (status === "entretien" && !meeting) {
+        throw new HrBookError("Donner la date de l'entretien (JJ/MM/AAAA).", "HR_INTERVIEW_DATE_MISSING");
+      }
+      const start = day(startDate, null);
+      if (status === "embauche" && !start) {
+        throw new HrBookError("Donner la date d'entrée du nouveau salarié (JJ/MM/AAAA) : les congés en dépendent.", "HR_START_MISSING");
+      }
+      return book.change((state) => {
+        const candidate = (state.candidates ?? []).find((entry) => String(entry.number) === text(number));
+        if (!candidate) {
+          throw new HrBookError(`Aucune candidature n° ${text(number)}.`, "HR_CANDIDATE_NOT_FOUND");
+        }
+        if (candidate.status === "embauche") {
+          throw new HrBookError(`${candidate.name} est déjà embauché(e).`, "HR_CANDIDATE_HIRED");
+        }
+        const job = findPosition(state, candidate.positionNumber);
+        let employee = null;
+        if (status === "embauche") {
+          employee = pushEmployee(state, { name: candidate.name, role: job.title, startDate: start, phone: candidate.phone, by });
+          if (job.status === "ouvert") {
+            Object.assign(job, { status: "pourvu", closedOn: today(), closedBy: text(by) });
+          }
+        }
+        Object.assign(candidate, { status, interview: status === "entretien" ? meeting : candidate.interview, note: text(note) || candidate.note, updatedOn: today() });
+        return Object.freeze({ ...candidate, position: job.title, employee });
+      });
+    },
+
+    // The right to erasure (loi 09-08): one candidate on request, or every
+    // candidate of a position closed more than CANDIDATE_KEEP_MONTHS ago.
+    async eraseCandidates(number = null) {
+      return book.change((state) => {
+        const candidates = state.candidates ?? [];
+        const gone = number === null ? expiredCandidates(state, today()) : candidates.filter((entry) => String(entry.number) === text(number));
+        if (number !== null && gone.length === 0) {
+          throw new HrBookError(`Aucune candidature n° ${text(number)}.`, "HR_CANDIDATE_NOT_FOUND");
+        }
+        const ids = new Set(gone.map((entry) => entry.id));
+        state.candidates = candidates.filter((entry) => !ids.has(entry.id));
+        return Object.freeze({ erased: gone.length });
+      });
+    },
+
+    async planTraining({ title, who, from, to = "", provider = "", validUntil = "", by = "direction" }) {
+      if (!text(title)) {
+        throw new HrBookError("Dire la formation (« sécurité machines », « vernis à l'eau »).", "HR_TRAINING_TITLE_MISSING");
+      }
+      const start = day(from, null);
+      const end = day(to, start);
+      if (!start || end < start) {
+        throw new HrBookError("Donner les dates de la formation : du JJ/MM/AAAA au JJ/MM/AAAA.", "HR_TRAINING_DATES");
+      }
+      const valid = day(validUntil, null);
+      const names = (Array.isArray(who) ? who : text(who).split(/\s*(?:,|;|\bet\b)\s*/)).map(text).filter(Boolean);
+      if (names.length === 0) {
+        throw new HrBookError("Dire qui suit la formation.", "HR_TRAINING_WHO_MISSING");
+      }
+      return book.change((state) => {
+        const employees = [...new Map(names.map((name) => findEmployee(state, name)).map((employee) => [employee.id, employee])).values()];
+        const trainings = (state.trainings ??= []);
+        const training = { id: randomUUID(), number: nextNumber(trainings), title: text(title), employeeIds: employees.map((employee) => employee.id), from: start, to: end, provider: text(provider), validUntil: valid ?? null, status: "planifiee", by: text(by), at: clock().toISOString() };
+        trainings.push(training);
+        return Object.freeze({ ...training, names: employees.map((employee) => employee.name) });
+      });
+    },
+
+    async updateTraining(number, { status, validUntil = "", by = "direction" }) {
+      if (!Object.hasOwn(TRAINING_STATUSES, status)) {
+        throw new HrBookError("Une formation est planifiée, réalisée ou annulée.", "HR_TRAINING_STATUS_UNKNOWN");
+      }
+      const valid = day(validUntil, null);
+      return book.change((state) => {
+        const training = (state.trainings ?? []).find((entry) => String(entry.number) === text(number));
+        if (!training) {
+          throw new HrBookError(`Aucune formation n° ${text(number)}.`, "HR_TRAINING_NOT_FOUND");
+        }
+        if (status === "realisee" && training.from > today()) {
+          throw new HrBookError(`La formation n° ${training.number} commence le ${frenchDay(training.from)} : elle ne peut pas être déjà réalisée.`, "HR_TRAINING_FUTURE");
+        }
+        Object.assign(training, { status, validUntil: valid ?? training.validUntil, updatedBy: text(by) });
+        const names = training.employeeIds.map((id) => state.employees.find((employee) => employee.id === id)?.name ?? "?");
+        return Object.freeze({ ...training, names });
+      });
+    },
+
     async addHoliday(date, label) {
       const iso = day(date, null);
       if (!iso || !text(label)) {
@@ -199,6 +420,10 @@ function hrBook(book, clock) {
       return hrOverview(await book.load(), today(), { confidential });
     },
 
+    async facts() {
+      return hrFacts(await book.load(), today());
+    },
+
     async payroll(month) {
       return payrollVariables(await book.load(), month || today().slice(0, 7));
     }
@@ -211,6 +436,97 @@ export function isHoliday(iso, extra = []) {
 
 function addDays(iso, days) {
   return new Date(Date.parse(`${iso}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+// The same day n months later, or the month's last day when it has none
+// (31/01 + 1 month = 28/02).
+function addMonths(iso, months) {
+  const [year, month, dayOfMonth] = iso.split("-").map(Number);
+  const last = new Date(Date.UTC(year, month - 1 + months + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(year, month - 1 + months, Math.min(dayOfMonth, last))).toISOString().slice(0, 10);
+}
+
+function daysBetween(from, to) {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+}
+
+const nextNumber = (entries) => entries.reduce((max, entry) => Math.max(max, entry.number ?? 0), 0) + 1;
+
+// The trial period art. 14 gives: its last day, or null when the law gives
+// none for this contract (a stage, an ANAPEC contract, a CDI whose category
+// is not said, a CDD under a week).
+export function trialEndFor(kind, category, start, end = null) {
+  if (kind === "cdi") {
+    if (category === "cadre") {
+      return addDays(addMonths(start, 3), -1);
+    }
+    if (category === "employe") {
+      return addDays(addMonths(start, 1), 14);
+    }
+    return category === "ouvrier" ? addDays(start, 14) : null;
+  }
+  if (kind === "cdd" && end) {
+    if (end >= addMonths(start, 6)) {
+      return addDays(addMonths(start, 1), -1);
+    }
+    const days = Math.min(14, Math.floor((daysBetween(start, end) + 1) / 7));
+    return days > 0 ? addDays(start, days - 1) : null;
+  }
+  return null;
+}
+
+// The candidates of a position closed more than CANDIDATE_KEEP_MONTHS ago.
+function expiredCandidates(state, today) {
+  const limit = addMonths(today, -CANDIDATE_KEEP_MONTHS);
+  const closed = new Map((state.positions ?? []).filter((position) => position.status !== "ouvert" && position.closedOn).map((position) => [position.number, position.closedOn]));
+  return (state.candidates ?? []).filter((candidate) => closed.has(candidate.positionNumber) && [closed.get(candidate.positionNumber), candidate.updatedOn ?? ""].sort().at(-1) <= limit);
+}
+
+// The contract in force of each employee.
+function currentContracts(state) {
+  return new Map((state.contracts ?? []).filter((contract) => contract.status === "actif").map((contract) => [contract.employeeId, contract]));
+}
+
+// What the RH agent must deal with, as facts for Amélioration: a contract
+// ending within 30 days (or ended with the employee still there), a trial
+// period ending within 7 days, a training whose validity runs out within 30
+// days with no new session, and candidates' data kept past its time.
+export function hrFacts(state, today) {
+  const fact = (key, kind, severity, reference, message) => ({ source: "rh", key, kind, severity, owner: "hr", client: "", orderNumber: "", step: null, reference, fact: message });
+  const active = new Map(state.employees.filter((employee) => employee.active).map((employee) => [employee.id, employee]));
+  const facts = [];
+  for (const contract of currentContracts(state).values()) {
+    const employee = active.get(contract.employeeId);
+    if (!employee) {
+      continue;
+    }
+    const label = CONTRACT_KINDS[contract.kind];
+    if (contract.end && contract.end <= addDays(today, 30)) {
+      const left = daysBetween(today, contract.end);
+      facts.push(fact(`rh:contrat:${contract.number}:fin`, "fin_contrat", left <= 7 ? "haute" : "moyenne", employee.name, left < 0
+        ? `${label} de ${employee.name} terminé le ${frenchDay(contract.end)}, et ${employee.name} est toujours dans l'équipe : établir le nouveau contrat par écrit (renouvellement ou CDI) ou noter son départ.`
+        : `${label} de ${employee.name} : fin le ${frenchDay(contract.end)} (${left === 0 ? "aujourd'hui" : `dans ${left} jour${left > 1 ? "s" : ""}`}). Décider avant cette date : renouveler, passer en CDI ou préparer la fin du contrat.`));
+    }
+    if (contract.trialEnd && contract.trialEnd >= today && contract.trialEnd <= addDays(today, 7)) {
+      facts.push(fact(`rh:contrat:${contract.number}:essai`, "fin_essai", "moyenne", employee.name,
+        `Période d'essai de ${employee.name} (${label}) : fin le ${frenchDay(contract.trialEnd)}. Confirmer l'embauche${contract.kind === "cdi" ? ", renouveler l'essai une seule fois (art. 14 du Code du travail)" : ""} ou y mettre fin avant cette date.`));
+    }
+  }
+  const trainings = (state.trainings ?? []).filter((training) => training.status !== "annulee");
+  for (const training of trainings.filter((entry) => entry.status === "realisee" && entry.validUntil && entry.validUntil <= addDays(today, 30))) {
+    const due = training.employeeIds.filter((id) => active.has(id) && !trainings.some((other) => other !== training && normalized(other.title) === normalized(training.title) && other.from > training.from && other.employeeIds.includes(id)));
+    if (due.length > 0) {
+      const names = due.map((id) => active.get(id).name);
+      facts.push(fact(`rh:formation:${training.number}`, "formation_a_renouveler", "moyenne", training.title,
+        `Formation « ${training.title} » de ${names.join(", ")} : ${training.validUntil < today ? "plus valable depuis" : "valable jusqu'au"} ${frenchDay(training.validUntil)}. Planifier la prochaine session.`));
+    }
+  }
+  const expired = expiredCandidates(state, today);
+  if (expired.length > 0) {
+    facts.push(fact("rh:candidats:conservation", "donnees_candidats", "faible", "Recrutement",
+      `${expired.length} candidature${expired.length > 1 ? "s" : ""} de postes clos depuis plus de ${CANDIDATE_KEEP_MONTHS} mois : effacer leurs données (loi 09-08, conservation limitée au besoin du recrutement).`));
+  }
+  return facts;
 }
 
 // Monday to Saturday, public holidays left out.
@@ -253,6 +569,7 @@ export function hrOverview(state, today, { confidential = true } = {}) {
   const onLeave = state.leaves.filter((leave) => leave.status === "approuve" && leave.from <= today && leave.to >= today);
   const absentToday = events.filter((event) => event.kind === "absence" && event.day === today);
   const in30 = addDays(today, 30);
+  const contracts = currentContracts(state);
   return Object.freeze({
     today,
     headcount: active.length,
@@ -267,7 +584,25 @@ export function hrOverview(state, today, { confidential = true } = {}) {
       number: event.number, name: name(event.employeeId), kind: event.kind, label: ABSENCE_KINDS[event.kind], day: event.day, hours: event.hours, justified: event.justified,
       reason: confidential ? event.reason : ""
     }))),
-    holidays: Object.freeze(state.holidays.filter((holiday) => holiday.day >= today).slice(0, 6))
+    holidays: Object.freeze(state.holidays.filter((holiday) => holiday.day >= today).slice(0, 6)),
+    // Contracts and candidates are for the direction: the others see the
+    // positions open and the trainings.
+    contracts: Object.freeze(confidential ? active.map((employee) => {
+      const contract = contracts.get(employee.id);
+      return Object.freeze({ name: employee.name, number: contract?.number ?? null, kind: contract?.kind ?? null, label: contract ? CONTRACT_KINDS[contract.kind] : "", start: contract?.start ?? null, end: contract?.end ?? null, trialEnd: contract?.trialEnd ?? null, note: contract?.note ?? "" });
+    }) : []),
+    positions: Object.freeze((state.positions ?? []).filter((position) => position.status === "ouvert").map((position) => {
+      const own = (state.candidates ?? []).filter((candidate) => candidate.positionNumber === position.number);
+      return Object.freeze({
+        number: position.number, title: position.title, category: position.category, kind: position.kind, need: position.need, openedOn: position.openedOn,
+        applications: own.length,
+        candidates: Object.freeze(confidential ? own.map((candidate) => Object.freeze({ number: candidate.number, name: candidate.name, phone: candidate.phone, source: candidate.source, note: candidate.note, status: candidate.status, label: CANDIDATE_STATUSES[candidate.status], interview: candidate.interview, receivedOn: candidate.receivedOn })) : [])
+      });
+    })),
+    trainings: Object.freeze((state.trainings ?? []).filter((training) => training.status === "planifiee" || (training.status === "realisee" && training.to >= addDays(today, -60))).sort((a, b) => a.from.localeCompare(b.from)).map((training) => Object.freeze({
+      number: training.number, title: training.title, names: Object.freeze(training.employeeIds.map(name)), from: training.from, to: training.to, provider: training.provider, status: training.status, label: TRAINING_STATUSES[training.status], validUntil: training.validUntil
+    }))),
+    alerts: Object.freeze(hrFacts(state, today).map((entry) => Object.freeze({ kind: entry.kind, severity: entry.severity, text: entry.fact })))
   });
 }
 

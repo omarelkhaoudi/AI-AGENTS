@@ -1150,7 +1150,7 @@ async function runTool(call, context) {
       return await runHrTool(call.name, args, context, context.userId ?? "director");
     }
     if (call.name === "rapport_periodique") {
-      if (context.confidential) {
+      if (context.confidential === false) {
         return { ok: false, erreur: "Le rapport de la direction est réservé à la direction." };
       }
       if (!context.periodicReport) {
@@ -1223,7 +1223,7 @@ async function runTool(call, context) {
       return await attributeQuote(args, context, "director");
     }
     if (call.name === SALES_TARGET_TOOL.name) {
-      if (context.confidential) {
+      if (context.confidential === false) {
         return { ok: false, erreur: "L'objectif commercial est fixé par la direction seule." };
       }
       return await setSalesTarget(args, context, context.userId ?? "director");

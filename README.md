@@ -489,9 +489,21 @@ direction seule peut le modifier (rôle `leader`). Il contient :
 - **Consignes de la direction** : un texte que l'agent lit avant chaque
   mission, par exemple « toujours proposer la livraison et le montage ». Elles
   ne lèvent jamais une règle de sécurité ou de validation.
-- **Outils autorisés** : décocher un outil le retire à l'agent dès sa prochaine
-  mission. Deux outils restent toujours actifs : `documents_reference` et
-  `memoriser`.
+- **Ton des réponses** : par défaut, formel, chaleureux, concis ou
+  pédagogique. L'agent le lit avant chaque mission.
+- **Outils** : chaque outil est **autorisé**, en **validation requise** ou
+  **interdit**, dès la prochaine mission. Deux outils restent toujours actifs :
+  `documents_reference` et `memoriser`.
+  - Un outil interdit est retiré à l'agent.
+  - Un outil en validation requise ne s'exécute pas quand l'agent l'appelle.
+    L'action est gardée avec ce qu'elle ferait, et l'agent dit qu'elle attend
+    votre accord. Elle apparaît en haut d'**Équipe IA** (« Actions à valider »).
+    Validée, elle s'exécute aussitôt sur les livres tels qu'ils sont ; refusée,
+    jamais.
+  - Seuls les outils qui écrivent dans les livres du cockpit (caisse, stock,
+    RH, registre administratif, budgets…) peuvent passer en validation. Les
+    documents, les messages et les publications ont déjà leur propre
+    validation.
 - **Documents de référence** : catalogue, grille tarifaire, procédure, fiche
   technique, en PDF, Word (.docx), Excel (.xlsx), texte ou CSV, 8 Mo au plus.
   - Le texte est lu une fois, à l'import. Un PDF est lu par l'IA
@@ -509,6 +521,18 @@ direction seule peut le modifier (rôle `leader`). Il contient :
     pose la question à la direction.
 - **Mémoire de travail** : les notes que l'agent garde d'une mission à l'autre
   (`memoriser`, 40 au plus par agent). La direction peut en effacer une.
+- **Indicateurs sur 30 jours**, en tête du bloc :
+  - les missions reçues et les actions notées au fil ;
+  - les anomalies qui lui sont confiées, ouvertes et levées ;
+  - les actions qui attendent votre validation ;
+  - les tests de réponses réussis.
+- **Tests de réponses** : une question type, les mots que la réponse doit
+  contenir et ceux qu'elle ne doit pas contenir (20 tests au plus par agent).
+  - « Lancer » interroge l'agent en **mode test** : il lit ses données, mais
+    rien de ce qu'il voudrait enregistrer ne l'est.
+  - La réponse est comparée sans tenir compte des accents ni des majuscules.
+    Le résultat garde la réponse obtenue et les mots manquants ou trouvés.
+  - Chaque lancement est un vrai appel à l'IA, compté dans son coût.
 
 Les réglages sont gardés dans `data/agents.json`, et le texte des documents
 dans `data/agents-documents/`.

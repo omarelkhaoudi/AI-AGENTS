@@ -2893,6 +2893,43 @@
     @apply mt-1 w-auto! shrink-0;
   }
 
+  .agent-tool select {
+    @apply w-auto! shrink-0 py-1! text-[12.5px];
+  }
+
+  /* An agent's indicators over 30 days, above its settings. */
+  .agent-kpis {
+    @apply m-0 mb-3 grid list-none grid-cols-3 gap-2 p-0;
+  }
+
+  .agent-kpis li {
+    @apply flex flex-col rounded-xl border border-line px-2.5 py-1.5;
+  }
+
+  .agent-kpis strong {
+    @apply text-base;
+  }
+
+  .agent-kpis small {
+    @apply text-[11.5px] text-muted;
+  }
+
+  .agent-tests ul {
+    @apply m-0 mb-2 flex list-none flex-col gap-2 p-0;
+  }
+
+  .agent-tests li {
+    @apply flex flex-col gap-1 rounded-xl border border-line p-2.5;
+  }
+
+  .held-args {
+    @apply m-0 my-2 flex list-none flex-col gap-0.5 p-0 text-[13px];
+  }
+
+  .held-args small {
+    @apply text-muted;
+  }
+
   .agent-tool > span {
     @apply min-w-0 flex-1;
   }

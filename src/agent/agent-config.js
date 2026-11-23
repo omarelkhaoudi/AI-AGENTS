@@ -15,6 +15,10 @@ import { DEFAULT_TEMPLATE_ID, TeamTemplateError, allowedAgents, changeTeam, defa
 // - its tools and rights: a tool the direction forbids is taken from it;
 // - its working memory: what it noted to keep from one mission to the next.
 //
+// Beside them: the tone it answers in, the tools whose actions wait for the
+// direction's validation (« validation requise ») before they run, and the
+// response tests the direction writes to check it answers as expected.
+//
 // A document is never taken as true for ever: importing a newer version of a
 // document of the same title retires the older one (« périmé »), an old
 // version is only ever read as history, and two current documents that
@@ -31,6 +35,17 @@ const MAX_MEMORY_NOTES = 40;
 const MAX_NOTE_CHARS = 500;
 const PASSAGE_CHARS = 1200;
 const DOCUMENT_STATUSES = Object.freeze(["en_vigueur", "perime"]);
+const MAX_TESTS = 20;
+const MAX_HELD = 300;
+
+// The tones the direction may choose for an agent: what the agent is told.
+export const AGENT_TONES = Object.freeze({
+  formel: Object.freeze({ label: "Formel", rule: "Ton formel : vouvoiement, phrases complètes, aucune familiarité ni emoji." }),
+  chaleureux: Object.freeze({ label: "Chaleureux", rule: "Ton chaleureux et proche, toujours poli et vouvoyant : une phrase d'attention, puis l'essentiel." }),
+  concis: Object.freeze({ label: "Concis", rule: "Ton concis : l'essentiel en trois phrases au plus ou une liste courte, sans préambule." }),
+  pedagogique: Object.freeze({ label: "Pédagogique", rule: "Ton pédagogique : dire le pourquoi en mots simples, avec un exemple quand il aide." })
+});
+export const HELD_STATUSES = Object.freeze({ en_attente: "en attente de validation", executee: "validée et exécutée", refusee: "refusée", echouee: "validée, exécution en échec" });
 
 export class AgentConfigError extends Error {
   constructor(message, code) {
@@ -40,7 +55,7 @@ export class AgentConfigError extends Error {
   }
 }
 
-const EMPTY = Object.freeze({ agents: {}, documents: [], memory: [] });
+const EMPTY = Object.freeze({ agents: {}, documents: [], memory: [], held: [] });
 
 export function createMemoryAgentConfig({ clock = () => new Date(), agents = [], templateId = DEFAULT_TEMPLATE_ID, plan = null } = {}) {
   const texts = new Map();
@@ -132,22 +147,130 @@ function createAgentConfig({ book, texts, clock, agents, templateId = DEFAULT_TE
       return settingsOf(state, agent);
     },
 
-    async save(agent, { instructions, forbiddenTools, by = "direction" }) {
+    // A tool is allowed, held for validation, or forbidden: forbidden wins.
+    async save(agent, { instructions, forbiddenTools, heldTools, tone, by = "direction" }) {
       known(agent);
       const consignes = typeof instructions === "string" ? instructions.trim() : undefined;
       if (consignes !== undefined && consignes.length > MAX_INSTRUCTIONS_CHARS) {
         throw new AgentConfigError(`Les consignes dépassent ${MAX_INSTRUCTIONS_CHARS} caractères.`, "AGENT_CONFIG_TOO_LONG");
       }
+      if (tone !== undefined && tone !== "" && !Object.hasOwn(AGENT_TONES, tone)) {
+        throw new AgentConfigError(`Ton : ${Object.keys(AGENT_TONES).join(", ")}, ou aucun.`, "AGENT_CONFIG_TONE_UNKNOWN");
+      }
+      const names = (list) => [...new Set(list.map(String).filter(Boolean))].sort();
       return book.change((state) => {
         const current = settingsOf(state, agent);
+        const forbidden = Array.isArray(forbiddenTools) ? names(forbiddenTools) : current.forbiddenTools;
+        const held = (Array.isArray(heldTools) ? names(heldTools) : current.heldTools).filter((name) => !forbidden.includes(name));
         const next = {
+          ...(state.agents[agent] ?? {}),
           instructions: consignes ?? current.instructions,
-          forbiddenTools: Array.isArray(forbiddenTools) ? [...new Set(forbiddenTools.map(String).filter(Boolean))].sort() : current.forbiddenTools,
+          forbiddenTools: forbidden,
+          heldTools: held,
+          tone: tone ?? current.tone,
           updatedAt: clock().toISOString(),
           updatedBy: by
         };
         state.agents[agent] = next;
-        return next;
+        return settingsOf(state, agent);
+      });
+    },
+
+    // --- Actions held for the direction's validation -------------------------
+    // An agent called a tool the direction wants to validate: the call is kept
+    // with its arguments and runs only once the direction says yes.
+    async holdAction(agent, { tool, args = {}, mission = "", by = agent }) {
+      known(agent);
+      return book.change((state) => {
+        const held = (state.held ??= []);
+        const action = { id: randomUUID(), number: held.reduce((max, entry) => Math.max(max, entry.number), 0) + 1, agent, tool: String(tool), args, mission: String(mission ?? "").slice(0, 400), status: "en_attente", by: String(by), at: clock().toISOString() };
+        held.push(action);
+        if (held.length > MAX_HELD) {
+          const settled = held.findIndex((entry) => entry.status !== "en_attente");
+          if (settled >= 0) {
+            held.splice(settled, 1);
+          }
+        }
+        return Object.freeze({ ...action });
+      });
+    },
+
+    async heldActions({ status = null, agent = null } = {}) {
+      return ((await book.load()).held ?? []).filter((entry) => (!status || entry.status === status) && (!agent || entry.agent === agent)).slice().reverse();
+    },
+
+    async heldAction(number) {
+      const action = ((await book.load()).held ?? []).find((entry) => String(entry.number) === String(number));
+      if (!action) {
+        throw new AgentConfigError(`Aucune action n° ${number} en attente de validation.`, "AGENT_HELD_NOT_FOUND");
+      }
+      return action;
+    },
+
+    // The direction's decision, with what running it gave.
+    async settleHeld(number, { status, result = null, reason = "", by = "direction" }) {
+      if (!["executee", "refusee", "echouee"].includes(status)) {
+        throw new AgentConfigError("Décision : exécutée, refusée ou en échec.", "AGENT_HELD_STATUS_UNKNOWN");
+      }
+      return book.change((state) => {
+        const action = (state.held ?? []).find((entry) => String(entry.number) === String(number));
+        if (!action) {
+          throw new AgentConfigError(`Aucune action n° ${number} en attente de validation.`, "AGENT_HELD_NOT_FOUND");
+        }
+        if (action.status !== "en_attente") {
+          throw new AgentConfigError(`L'action n° ${action.number} est déjà ${HELD_STATUSES[action.status]}.`, "AGENT_HELD_DECIDED");
+        }
+        Object.assign(action, { status, result, reason: String(reason ?? "").slice(0, 400), decidedBy: by, decidedAt: clock().toISOString() });
+        return Object.freeze({ ...action });
+      });
+    },
+
+    // --- Response tests -------------------------------------------------------
+    // A question the direction asks the agent, with the words its answer must
+    // contain and those it must not. Run on demand, in test mode: nothing the
+    // agent would write is written.
+    async addTest(agent, { question, expected = [], forbidden = [], by = "direction" }) {
+      known(agent);
+      const ask = typeof question === "string" ? question.trim().slice(0, 600) : "";
+      const words = (list) => (Array.isArray(list) ? list : String(list ?? "").split(/[;\n]/)).map((entry) => String(entry).trim().slice(0, 80)).filter(Boolean).slice(0, 10);
+      if (!ask) {
+        throw new AgentConfigError("Écrire la question du test.", "AGENT_TEST_QUESTION_MISSING");
+      }
+      if (words(expected).length + words(forbidden).length === 0) {
+        throw new AgentConfigError("Dire au moins un mot attendu ou interdit dans la réponse.", "AGENT_TEST_CHECK_MISSING");
+      }
+      return book.change((state) => {
+        const settings = (state.agents[agent] ??= {});
+        const tests = (settings.tests ??= []);
+        if (tests.length >= MAX_TESTS) {
+          throw new AgentConfigError(`${MAX_TESTS} tests au plus par agent.`, "AGENT_TEST_TOO_MANY");
+        }
+        const entry = { id: randomUUID(), question: ask, expected: words(expected), forbidden: words(forbidden), by, at: clock().toISOString(), lastRun: null };
+        tests.push(entry);
+        return Object.freeze({ ...entry });
+      });
+    },
+
+    async removeTest(agent, id) {
+      known(agent);
+      return book.change((state) => {
+        const tests = state.agents[agent]?.tests ?? [];
+        const index = tests.findIndex((entry) => entry.id === id);
+        if (index < 0) {
+          throw new AgentConfigError("Test introuvable.", "AGENT_TEST_NOT_FOUND");
+        }
+        tests.splice(index, 1);
+        return { removed: id };
+      });
+    },
+
+    async recordTestRun(agent, id, run) {
+      return book.change((state) => {
+        const test = (state.agents[agent]?.tests ?? []).find((entry) => entry.id === id);
+        if (test) {
+          test.lastRun = { at: clock().toISOString(), ...run };
+        }
+        return test ? Object.freeze({ ...test }) : null;
       });
     },
 
@@ -295,10 +418,12 @@ function createAgentConfig({ book, texts, clock, agents, templateId = DEFAULT_TE
     // the documents it can search, and its notes.
     async briefing(agent) {
       const state = await book.load();
-      const { instructions } = settingsOf(state, agent);
+      const { instructions, tone, heldTools } = settingsOf(state, agent);
       const current = state.documents.filter((entry) => entry.agent === agent && entry.status === "en_vigueur");
       const notes = state.memory.filter((line) => line.agent === agent).slice(-15);
       return [
+        tone ? `${AGENT_TONES[tone].rule}` : "",
+        heldTools.length > 0 ? `Ces outils passent par la validation de la direction : ${heldTools.join(", ")}. Quand tu les appelles, l'action est gardée en attente et ne s'exécute qu'après son accord : dis-le dans ta réponse, sans la présenter comme faite.` : "",
         instructions ? `Consignes de la direction pour ton métier (elles priment sur tes habitudes, jamais sur les règles de sécurité et de validation) :\n${instructions}` : "",
         current.length > 0
           ? `Tes documents de référence en vigueur (cherche dedans avec documents_reference avant de répondre sur un prix, une procédure, une caractéristique) : ${current.map((entry) => `« ${entry.title} » v${entry.version}${entry.validFrom ? ` en vigueur depuis le ${entry.validFrom}` : ""}`).join(" ; ")}. Cite la source (titre et version) de ce que tu en tires. Si deux documents en vigueur se contredisent, ou un document et tes autres données, ne choisis pas : dis-le et demande à la direction lequel fait foi.`
@@ -311,7 +436,17 @@ function createAgentConfig({ book, texts, clock, agents, templateId = DEFAULT_TE
 
 function settingsOf(state, agent) {
   const saved = state.agents[agent] ?? {};
-  return { instructions: saved.instructions ?? "", forbiddenTools: saved.forbiddenTools ?? [], updatedAt: saved.updatedAt ?? null, updatedBy: saved.updatedBy ?? null };
+  return { instructions: saved.instructions ?? "", forbiddenTools: saved.forbiddenTools ?? [], heldTools: saved.heldTools ?? [], tone: saved.tone ?? "", tests: saved.tests ?? [], updatedAt: saved.updatedAt ?? null, updatedBy: saved.updatedBy ?? null };
+}
+
+// A test answer checked against its words, without accents or case: every
+// expected word must be there, no forbidden one.
+export function checkAnswer(answer, { expected = [], forbidden = [] }) {
+  const said = fold(answer).replace(/\s+/g, " ");
+  const has = (word) => said.includes(fold(word).replace(/\s+/g, " ").trim());
+  const missing = expected.filter((word) => !has(word));
+  const found = forbidden.filter((word) => has(word));
+  return { passed: missing.length === 0 && found.length === 0, missing, found };
 }
 
 function sameTitle(left, right) {

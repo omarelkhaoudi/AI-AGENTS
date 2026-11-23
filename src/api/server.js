@@ -27,7 +27,7 @@ import { applyPublicationApprovalDecision, isPublicationApproval } from "../soci
 import { createSocialService, isSocialReplyApproval } from "../social/social-service.js";
 import { createMemorySocialInbox } from "../agent/social-inbox.js";
 import { createMetaSocialClient, loadMetaSocialConfig } from "../integrations/meta-social.js";
-import { AgentConfigError, createMemoryAgentConfig } from "../agent/agent-config.js";
+import { AgentConfigError, checkAnswer, createMemoryAgentConfig } from "../agent/agent-config.js";
 import { AGENT_REQUIRES, TEAM_TEMPLATES, allowedAgents, maxAgents, templateFromEnv } from "../agent/team-templates.js";
 import { MAX_REFERENCE_BYTES, ReferenceReadError, readReferenceFile } from "../agent/reference-reader.js";
 import { ToolExecutionService, ToolExecutionServiceError } from "../tools/execution-service.js";
@@ -1843,7 +1843,28 @@ export function buildApi({
         typeof agent.agentTools === "function" ? agent.agentTools(id).catch(() => []) : []
       ]);
       const active = typeof agentSettings.isActive === "function" ? await agentSettings.isActive(id) : true;
-      return { id, label: SPECIALISTS[id].label, mission: SPECIALISTS[id].mission, active, requires: AGENT_REQUIRES[id] ?? null, ...settings, tools, documents: documents.slice().reverse(), memory: memory.slice().reverse() };
+      return { id, label: SPECIALISTS[id].label, mission: SPECIALISTS[id].mission, active, requires: AGENT_REQUIRES[id] ?? null, ...settings, tools, documents: documents.slice().reverse(), memory: memory.slice().reverse(), indicators: await agentIndicators(id, settings) };
+    };
+    // What an agent did over 30 days, read from the books: its missions in
+    // the team feed, the anomalies it is given, the actions waiting for the
+    // direction, and its response tests.
+    const agentIndicators = async (id, settings) => {
+      const since = new Date(clock().getTime() - 30 * 86_400_000).toISOString();
+      const [activity, board, held] = await Promise.all([
+        teamFeed.activity({ agent: id, since, limit: 1000 }).catch(() => []),
+        improvement.state().catch(() => ({ anomalies: [] })),
+        typeof agentSettings.heldActions === "function" ? agentSettings.heldActions({ agent: id, status: "en_attente" }) : []
+      ]);
+      const owned = (board.anomalies ?? []).filter((anomaly) => anomaly.owner === id);
+      const ran = (settings.tests ?? []).filter((test) => test.lastRun);
+      return {
+        missions: activity.filter((entry) => entry.kind === "mission").length,
+        actions: activity.filter((entry) => !["mission", "equipe"].includes(entry.kind)).length,
+        anomaliesOpen: owned.filter((anomaly) => anomaly.status !== "levee").length,
+        anomaliesLifted: owned.filter((anomaly) => anomaly.status === "levee" && (anomaly.liftedAt ?? "") >= since).length,
+        heldPending: held.length,
+        tests: { total: (settings.tests ?? []).length, run: ran.length, passed: ran.filter((test) => test.lastRun.passed).length }
+      };
     };
     // The company's team: its template, what its plan opens, who is active.
     const teamOverview = async () => {
@@ -1891,15 +1912,113 @@ export function buildApi({
         return reply;
       }
       try {
-        const known = new Set((typeof agent.agentTools === "function" ? await agent.agentTools(request.params.agent) : []).map((tool) => tool.name));
+        const tools = typeof agent.agentTools === "function" ? await agent.agentTools(request.params.agent) : [];
+        const known = new Set(tools.map((tool) => tool.name));
+        const holdable = new Set(tools.filter((tool) => tool.holdable).map((tool) => tool.name));
         const forbidden = Array.isArray(request.body?.forbiddenTools) ? request.body.forbiddenTools.filter((name) => known.size === 0 || known.has(name)) : undefined;
+        const held = Array.isArray(request.body?.heldTools) ? request.body.heldTools.filter((name) => holdable.has(name)) : undefined;
         await agentSettings.save(request.params.agent, {
           instructions: typeof request.body?.instructions === "string" ? request.body.instructions : undefined,
           forbiddenTools: forbidden,
+          heldTools: held,
+          tone: typeof request.body?.tone === "string" ? request.body.tone : undefined,
           by: request.principal.userId ?? "direction"
         });
-        await teamFeed.log({ agent: request.params.agent, kind: "equipe", text: "Réglages de l'agent modifiés par la direction (consignes ou outils).", by: request.principal.userId ?? "direction" });
+        await teamFeed.log({ agent: request.params.agent, kind: "equipe", text: "Réglages de l'agent modifiés par la direction (consignes, ton ou outils).", by: request.principal.userId ?? "direction" });
         return { agent: await agentSettingsOf(request.params.agent) };
+      } catch (error) {
+        return sendAgentConfigError(reply, error);
+      }
+    });
+
+    // The actions the agents left for the direction's validation. Validated,
+    // an action runs now with the books as they are; refused, it never runs.
+    app.get("/api/agents/held", readRouteOptions(), async (request, reply) => {
+      if (await agentConfigRefused(request, reply)) {
+        return reply;
+      }
+      return { held: typeof agentSettings.heldActions === "function" ? (await agentSettings.heldActions()).slice(0, 60) : [] };
+    });
+
+    app.post("/api/agents/held/:number/decision", decisionRouteOptions(), async (request, reply) => {
+      if (await agentConfigRefused(request, reply)) {
+        return reply;
+      }
+      const decision = request.body?.decision;
+      if (!["valider", "refuser"].includes(decision)) {
+        return reply.code(400).send({ error: "Décision : valider ou refuser.", details: { code: "AGENT_HELD_DECISION" } });
+      }
+      try {
+        const by = request.principal.userId ?? "direction";
+        const action = await agentSettings.heldAction(request.params.number);
+        if (action.status !== "en_attente") {
+          return reply.code(409).send({ error: `L'action n° ${action.number} est déjà décidée.`, details: { code: "AGENT_HELD_DECIDED" } });
+        }
+        const reason = typeof request.body?.reason === "string" ? request.body.reason : "";
+        let settled;
+        if (decision === "refuser") {
+          settled = await agentSettings.settleHeld(action.number, { status: "refusee", reason, by });
+        } else {
+          let result;
+          try {
+            result = typeof agent.runHeldAction === "function" ? await agent.runHeldAction(action, { userId: by }) : { ok: false, erreur: "Exécution indisponible." };
+          } catch (error) {
+            result = { ok: false, erreur: error.message };
+          }
+          settled = await agentSettings.settleHeld(action.number, { status: result?.ok === false ? "echouee" : "executee", result, reason, by });
+        }
+        await teamFeed.log({ agent: action.agent, kind: "validation", text: `Action n° ${action.number} (« ${action.tool} ») ${settled.status === "refusee" ? "refusée" : settled.status === "executee" ? "validée et exécutée" : "validée, mais son exécution a échoué"} par la direction.`, ref: `validation:${action.number}`, by });
+        return { action: settled };
+      } catch (error) {
+        return sendAgentConfigError(reply, error);
+      }
+    });
+
+    // The direction's response tests for an agent, and their run.
+    app.post("/api/agents/:agent/tests", writeRouteOptions(), async (request, reply) => {
+      if (!knownAgent(request, reply) || await agentConfigRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        const test = await agentSettings.addTest(request.params.agent, { question: request.body?.question, expected: request.body?.expected, forbidden: request.body?.forbidden, by: request.principal.userId ?? "direction" });
+        return { test, agent: await agentSettingsOf(request.params.agent) };
+      } catch (error) {
+        return sendAgentConfigError(reply, error);
+      }
+    });
+
+    app.delete("/api/agents/:agent/tests/:id", writeRouteOptions(), async (request, reply) => {
+      if (!knownAgent(request, reply) || await agentConfigRefused(request, reply)) {
+        return reply;
+      }
+      try {
+        await agentSettings.removeTest(request.params.agent, request.params.id);
+        return { agent: await agentSettingsOf(request.params.agent) };
+      } catch (error) {
+        return sendAgentConfigError(reply, error);
+      }
+    });
+
+    app.post("/api/agents/:agent/tests/run", writeRouteOptions(), async (request, reply) => {
+      if (!knownAgent(request, reply) || await agentConfigRefused(request, reply)) {
+        return reply;
+      }
+      if (typeof agent.testAgent !== "function") {
+        return reply.code(503).send({ error: "Les tests de réponses ne sont pas disponibles.", details: { code: "AGENT_NOT_CONFIGURED" } });
+      }
+      try {
+        const { tests } = await agentSettings.settings(request.params.agent);
+        const only = typeof request.body?.id === "string" ? request.body.id : null;
+        const results = [];
+        // One at a time: each is a real call to the model.
+        for (const test of tests.filter((entry) => !only || entry.id === only)) {
+          const { answer } = await agent.testAgent(request.params.agent, test.question);
+          const check = checkAnswer(answer, test);
+          results.push(await agentSettings.recordTestRun(request.params.agent, test.id, { ...check, answer: String(answer).slice(0, 2000) }));
+        }
+        const passed = results.filter((test) => test?.lastRun?.passed).length;
+        await teamFeed.log({ agent: request.params.agent, kind: "equipe", text: `Tests de réponses : ${passed} sur ${results.length} réussi(s).`, by: request.principal.userId ?? "direction" });
+        return { results, agent: await agentSettingsOf(request.params.agent) };
       } catch (error) {
         return sendAgentConfigError(reply, error);
       }

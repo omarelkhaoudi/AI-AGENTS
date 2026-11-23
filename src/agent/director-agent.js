@@ -7,7 +7,7 @@ import { HKIDS_FIXED_IDENTITY } from "../documents/hkids-template.js";
 import { parseReferenceImage } from "../documents/purchase-order.js";
 import { ChatAttachmentError, readAttachments } from "./chat-attachments.js";
 import { createCatalogueLoader, searchCatalogue } from "./catalogue.js";
-import { LOCKED_TOOLS, READ_TOOL_LABELS, SPECIALISTS, SPECIALIST_IDS, runSpecialist, specialistToolset } from "./agent-team.js";
+import { LOCKED_TOOLS, READ_ONLY_TOOLS, READ_TOOL_LABELS, SPECIALISTS, SPECIALIST_IDS, runSpecialist, specialistToolset } from "./agent-team.js";
 import { teamNote, tradeNote } from "./team-templates.js";
 import { draftWhatsAppMessage } from "./whatsapp.js";
 import { STEP_LABELS, createMemoryPlanStore } from "./plan-store.js";
@@ -907,14 +907,61 @@ export function createDirectorAgent({
         throw new DirectorAgentError(`Agent inconnu : ${agentId}.`, "AGENT_UNKNOWN");
       }
       const context = baseContext(freshOutcome());
-      const forbidden = agentConfig ? (await agentConfig.settings(agentId)).forbiddenTools : [];
-      const { tools } = specialistToolset({ ...agentToolParams(agentId, context), forbiddenTools: [] });
+      const settings = agentConfig ? await agentConfig.settings(agentId) : { forbiddenTools: [], heldTools: [] };
+      const params = agentToolParams(agentId, context);
+      const { tools } = specialistToolset({ ...params, forbiddenTools: [] });
+      // Only the actions of the agent's books can wait for validation: the
+      // documents, messages and publications have their own.
+      const holdable = new Set(params.extraTools.map((entry) => entry.tool.name).filter((name) => !LOCKED_TOOLS.includes(name) && !READ_ONLY_TOOLS.includes(name)));
       return tools.map((tool) => ({
         name: tool.name,
         description: READ_TOOL_LABELS[tool.name] ?? String(tool.description ?? "").split(/(?<=\.)\s/)[0].slice(0, 220),
         locked: LOCKED_TOOLS.includes(tool.name),
-        forbidden: !LOCKED_TOOLS.includes(tool.name) && forbidden.includes(tool.name)
+        forbidden: !LOCKED_TOOLS.includes(tool.name) && settings.forbiddenTools.includes(tool.name),
+        holdable: holdable.has(tool.name),
+        held: holdable.has(tool.name) && settings.heldTools.includes(tool.name)
       }));
+    },
+
+    // An action an agent left for validation, run once the direction said
+    // yes, with the books as they are now and the direction's rights.
+    async runHeldAction(action, { userId = null } = {}) {
+      if (!SPECIALISTS[action.agent]) {
+        throw new DirectorAgentError(`Agent inconnu : ${action.agent}.`, "AGENT_UNKNOWN");
+      }
+      const context = baseContext(freshOutcome(), userId, true);
+      const entry = agentToolParams(action.agent, context).extraTools.find((candidate) => candidate.tool.name === action.tool);
+      if (!entry) {
+        return { ok: false, erreur: `L'outil ${action.tool} n'est plus disponible pour l'agent ${SPECIALISTS[action.agent].label}.` };
+      }
+      return entry.run(action.args ?? {}, action.agent);
+    },
+
+    // A response test: the agent answers the question in test mode, reading
+    // what it needs and writing nothing; its answer is checked against the
+    // direction's words.
+    async testAgent(agentId, question) {
+      if (!SPECIALISTS[agentId]) {
+        throw new DirectorAgentError(`Agent inconnu : ${agentId}.`, "AGENT_UNKNOWN");
+      }
+      if (!configured()) {
+        throw new DirectorAgentError("Les tests de réponses interrogent l'IA : renseignez OPENAI_API_KEY dans .env.", "AGENT_NOT_CONFIGURED");
+      }
+      resolvedClient ??= await clientFactory({ apiKey });
+      const context = baseContext(freshOutcome(), null, true);
+      context.team = { ...context.team, client: resolvedClient };
+      const settings = agentConfig ? await agentConfig.settings(agentId) : null;
+      const run = await runSpecialist({
+        ...agentToolParams(agentId, context),
+        mission: question,
+        forbiddenTools: settings?.forbiddenTools ?? [],
+        dryRun: true,
+        briefing: [tradeNote(agentConfig?.templateId), ...(books ? await agentBriefing(agentId, context) : []), ...(agentConfig ? await agentConfig.briefing(agentId) : [])].filter(Boolean),
+        callModel: (payload) => askModel(resolvedClient, payload, { aiUsage, agent: agentId }),
+        model,
+        today: formatDate(clock())
+      });
+      return { answer: run.answer, tools: run.tools };
     },
 
     // A reference PDF read into text by the model, once, at import.
@@ -2179,6 +2226,12 @@ async function runAgent(agentId, mission, context) {
     ...agentToolParams(agentId, context),
     mission,
     forbiddenTools: settings?.forbiddenTools ?? [],
+    heldTools: settings?.heldTools ?? [],
+    holdCall: agentConfig ? async (tool, args) => {
+      const action = await agentConfig.holdAction(agentId, { tool, args, mission, by: context.userId ?? "director" });
+      await books?.team.log({ agent: agentId, kind: "validation", text: `Action « ${tool} » gardée pour la validation de la direction (n° ${action.number}).`, ref: `validation:${action.number}`, by: agentId });
+      return { ok: true, en_attente: `Action n° ${action.number} gardée pour la validation de la direction : elle ne s'exécutera qu'après son accord (vue Équipe IA). Ne la présente pas comme faite.` };
+    } : null,
     briefing: [tradeNote(agentConfig?.templateId), ...(books ? await agentBriefing(agentId, context) : []), ...(agentConfig ? await agentConfig.briefing(agentId) : [])].filter(Boolean),
     callModel: (payload) => askModel(team.client, payload, { aiUsage: context.aiUsage, agent: agentId }),
     model: team.model,

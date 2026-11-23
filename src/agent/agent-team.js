@@ -21,6 +21,12 @@ export const MAX_SPECIALIST_ROUNDS = 5;
 // What every agent keeps whatever its settings: reading its own reference
 // documents and keeping its notes.
 export const LOCKED_TOOLS = Object.freeze(["documents_reference", "memoriser"]);
+// The agents' tools that only read: they run in a response test, and holding
+// one for validation would make no sense.
+export const READ_ONLY_TOOLS = Object.freeze([
+  "documents_reference", "bilan_caisse", "bilan_commercial", "analyse_commerciale", "lister_anomalies", "prevision_tresorerie", "rentabilite",
+  "equipe_rh", "variables_paie", "registre_administratif", "registre_stock", "budgets", "capacite_atelier", "boite_reseaux", "prospects_reseaux", "statistiques_reseaux"
+]);
 
 // The read tools of the registry, in words the direction reads in the agents'
 // settings (the registry describes them for developers).
@@ -306,7 +312,14 @@ export async function runSpecialist({
   // the rest of the team did lately, the rules the direction validated.
   briefing = [],
   // The tools the direction took from this agent (its settings, section 9).
-  forbiddenTools = []
+  forbiddenTools = [],
+  // The tools whose calls wait for the direction's validation: holdCall keeps
+  // the call and says so to the agent.
+  heldTools = [],
+  holdCall = null,
+  // A response test: the agent reads what it needs, but nothing it would
+  // write is written.
+  dryRun = false
 }) {
   const specialist = SPECIALISTS[agentId];
   const {
@@ -337,8 +350,13 @@ export async function runSpecialist({
     for (const call of calls) {
       used.push(call.name);
       let result;
+      const reads = READ_ONLY_TOOLS.includes(call.name) || readTools.some((tool) => tool.id === call.name) || [consultTool, dossierTool, bookTool, catalogue].some((tool) => tool && tool.name === call.name);
       if (!allowed.has(call.name)) {
         result = { ok: false, erreur: `Outil non autorisé pour l'agent ${specialist.label}.` };
+      } else if (dryRun && !reads) {
+        result = { ok: true, mode_test: "Mode test : l'action n'est pas exécutée. Réponds comme si elle avait réussi, sans inventer de numéro." };
+      } else if (heldTools.includes(call.name) && !LOCKED_TOOLS.includes(call.name) && holdCall) {
+        result = await holdCall(call.name, parseArguments(call.arguments));
       } else if (call.name === WHATSAPP_MESSAGE_TOOL.name && prepareMessage) {
         result = prepareMessage(parseArguments(call.arguments), agentId);
       } else if (documentTool && call.name === documentTool.name) {

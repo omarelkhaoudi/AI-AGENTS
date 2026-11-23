@@ -2344,6 +2344,13 @@ agentRoster.addEventListener("submit", async (event) => {
     await uploadAgentDocument(documentForm);
     return;
   }
+  const testForm = event.target.closest?.("[data-agent-test]");
+  if (testForm) {
+    event.preventDefault();
+    const read = (name) => testForm.querySelector(`[name='${name}']`)?.value ?? "";
+    await agentRequest(`/api/agents/${encodeURIComponent(testForm.dataset.agentTest)}/tests`, { body: { question: read("question"), expected: read("expected"), forbidden: read("forbidden") } }, "Test ajouté.");
+    return;
+  }
   const formNode = event.target.closest?.("[data-member-form]");
   if (!formNode) {
     return;
@@ -2377,6 +2384,22 @@ agentRoster.addEventListener("click", async (event) => {
     await showDocumentText(reading.dataset.agent, reading.dataset.documentText);
     return;
   }
+  const runTest = event.target.closest?.("[data-test-run]");
+  if (runTest) {
+    runTest.disabled = true;
+    runTest.textContent = "Test en cours…";
+    const result = await agentRequest(`/api/agents/${encodeURIComponent(runTest.dataset.agent)}/tests/run`, { body: runTest.dataset.testRun ? { id: runTest.dataset.testRun } : {} });
+    if (result?.results) {
+      const passed = result.results.filter((test) => test?.lastRun?.passed).length;
+      showToast(`${passed} test${passed > 1 ? "s" : ""} réussi${passed > 1 ? "s" : ""} sur ${result.results.length}.`, passed === result.results.length ? undefined : "warn");
+    }
+    return;
+  }
+  const removeTest = event.target.closest?.("[data-test-remove]");
+  if (removeTest && globalThis.confirm?.("Supprimer ce test ?")) {
+    await agentRequest(`/api/agents/${encodeURIComponent(removeTest.dataset.agent)}/tests/${encodeURIComponent(removeTest.dataset.testRemove)}`, { method: "DELETE" }, "Test supprimé.");
+    return;
+  }
   const forget = event.target.closest?.("[data-memory-forget]");
   if (forget && globalThis.confirm?.("Effacer cette note de la mémoire de l'agent ?")) {
     await agentRequest(`/api/agents/${encodeURIComponent(forget.dataset.agent)}/memory/${encodeURIComponent(forget.dataset.memoryForget)}`, { method: "DELETE" }, "Note effacée.");
@@ -2405,6 +2428,69 @@ function missionMessage(agent) {
   return `Bonjour ${agent.member.name},\n\nVoici vos tâches H-KIDS (${agent.label}) :\n${missionsText}\n\nMerci de me dire où vous en êtes.\nL'équipe H-KIDS`;
 }
 
+const AGENT_TONE_LABELS = Object.freeze({ "": "Par défaut", formel: "Formel", chaleureux: "Chaleureux", concis: "Concis", pedagogique: "Pédagogique" });
+const HELD_LABELS = Object.freeze({ en_attente: "en attente", executee: "validée et exécutée", refusee: "refusée", echouee: "validée, en échec" });
+const heldPanel = document.querySelector("#held-actions");
+
+// The actions the agents left for the direction's validation (tools set to
+// « validation requise » in their settings): what it would do, and two
+// buttons. Validated, it runs now; refused, never.
+async function refreshHeldActions() {
+  try {
+    const response = await fetch("/api/agents/held", { headers: await authHeaders() });
+    if (!response.ok) {
+      heldPanel.hidden = true;
+      return;
+    }
+    renderHeldActions((await response.json()).held ?? []);
+  } catch {
+    heldPanel.hidden = true;
+  }
+}
+
+function heldArguments(args) {
+  return Object.entries(args ?? {})
+    .filter(([, value]) => value !== "" && value !== 0 && value !== false && value !== null && !(Array.isArray(value) && value.length === 0))
+    .map(([key, value]) => `<li><small>${escapeHtml(key.replace(/_/g, " "))}</small> ${escapeHtml(Array.isArray(value) ? value.join(", ") : String(value))}</li>`)
+    .join("");
+}
+
+function renderHeldActions(held) {
+  const pending = held.filter((entry) => entry.status === "en_attente");
+  const recent = held.filter((entry) => entry.status !== "en_attente").slice(0, 5);
+  if (pending.length + recent.length === 0) {
+    heldPanel.hidden = true;
+    return;
+  }
+  heldPanel.hidden = false;
+  heldPanel.innerHTML = `
+    <div class="panel-heading"><div><h2>${icon("shield")}Actions à valider</h2><p class="muted text-[13px]">Les outils réglés sur « validation requise » attendent votre accord avant de s'exécuter.</p></div><span class="tag ${pending.length > 0 ? "warning" : ""}">${pending.length} en attente</span></div>
+    ${pending.map((entry) => `
+      <article class="rule-card">
+        <p><strong>n° ${entry.number} · ${escapeHtml(formatAgent(entry.agent))}</strong> veut utiliser <code>${escapeHtml(entry.tool)}</code> <small>${escapeHtml(formatStamp(entry.at))}</small></p>
+        ${entry.mission ? `<p class="muted text-[13px]">Mission : ${escapeHtml(entry.mission)}</p>` : ""}
+        <ul class="held-args">${heldArguments(entry.args)}</ul>
+        <div class="flex gap-2"><button type="button" data-held="${entry.number}" data-held-decision="valider">${icon("check")}Valider et exécuter</button><button type="button" class="secondary" data-held="${entry.number}" data-held-decision="refuser">${icon("x")}Refuser</button></div>
+      </article>`).join("")}
+    ${recent.length > 0 ? `<details class="improvement-history"><summary><strong>Dernières décisions</strong></summary><ul>${recent.map((entry) => `<li>n° ${entry.number} ${escapeHtml(formatAgent(entry.agent))} · <code>${escapeHtml(entry.tool)}</code> : ${escapeHtml(HELD_LABELS[entry.status] ?? entry.status)}${entry.status === "echouee" && entry.result?.erreur ? ` — ${escapeHtml(entry.result.erreur)}` : ""}</li>`).join("")}</ul></details>` : ""}
+  `;
+}
+
+heldPanel.addEventListener("click", async (event) => {
+  const button = event.target.closest?.("[data-held-decision]");
+  if (!button) {
+    return;
+  }
+  button.disabled = true;
+  try {
+    const { action } = await postJson(`/api/agents/held/${button.dataset.held}/decision`, { decision: button.dataset.heldDecision });
+    showToast(action.status === "executee" ? "Action validée et exécutée." : action.status === "refusee" ? "Action refusée : elle ne s'exécutera pas." : `Action validée, mais son exécution a échoué : ${action.result?.erreur ?? "voir le fil"}.`, action.status === "echouee" ? "warn" : undefined);
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshTeam();
+});
+
 async function refreshTeam() {
   try {
     const response = await fetch("/api/team", { headers: await authHeaders() });
@@ -2412,7 +2498,7 @@ async function refreshTeam() {
       throw new Error("Impossible de charger l'équipe.");
     }
     teamView.data = await response.json();
-    await loadAgentSettings();
+    await Promise.all([loadAgentSettings(), refreshHeldActions()]);
     renderTeam();
   } catch (error) {
     teamFeed.innerHTML = `<li class="muted">${escapeHtml(error.message)}</li>`;
@@ -2718,9 +2804,12 @@ async function agentRequest(url, { method = "POST", body = undefined } = {}, suc
 
 async function saveAgentSettings(formNode) {
   const agentId = formNode.dataset.agentSettings;
-  const forbiddenTools = [...formNode.querySelectorAll("input[name='tool']")].filter((box) => !box.checked).map((box) => box.value);
+  const rights = [...formNode.querySelectorAll("select[name='tool-right']")];
+  const forbiddenTools = rights.filter((select) => select.value === "interdit").map((select) => select.dataset.tool);
+  const heldTools = rights.filter((select) => select.value === "validation").map((select) => select.dataset.tool);
   const instructions = formNode.querySelector("[name='instructions']")?.value ?? "";
-  await agentRequest(`/api/agents/${encodeURIComponent(agentId)}/config`, { method: "PUT", body: { instructions, forbiddenTools } }, `Réglages de l'agent ${formatAgent(agentId)} enregistrés : ils s'appliquent dès sa prochaine mission.`);
+  const tone = formNode.querySelector("[name='tone']")?.value ?? "";
+  await agentRequest(`/api/agents/${encodeURIComponent(agentId)}/config`, { method: "PUT", body: { instructions, forbiddenTools, heldTools, tone } }, `Réglages de l'agent ${formatAgent(agentId)} enregistrés : ils s'appliquent dès sa prochaine mission.`);
 }
 
 async function uploadAgentDocument(formNode) {
@@ -2764,6 +2853,33 @@ async function showDocumentText(agentId, documentId) {
   }
 }
 
+// The direction's response tests for an agent: a question, the words the
+// answer must contain and those it must not; run on demand in test mode.
+function agentTestsBlock(agentId, settings) {
+  const id = escapeHtml(agentId);
+  const tests = settings.tests ?? [];
+  return `
+      <div class="agent-tests">
+        <h4>Tests de réponses</h4>
+        <p class="muted text-[13px]">Une question type et les mots attendus : l'agent répond en mode test (il lit ses données, n'enregistre rien). Chaque lancement interroge l'IA.</p>
+        ${tests.length === 0 ? "" : `<ul>${tests.map((test) => `
+          <li>
+            <span><strong>${escapeHtml(test.question)}</strong>${test.lastRun ? ` <span class="tag ${test.lastRun.passed ? "ok" : "warning"}">${test.lastRun.passed ? "réussi" : "échoué"}</span>` : ' <span class="tag">jamais lancé</span>'}</span>
+            <small>${test.expected.length > 0 ? `attendu : ${escapeHtml(test.expected.join(" ; "))}` : ""}${test.forbidden.length > 0 ? `${test.expected.length > 0 ? " · " : ""}interdit : ${escapeHtml(test.forbidden.join(" ; "))}` : ""}${test.lastRun ? ` · ${escapeHtml(formatStamp(test.lastRun.at))}` : ""}</small>
+            ${test.lastRun && !test.lastRun.passed ? `<small class="text-danger">${test.lastRun.missing.length > 0 ? `manque : ${escapeHtml(test.lastRun.missing.join(", "))}` : ""}${test.lastRun.found.length > 0 ? ` trouvé : ${escapeHtml(test.lastRun.found.join(", "))}` : ""}</small>` : ""}
+            ${test.lastRun ? `<details><summary>Réponse obtenue</summary><p class="text-[13px]">${escapeHtml(test.lastRun.answer).replace(/\n/g, "<br>")}</p></details>` : ""}
+            <span class="flex flex-wrap gap-2"><button type="button" class="link-button" data-agent="${id}" data-test-run="${escapeHtml(test.id)}">Lancer</button><button type="button" class="link-button" data-agent="${id}" data-test-remove="${escapeHtml(test.id)}">Supprimer</button></span>
+          </li>`).join("")}</ul>
+        <div class="flex flex-wrap gap-2"><button type="button" class="secondary" data-agent="${id}" data-test-run="">${icon("check")}Lancer tous les tests</button></div>`}
+        <form data-agent-test="${id}" class="team-edit-form">
+          <label>Question<input name="question" maxlength="600" placeholder="Ex. : Un client demande une remise de 15 %, que réponds-tu ?" required></label>
+          <label>Mots attendus (séparés par ;)<input name="expected" placeholder="Ex. : direction ; validation"></label>
+          <label>Mots interdits (séparés par ;)<input name="forbidden" placeholder="Ex. : accordée"></label>
+          <div class="flex flex-wrap gap-2"><button type="submit" class="secondary">Ajouter le test</button></div>
+        </form>
+      </div>`;
+}
+
 function agentSettingsBlock(agentId) {
   const settings = teamView.config.get(agentId);
   if (!settings) {
@@ -2771,25 +2887,43 @@ function agentSettingsBlock(agentId) {
   }
   const current = settings.documents.filter((entry) => entry.status === "en_vigueur").length;
   const forbidden = settings.tools.filter((tool) => tool.forbidden).length;
-  const summary = [`${current} document${current > 1 ? "s" : ""}`, settings.instructions ? "consignes" : "", forbidden > 0 ? `${forbidden} outil${forbidden > 1 ? "s" : ""} retiré${forbidden > 1 ? "s" : ""}` : "", settings.memory.length > 0 ? `${settings.memory.length} note${settings.memory.length > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ");
+  const held = settings.tools.filter((tool) => tool.held).length;
+  const summary = [`${current} document${current > 1 ? "s" : ""}`, settings.instructions ? "consignes" : "", settings.tone ? `ton ${AGENT_TONE_LABELS[settings.tone]?.toLowerCase() ?? settings.tone}` : "", forbidden > 0 ? `${forbidden} outil${forbidden > 1 ? "s" : ""} retiré${forbidden > 1 ? "s" : ""}` : "", held > 0 ? `${held} sous validation` : "", settings.memory.length > 0 ? `${settings.memory.length} note${settings.memory.length > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ");
+  const kpi = settings.indicators;
   const id = escapeHtml(agentId);
   return `
     <details class="team-block agent-settings" data-settings-of="${id}" ${teamView.open.has(agentId) ? "open" : ""}>
       <summary><h4>Réglages de l'agent</h4><small class="muted">${escapeHtml(summary)}</small></summary>
+      ${kpi ? `<ul class="agent-kpis" aria-label="Indicateurs sur 30 jours">
+        <li><strong>${kpi.missions}</strong><small>missions (30 j)</small></li>
+        <li><strong>${kpi.actions}</strong><small>actions notées</small></li>
+        <li><strong>${kpi.anomaliesOpen}</strong><small>anomalies ouvertes</small></li>
+        <li><strong>${kpi.anomaliesLifted}</strong><small>levées (30 j)</small></li>
+        <li><strong>${kpi.heldPending}</strong><small>à valider</small></li>
+        <li><strong>${kpi.tests.run > 0 ? `${kpi.tests.passed}/${kpi.tests.run}` : "—"}</strong><small>tests réussis</small></li>
+      </ul>` : ""}
       <form data-agent-settings="${id}" class="team-edit-form">
         <label>Consignes de la direction
           <textarea name="instructions" rows="4" maxlength="4000" placeholder="Ex. : toujours proposer la livraison et le montage ; vouvoyer le client ; jamais de remise au-delà de 5 % sans accord.">${escapeHtml(settings.instructions)}</textarea>
         </label>
+        <label>Ton des réponses
+          <select name="tone">${Object.entries(AGENT_TONE_LABELS).map(([value, label]) => `<option value="${value}" ${(settings.tone ?? "") === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select>
+        </label>
         <fieldset class="agent-tools">
-          <legend>Outils autorisés</legend>
+          <legend>Outils : autorisé, validation requise (l'action attend votre accord) ou interdit</legend>
           ${settings.tools.length === 0 ? '<p class="muted text-[13px]">Liste indisponible pour le moment.</p>' : settings.tools.map((tool) => `
-            <label class="agent-tool" title="${escapeHtml(tool.description)}">
-              <input type="checkbox" name="tool" value="${escapeHtml(tool.name)}" ${tool.forbidden ? "" : "checked"} ${tool.locked ? "disabled" : ""}>
+            <div class="agent-tool" title="${escapeHtml(tool.description)}">
+              ${tool.locked ? '<span class="tag">toujours</span>' : `<select name="tool-right" data-tool="${escapeHtml(tool.name)}" aria-label="Droit sur ${escapeHtml(tool.name)}">
+                <option value="autorise" ${!tool.forbidden && !tool.held ? "selected" : ""}>Autorisé</option>
+                ${tool.holdable ? `<option value="validation" ${tool.held ? "selected" : ""}>Validation requise</option>` : ""}
+                <option value="interdit" ${tool.forbidden ? "selected" : ""}>Interdit</option>
+              </select>`}
               <span><code>${escapeHtml(tool.name)}</code><small>${escapeHtml(tool.description)}${tool.locked ? " (toujours actif)" : ""}</small></span>
-            </label>`).join("")}
+            </div>`).join("")}
         </fieldset>
         <div class="flex flex-wrap gap-2"><button type="submit" class="primary">${icon("check")}Enregistrer les réglages</button></div>
       </form>
+      ${agentTestsBlock(agentId, settings)}
       <div class="agent-documents">
         <h4>Documents de référence</h4>
         ${settings.documents.length === 0 ? '<p class="muted text-[13px]">Aucun document : l\'agent ne s\'appuie que sur ses données.</p>' : `<ul>${settings.documents.map((entry) => `

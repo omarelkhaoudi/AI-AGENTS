@@ -349,7 +349,7 @@ function createWorkshopStore({ load, save, clock, photoFiles, cncFiles, signatur
     // A delivery note the client signed on their link: the drawn signature
     // and the note exactly as it was signed are kept, one file each. A note is
     // signed once.
-    async addSignature(number, { type, documentNumber, name, png, pdf, ip = "", userAgent = "" }) {
+    async addSignature(number, { type, documentNumber, name, png, pdf, ip = "", userAgent = "", reserves = "" }) {
       return mutate(number, async (order, at) => {
         if ((order.signatures ?? []).some((entry) => entry.type === type && entry.number === documentNumber)) {
           throw new WorkshopError("Ce bon de livraison est déjà signé.", "WORKSHOP_ALREADY_SIGNED");
@@ -358,10 +358,39 @@ function createWorkshopStore({ load, save, clock, photoFiles, cncFiles, signatur
         const file = `${String(number).replace(/[^0-9A-Za-z_-]/g, "_")}_${id}`;
         await signatureFiles.write(`${file}.png`, png);
         await signatureFiles.write(`${file}.pdf`, pdf);
-        const entry = { id, type, number: documentNumber, name, signedAt: at, file, ip, userAgent: text(userAgent).slice(0, 200) };
+        const entry = { id, type, number: documentNumber, name, signedAt: at, file, ip, userAgent: text(userAgent).slice(0, 200), reserves };
         order.signatures = [...(order.signatures ?? []), entry];
-        order.journal.push({ at, by: "client", text: `Bon de livraison n° ${documentNumber} signé en ligne par ${name}.` });
+        order.journal.push({ at, by: "client", text: `Bon de livraison n° ${documentNumber} signé en ligne par ${name}${reserves ? ", avec réserves" : ""}.` });
+        if (reserves) {
+          pushReserve(order, at, { deliveryNote: documentNumber, said: reserves, source: "client", by: name });
+        }
         return entry;
+      });
+    },
+
+    // A réserve written at the delivery by the team, for the client's words
+    // given another way (on the paper note, by phone). It stays open until
+    // the team lifts it, saying what was done.
+    async addReserve(number, { deliveryNote = "", said, by = "direction" }) {
+      return mutate(number, async (order, at) => pushReserve(order, at, { deliveryNote, said, source: "equipe", by }));
+    },
+
+    async liftReserve(number, reserveNumber, { note, by = "direction" }) {
+      const said = reserveText(note, 500);
+      if (said.length < 3) {
+        throw new WorkshopError("Dites ce qui a été fait pour lever la réserve.", "WORKSHOP_RESERVE_NOTE_MISSING");
+      }
+      return mutate(number, async (order, at) => {
+        const reserve = (order.reserves ?? []).find((entry) => String(entry.number) === String(reserveNumber).trim());
+        if (!reserve) {
+          throw new WorkshopError(`Réserve n° ${reserveNumber} introuvable sur ce bon de commande.`, "WORKSHOP_RESERVE_NOT_FOUND");
+        }
+        if (reserve.status === "levee") {
+          throw new WorkshopError(`La réserve n° ${reserve.number} est déjà levée.`, "WORKSHOP_RESERVE_LIFTED");
+        }
+        Object.assign(reserve, { status: "levee", liftedAt: at, liftedBy: by, liftNote: said });
+        order.journal.push({ at, by, text: `Réserve n° ${reserve.number} levée : ${said}` });
+        return { ...reserve };
       });
     },
 
@@ -621,8 +650,11 @@ export function createWorkshop({ store, documentService, clock = () => new Date(
           return entry;
         }
         const signed = (record?.signatures ?? []).find((candidate) => candidate.number === entry.number);
-        return Object.freeze({ ...entry, signature: signed ? Object.freeze({ name: signed.name, signedAt: signed.signedAt }) : null });
+        return Object.freeze({ ...entry, signature: signed ? Object.freeze({ name: signed.name, signedAt: signed.signedAt, reserves: signed.reserves ?? "" }) : null });
       })),
+      // The réserves of the delivery and whether they were lifted; how the
+      // team lifted one stays inside the company.
+      reserves: Object.freeze((record?.reserves ?? []).map((reserve) => Object.freeze({ number: reserve.number, deliveryNote: reserve.deliveryNote, text: reserve.text, source: reserve.source, at: reserve.at, status: reserve.status, liftedAt: reserve.liftedAt }))),
       // What the client has paid, from the receipts H-KIDS gave them, and what
       // remains. Only when the amount of the sale is known.
       payments: dossier && dossier.ceiling !== null
@@ -657,6 +689,7 @@ export function createWorkshop({ store, documentService, clock = () => new Date(
       signaturePng: kept.png,
       name: kept.entry.name,
       signedAt: kept.entry.signedAt,
+      reserves: kept.entry.reserves ?? "",
       documentLabel: `Bon de livraison n° ${kept.entry.number}`,
       orderNumber: current.number,
       client: current.client,
@@ -753,7 +786,7 @@ export function createWorkshop({ store, documentService, clock = () => new Date(
 
     // The client signs a delivery note of their own sale: their name and the
     // signature drawn on the page, as a PNG data URL.
-    async signDeliveryNote(token, number, { name, signature, ip = "", userAgent = "" } = {}) {
+    async signDeliveryNote(token, number, { name, signature, reserves = "", ip = "", userAgent = "" } = {}) {
       const view = await clientView(token);
       const listed = view?.documents.find((entry) => entry.type === HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE && entry.number === String(number).trim());
       if (!listed) {
@@ -764,12 +797,19 @@ export function createWorkshop({ store, documentService, clock = () => new Date(
         throw new WorkshopError("Écrivez votre nom et votre prénom.", "WORKSHOP_SIGNER_INVALID");
       }
       const png = readSignatureImage(signature);
+      if (typeof reserves === "string" && reserves.trim().length > MAX_RESERVE_LENGTH) {
+        throw new WorkshopError(`Les réserves tiennent en ${MAX_RESERVE_LENGTH} caractères.`, "WORKSHOP_RESERVE_TOO_LONG");
+      }
+      const written = reserveText(reserves);
+      if (typeof reserves === "string" && reserves.trim() !== "" && written.length < 3) {
+        throw new WorkshopError("Écrivez la réserve : ce qui manque, ce qui est abîmé ou ce qui ne va pas.", "WORKSHOP_RESERVE_INVALID");
+      }
       const issued = await documentService.readIssuedPdf(HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE, listed.number);
       if (!issued) {
         throw new WorkshopError("Ce bon de livraison n'existe pas pour cette commande.", "WORKSHOP_DOCUMENT_NOT_FOUND");
       }
-      const entry = await store.addSignature(view.order.number, { type: HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE, documentNumber: listed.number, name: signer, png, pdf: issued.bytes, ip: text(ip).slice(0, 64), userAgent });
-      return Object.freeze({ order: await order(view.order.number), signature: Object.freeze({ id: entry.id, number: entry.number, name: entry.name, signedAt: entry.signedAt }) });
+      const entry = await store.addSignature(view.order.number, { type: HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE, documentNumber: listed.number, name: signer, png, pdf: issued.bytes, ip: text(ip).slice(0, 64), userAgent, reserves: written });
+      return Object.freeze({ order: await order(view.order.number), signature: Object.freeze({ id: entry.id, number: entry.number, name: entry.name, signedAt: entry.signedAt, reserves: entry.reserves }) });
     },
 
     // The signed delivery note, for the client who signed it and for the cockpit.
@@ -783,6 +823,24 @@ export function createWorkshop({ store, documentService, clock = () => new Date(
       return signedPdf(await issuedOrder(number), id);
     },
 
+    // A réserve of the order's delivery, noted by the team: on one of its
+    // delivery notes, or the only one when there is one.
+    async addReserve(number, { deliveryNote = "", text: said, by = "direction" } = {}) {
+      const current = await issuedOrder(number);
+      const note = text(deliveryNote);
+      if (note && !current.deliveryNotes.includes(note)) {
+        throw new WorkshopError(`Le bon de livraison n° ${note} n'est pas celui de ce bon de commande${current.deliveryNotes.length ? ` (bons de livraison : ${current.deliveryNotes.join(", ")})` : ""}.`, "WORKSHOP_RESERVE_NOTE_UNKNOWN");
+      }
+      const reserve = await store.addReserve(current.number, { deliveryNote: note || (current.deliveryNotes.length === 1 ? current.deliveryNotes[0] : ""), said, by });
+      return Object.freeze({ reserve, order: await order(current.number) });
+    },
+
+    async liftReserve(number, reserveNumber, { note, by = "direction" } = {}) {
+      const current = await issuedOrder(number);
+      const reserve = await store.liftReserve(current.number, reserveNumber, { note, by });
+      return Object.freeze({ reserve, order: await order(current.number) });
+    },
+
     // A document of the client's sale, and no other: what the view lists is
     // all the link opens.
     async clientDocument(token, type, number) {
@@ -791,6 +849,25 @@ export function createWorkshop({ store, documentService, clock = () => new Date(
       return listed ? documentService.readIssuedPdf(type, listed.number) : null;
     }
   });
+}
+
+// A réserve of the delivery, numbered within its order.
+export const MAX_RESERVE_LENGTH = 1000;
+
+export function reserveText(value, max = MAX_RESERVE_LENGTH) {
+  return (typeof value === "string" ? value : "").replace(/\r\n?/g, "\n").split("\n").map((line) => line.replace(/[ \t]+/g, " ").trim()).filter(Boolean).join("\n").slice(0, max);
+}
+
+function pushReserve(order, at, { deliveryNote, said, source, by }) {
+  const written = reserveText(said);
+  if (written.length < 3) {
+    throw new WorkshopError("Écrivez la réserve : ce qui manque, ce qui est abîmé ou ce qui ne va pas.", "WORKSHOP_RESERVE_INVALID");
+  }
+  order.reserves ??= [];
+  const reserve = { number: order.reserves.reduce((max, entry) => Math.max(max, entry.number), 0) + 1, deliveryNote: text(deliveryNote), text: written, source, by, at, status: "ouverte", liftedAt: null, liftedBy: null, liftNote: "" };
+  order.reserves.push(reserve);
+  order.journal.push({ at, by: source === "client" ? "client" : by, text: `Réserve n° ${reserve.number}${reserve.deliveryNote ? ` (bon de livraison n° ${reserve.deliveryNote})` : ""} notée ${source === "client" ? "par le client à la signature" : "par l'équipe"} : ${written}` });
+  return { ...reserve };
 }
 
 export function portalLink(token, publicBaseUrl = "") {
@@ -894,6 +971,9 @@ function workshopOrder(order, record = { steps: {}, journal: [] }, issued, day) 
   if (finished && dossier?.quoteNumber && dossier.remaining > 0) {
     alerts.push(`Installée, reste à facturer ${dossier.remaining} DH`);
   }
+  for (const reserve of (record.reserves ?? []).filter((entry) => entry.status === "ouverte")) {
+    alerts.push(`Réserve n° ${reserve.number} à la livraison, à lever : ${reserve.text.replace(/\n/g, " ; ")}`);
+  }
 
   return Object.freeze({
     number: order.number,
@@ -927,7 +1007,9 @@ function workshopOrder(order, record = { steps: {}, journal: [] }, issued, day) 
     portal: record.portal?.active ? Object.freeze({ path: portalLink(record.portal.token).path, createdAt: record.portal.createdAt }) : null,
     photos: Object.freeze((record.photos ?? []).map((photo) => Object.freeze({ id: photo.id, caption: photo.caption, publishedAt: photo.publishedAt }))),
     // The delivery notes the client signed on their link.
-    signatures: Object.freeze((record.signatures ?? []).map((entry) => Object.freeze({ id: entry.id, type: entry.type, number: entry.number, name: entry.name, signedAt: entry.signedAt }))),
+    signatures: Object.freeze((record.signatures ?? []).map((entry) => Object.freeze({ id: entry.id, type: entry.type, number: entry.number, name: entry.name, signedAt: entry.signedAt, reserves: entry.reserves ?? "" }))),
+    // The réserves of the delivery, the client's and the team's.
+    reserves: Object.freeze((record.reserves ?? []).map((reserve) => Object.freeze({ ...reserve }))),
     journal: Object.freeze([...(record.journal ?? [])])
   });
 }

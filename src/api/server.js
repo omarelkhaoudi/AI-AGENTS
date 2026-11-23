@@ -1393,6 +1393,39 @@ export function buildApi({
       }
     });
 
+    // The réserves of the delivery: the team notes one the client gave off
+    // the link, and lifts one once fixed, saying what was done.
+    app.post("/api/workshop/:number/reserves", writeRouteOptions(), async (request, reply) => {
+      try {
+        const by = request.principal.userId ?? "direction";
+        const { reserve, order } = await workshop.addReserve(request.params.number, {
+          deliveryNote: typeof request.body?.deliveryNote === "string" ? request.body.deliveryNote : "",
+          text: typeof request.body?.text === "string" ? request.body.text : "",
+          by
+        });
+        await teamFeed.log({ agent: "after_sales", kind: "atelier", text: `BC ${order.number} (${order.client}) — ${order.journal.at(-1).text}`, ref: `bc:${order.number}`, by });
+        await syncAnomalies(await workshop.book());
+        return reply.code(201).send({ reserve, order });
+      } catch (error) {
+        return sendWorkshopError(reply, error, "Delivery reserve failed.");
+      }
+    });
+
+    app.post("/api/workshop/:number/reserves/:reserve/lift", writeRouteOptions(), async (request, reply) => {
+      try {
+        const by = request.principal.userId ?? "direction";
+        const { reserve, order } = await workshop.liftReserve(request.params.number, request.params.reserve, {
+          note: typeof request.body?.note === "string" ? request.body.note : "",
+          by
+        });
+        await teamFeed.log({ agent: "after_sales", kind: "atelier", text: `BC ${order.number} (${order.client}) — ${order.journal.at(-1).text}`, ref: `bc:${order.number}`, by });
+        await syncAnomalies(await workshop.book());
+        return reply.code(200).send({ reserve, order });
+      } catch (error) {
+        return sendWorkshopError(reply, error, "Delivery reserve lift failed.");
+      }
+    });
+
     app.get("/api/workshop/:number/cnc/:id", readRouteOptions(), async (request, reply) => {
       try {
         const file = await workshop.readCncFile(request.params.number, request.params.id);
@@ -2636,14 +2669,20 @@ export function buildApi({
         const signed = await workshop.signDeliveryNote(request.params.token, request.params.number, {
           name: request.body?.name,
           signature: request.body?.signature,
+          reserves: typeof request.body?.reserves === "string" ? request.body.reserves : "",
           ip: request.ip,
           userAgent: request.headers["user-agent"]
         });
-        const line = `BC ${signed.order.number} (${signed.order.client}) — bon de livraison n° ${signed.signature.number} signé en ligne par ${signed.signature.name}.`;
-        await teamFeed.log({ agent: "commercial", kind: "document", text: line, ref: `bc:${signed.order.number}`, by: "client" });
+        const reserves = signed.signature.reserves ?? "";
+        const line = `BC ${signed.order.number} (${signed.order.client}) — bon de livraison n° ${signed.signature.number} signé en ligne par ${signed.signature.name}${reserves ? `, AVEC RÉSERVES : « ${reserves.replace(/\n/g, " ; ").slice(0, 300)}${reserves.length > 300 ? "…" : ""} »` : "."}`;
+        await teamFeed.log({ agent: reserves ? "after_sales" : "commercial", kind: "document", text: line, ref: `bc:${signed.order.number}`, by: "client" });
         whatsApp.tellDirection(line).catch((error) => app.log.error(error));
+        if (reserves) {
+          // The réserve is the SAV's anomaly from now on, not at the next sweep.
+          await syncAnomalies(await workshop.book()).catch((error) => app.log.error(error));
+        }
         automate("bl_signe", { numero: String(signed.signature.number), commande: String(signed.order.number), client: signed.order.client ?? "", signataire: signed.signature.name ?? "" });
-        return reply.code(201).send({ signature: { number: signed.signature.number, name: signed.signature.name, signedAt: signed.signature.signedAt } });
+        return reply.code(201).send({ signature: { number: signed.signature.number, name: signed.signature.name, signedAt: signed.signature.signedAt, reserves } });
       } catch (error) {
         if (error instanceof WorkshopError) {
           const statusCode = error.code === "WORKSHOP_DOCUMENT_NOT_FOUND" ? 404 : error.code === "WORKSHOP_ALREADY_SIGNED" ? 409 : 400;
@@ -3120,7 +3159,7 @@ function workingHours(now) {
 
 function sendWorkshopError(reply, error, fallback) {
   if (error instanceof WorkshopError) {
-    return reply.code(["WORKSHOP_ORDER_NOT_FOUND", "WORKSHOP_CNC_NOT_FOUND"].includes(error.code) ? 404 : error.code === "WORKSHOP_CNC_ALREADY_DECIDED" ? 409 : 400).send({ error: error.message, details: { code: error.code } });
+    return reply.code(["WORKSHOP_ORDER_NOT_FOUND", "WORKSHOP_CNC_NOT_FOUND", "WORKSHOP_RESERVE_NOT_FOUND"].includes(error.code) ? 404 : ["WORKSHOP_CNC_ALREADY_DECIDED", "WORKSHOP_RESERVE_LIFTED"].includes(error.code) ? 409 : 400).send({ error: error.message, details: { code: error.code } });
   }
   return sendDomainError(reply, fallback, error);
 }

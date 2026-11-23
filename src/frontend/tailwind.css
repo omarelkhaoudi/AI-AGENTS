@@ -931,6 +931,39 @@
     @apply text-muted;
   }
 
+  .reserve-list {
+    @apply flex list-none flex-col gap-2 p-0;
+  }
+
+  .reserve-list > li {
+    @apply flex flex-col items-start gap-1.5 rounded-xl border border-line bg-surface-2 px-3 py-2.5;
+  }
+
+  .reserve-list > li.reserve-ouverte {
+    @apply border-warn/40;
+  }
+
+  .reserve-text {
+    @apply whitespace-pre-line break-words text-[13px] text-ink;
+  }
+
+  .reserve-form {
+    @apply mt-3 flex flex-col gap-2 text-[12.5px];
+  }
+
+  .reserve-form label {
+    @apply flex flex-col gap-1 font-semibold text-ink-2;
+  }
+
+  .reserve-form textarea,
+  .reserve-form select {
+    @apply font-normal;
+  }
+
+  .reserve-form button {
+    @apply self-start;
+  }
+
   .all-clear .badge {
     @apply grid size-[52px] place-items-center rounded-2xl bg-good-soft text-good;
   }

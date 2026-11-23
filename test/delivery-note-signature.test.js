@@ -7,6 +7,7 @@ import { crc32, deflateSync } from "node:zlib";
 import { PDFDocument } from "pdf-lib";
 import { HkidsDocumentService, InMemoryRepository } from "../src/index.js";
 import { SPECIALIST_IDS } from "../src/agent/agent-team.js";
+import { createMemoryImprovementBook } from "../src/agent/improvement-book.js";
 import { createMemoryTeamBook } from "../src/agent/team-book.js";
 import { createFileWorkshopStore, createMemoryWorkshopStore, createWorkshop } from "../src/agent/workshop-book.js";
 import { fingerprint, signatureMoment } from "../src/documents/signed-pdf.js";
@@ -95,7 +96,7 @@ test("the client signs the delivery note of their sale once, and the signed PDF 
 
   // Read again from disk, as after a restart.
   const again = createWorkshop({ store: createFileWorkshopStore({ path: join(outputDir, "atelier.json"), clock }), documentService: documents, clock });
-  assert.deepEqual((await again.clientView(token)).documents.find((entry) => entry.type === "delivery_note").signature, { name: "Client Exemple", signedAt: "2026-11-16T15:30:00.000Z" });
+  assert.deepEqual((await again.clientView(token)).documents.find((entry) => entry.type === "delivery_note").signature, { name: "Client Exemple", signedAt: "2026-11-16T15:30:00.000Z", reserves: "" });
   const [kept] = (await again.order("171")).signatures;
   assert.deepEqual({ type: kept.type, number: kept.number, name: kept.name }, { type: "delivery_note", number: "55", name: "Client Exemple" });
   assert.equal(kept.ip, undefined, "the cockpit's view of the order does not carry the client's address");
@@ -128,7 +129,7 @@ test("the link signs without an account, the direction is told, and the cockpit 
   const signed = await app.inject({ method: "POST", url: `${url}/signature`, payload: { name: "Client Exemple", signature: signaturePng() } });
   assert.equal(signed.statusCode, 201, signed.body);
   assert.equal(signed.headers["cache-control"], "no-store");
-  assert.deepEqual(JSON.parse(signed.body).signature, { number: "55", name: "Client Exemple", signedAt: "2026-11-16T15:30:00.000Z" });
+  assert.deepEqual(JSON.parse(signed.body).signature, { number: "55", name: "Client Exemple", signedAt: "2026-11-16T15:30:00.000Z", reserves: "" });
   assert.equal((await app.inject({ method: "POST", url: `${url}/signature`, payload: { name: "Client Exemple", signature: signaturePng() } })).statusCode, 409);
   assert.equal((await app.inject({ method: "POST", url: "/api/public/suivi/inconnu/documents/delivery_note/55/signature", payload: { name: "Client Exemple", signature: signaturePng() } })).statusCode, 404);
 
@@ -146,4 +147,132 @@ test("the link signs without an account, the direction is told, and the cockpit 
   assert.match(download.headers["content-disposition"], /bon-de-livraison-55-signe\.pdf/);
   assert.equal((await app.inject({ method: "GET", url: `/api/workshop/171/signatures/${entry.id}/pdf` })).statusCode, 401, "the cockpit's copy needs a session");
   assert.equal((await inject({ method: "GET", url: "/api/workshop/171/signatures/inconnu/pdf" })).statusCode, 404);
+});
+
+test("the client signs with réserves: they are written on the signed note, kept on the order, and the SAV's anomaly until lifted", async (t) => {
+  const { documents } = await documentsWith(t);
+  const store = createMemoryWorkshopStore({ clock });
+  const workshop = createWorkshop({ store, documentService: documents, clock });
+  const token = tokenOf(await workshop.openPortal("171"));
+  const improvement = createMemoryImprovementBook({ clock });
+
+  await assert.rejects(workshop.signDeliveryNote(token, "55", { name: "Client Exemple", signature: signaturePng(), reserves: "x".repeat(1001) }), { code: "WORKSHOP_RESERVE_TOO_LONG" });
+  await assert.rejects(workshop.signDeliveryNote(token, "55", { name: "Client Exemple", signature: signaturePng(), reserves: " a " }), { code: "WORKSHOP_RESERVE_INVALID" });
+  const plain = await plainSignedSize(documents);
+
+  const signed = await workshop.signDeliveryNote(token, "55", { name: "Client Exemple", signature: signaturePng(), reserves: "  Un tiroir   rayé.\r\n\r\nLa notice manque. " });
+  assert.equal(signed.signature.reserves, "Un tiroir rayé.\nLa notice manque.");
+  const [reserve] = signed.order.reserves;
+  assert.deepEqual({ number: reserve.number, deliveryNote: reserve.deliveryNote, source: reserve.source, by: reserve.by, status: reserve.status }, { number: 1, deliveryNote: "55", source: "client", by: "Client Exemple", status: "ouverte" });
+  assert.equal(signed.order.journal.at(-2).text, "Bon de livraison n° 55 signé en ligne par Client Exemple, avec réserves.");
+  assert.match(signed.order.alerts.at(-1), /^Réserve n° 1 à la livraison, à lever : Un tiroir rayé\. ; La notice manque\./);
+
+  // The signed note carries the réserves on the page of the signature.
+  const file = await workshop.signedDocument("171", signed.order.signatures[0].id);
+  assert.ok(file.bytes.length > plain, "the réserves are written on the page of the signature");
+
+  // The client sees them, and whether they were lifted; never how.
+  const view = await workshop.clientView(token);
+  assert.equal(view.documents.find((entry) => entry.type === "delivery_note").signature.reserves, "Un tiroir rayé.\nLa notice manque.");
+  assert.deepEqual(view.reserves.map((entry) => [entry.number, entry.status]), [[1, "ouverte"]]);
+
+  await improvement.sync(await workshop.book());
+  const [anomaly] = (await improvement.state()).anomalies;
+  assert.deepEqual([anomaly.kind, anomaly.severity, anomaly.owner, anomaly.reference], ["reserve_livraison", "haute", "after_sales", "BL 55"]);
+  assert.match(anomaly.fact, /réserve n° 1 à la livraison \(bon de livraison n° 55\), écrite par le client à la signature : Un tiroir rayé/);
+
+  // The team notes one said by phone, then lifts the first one.
+  await assert.rejects(workshop.addReserve("171", { deliveryNote: "99", text: "Pied bancal." }), { code: "WORKSHOP_RESERVE_NOTE_UNKNOWN" });
+  await assert.rejects(workshop.addReserve("171", { text: "" }), { code: "WORKSHOP_RESERVE_INVALID" });
+  const added = await workshop.addReserve("171", { text: "Pied bancal, dit au téléphone.", by: "sara" });
+  assert.deepEqual([added.reserve.number, added.reserve.deliveryNote, added.reserve.source], [2, "55", "equipe"], "the only delivery note of the order");
+  await assert.rejects(workshop.liftReserve("171", 1, { note: "" }), { code: "WORKSHOP_RESERVE_NOTE_MISSING" });
+  await assert.rejects(workshop.liftReserve("171", 9, { note: "Fait." }), { code: "WORKSHOP_RESERVE_NOT_FOUND" });
+  const lifted = await workshop.liftReserve("171", 1, { note: "Façade du tiroir remplacée, notice remise.", by: "sara" });
+  assert.deepEqual([lifted.reserve.status, lifted.reserve.liftNote], ["levee", "Façade du tiroir remplacée, notice remise."]);
+  await assert.rejects(workshop.liftReserve("171", 1, { note: "Encore." }), { code: "WORKSHOP_RESERVE_LIFTED" });
+  assert.deepEqual((await workshop.clientView(token)).reserves.map((entry) => [entry.number, entry.status, "liftNote" in entry]), [[1, "levee", false], [2, "ouverte", false]]);
+
+  await improvement.sync(await workshop.book());
+  const anomalies = (await improvement.state()).anomalies;
+  assert.deepEqual(anomalies.map((entry) => [entry.key, entry.status]), [["atelier:171:reserve:1", "levee"], ["atelier:171:reserve:2", "a_analyser"]]);
+});
+
+// The size of the same note signed without réserves, for comparison.
+async function plainSignedSize(documents) {
+  const other = createWorkshop({ store: createMemoryWorkshopStore({ clock }), documentService: documents, clock });
+  const token = tokenOf(await other.openPortal("171"));
+  const signed = await other.signDeliveryNote(token, "55", { name: "Client Exemple", signature: signaturePng() });
+  return (await other.signedDocument("171", signed.order.signatures[0].id)).bytes.length;
+}
+
+test("the cockpit notes and lifts a réserve, the direction is told of one written at the signature, and the SAV gets it", async (t) => {
+  const { documents } = await documentsWith(t);
+  const workshopStore = createMemoryWorkshopStore({ clock });
+  const teamBook = createMemoryTeamBook({ clock, agents: SPECIALIST_IDS });
+  const improvementBook = createMemoryImprovementBook({ clock });
+  const token = tokenOf(await createWorkshop({ store: workshopStore, documentService: documents, clock }).openPortal("171"));
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository(), documentService: documents, workshopStore, teamBook, improvementBook, clock });
+  t.after(() => app.close());
+
+  const signed = await app.inject({ method: "POST", url: `/api/public/suivi/${token}/documents/delivery_note/55/signature`, payload: { name: "Client Exemple", signature: signaturePng(), reserves: "Un tiroir rayé." } });
+  assert.equal(signed.statusCode, 201, signed.body);
+  assert.equal(JSON.parse(signed.body).signature.reserves, "Un tiroir rayé.");
+  assert.ok((await teamBook.activity({ agent: "after_sales" })).some((entry) => entry.text === "BC 171 (Client Exemple) — bon de livraison n° 55 signé en ligne par Client Exemple, AVEC RÉSERVES : « Un tiroir rayé. »"));
+  const reservesOf = async () => (await improvementBook.state()).anomalies.filter((entry) => entry.kind === "reserve_livraison");
+  assert.deepEqual((await reservesOf()).map((entry) => [entry.kind, entry.owner, entry.status]), [["reserve_livraison", "after_sales", "a_analyser"]], "the SAV has it at once");
+
+  assert.equal((await inject({ method: "POST", url: "/api/workshop/171/reserves", payload: { text: "" } })).statusCode, 400);
+  assert.equal((await app.inject({ method: "POST", url: "/api/workshop/171/reserves", payload: { text: "Pied bancal." } })).statusCode, 401);
+  const added = await inject({ method: "POST", url: "/api/workshop/171/reserves", payload: { text: "Pied bancal." } });
+  assert.equal(added.statusCode, 201, added.body);
+  assert.equal(JSON.parse(added.body).reserve.number, 2);
+
+  assert.equal((await inject({ method: "POST", url: "/api/workshop/171/reserves/1/lift", payload: { note: "" } })).statusCode, 400);
+  assert.equal((await inject({ method: "POST", url: "/api/workshop/171/reserves/7/lift", payload: { note: "Fait." } })).statusCode, 404);
+  const lifted = await inject({ method: "POST", url: "/api/workshop/171/reserves/1/lift", payload: { note: "Façade remplacée." } });
+  assert.equal(lifted.statusCode, 200, lifted.body);
+  assert.equal((await inject({ method: "POST", url: "/api/workshop/171/reserves/1/lift", payload: { note: "Encore." } })).statusCode, 409);
+  assert.deepEqual((await reservesOf()).map((entry) => [entry.key, entry.status]), [["atelier:171:reserve:1", "levee"], ["atelier:171:reserve:2", "a_analyser"]]);
+
+  const order = JSON.parse((await inject({ method: "GET", url: "/api/workshop" })).body).orders.find((candidate) => candidate.number === "171");
+  assert.deepEqual(order.reserves.map((entry) => [entry.number, entry.status]), [[1, "levee"], [2, "ouverte"]]);
+  assert.equal(order.signatures[0].reserves, "Un tiroir rayé.");
+  const client = JSON.parse((await app.inject({ method: "GET", url: `/api/public/suivi/${token}` })).body);
+  assert.deepEqual(client.reserves.map((entry) => [entry.number, entry.status]), [[1, "levee"], [2, "ouverte"]]);
+});
+
+test("the SAV agent notes a réserve the client said by phone and lifts it once the team says what was done", async (t) => {
+  const { documents } = await documentsWith(t);
+  const workshopStore = createMemoryWorkshopStore({ clock });
+  const improvementBook = createMemoryImprovementBook({ clock });
+  await createWorkshop({ store: workshopStore, documentService: documents, clock }).openPortal("171");
+  const call = (name, args, id) => ({ output: [{ type: "function_call", name, call_id: id, arguments: JSON.stringify(args) }] });
+  const empty = { texte: "", bon_de_livraison: "", reserve: "", note: "" };
+  const missions = [
+    { ...empty, numero: "171", action: "noter", texte: "Une poignée manque." },
+    { ...empty, numero: "171", action: "lever", reserve: "1" },
+    { ...empty, numero: "171", action: "lever", reserve: "1", note: "Poignée posée le 17/11." }
+  ];
+  const results = [];
+  const agentClient = { responses: { async create(payload) {
+    const outputs = payload.input.filter((item) => item.type === "function_call_output");
+    if (payload.instructions.startsWith("Tu es le Director IA")) {
+      return outputs.length === 0 ? call("deleguer_a_un_agent", { agent: "after_sales", mission: "Réserves du BC 171." }, "d1") : { output_text: "Fait.", output: [] };
+    }
+    if (outputs.length > 0) {
+      results.push(JSON.parse(outputs.at(-1).output));
+    }
+    return outputs.length < missions.length ? call("reserve_livraison", missions[outputs.length], `s${outputs.length}`) : { output_text: "Réserve levée.", output: [] };
+  } } };
+  const { app, inject } = await buildAuthenticatedApi({ repository: new InMemoryRepository(), documentService: documents, workshopStore, improvementBook, agentClient, clock });
+  t.after(() => app.close());
+
+  const chat = await inject({ method: "POST", url: "/api/agent/chat", payload: { message: "Le client du BC 171 dit qu'une poignée manque ; elle a été posée depuis." } });
+  assert.equal(chat.statusCode, 200, chat.body);
+  assert.deepEqual(results.map((result) => result.ok), [true, false, true]);
+  assert.equal(results[0].reserve.ecrite_par, "l'équipe (after_sales)");
+  assert.match(results[1].erreur, /ce qui a été fait/, "never lifted without what was done");
+  assert.match(results[2].reserve.statut, /^levée le 16\/11\/2026 : Poignée posée le 17\/11\.$/);
+  assert.deepEqual((await improvementBook.state()).anomalies.filter((entry) => entry.kind === "reserve_livraison").map((entry) => entry.status), ["levee"]);
 });

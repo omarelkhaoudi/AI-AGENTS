@@ -813,6 +813,27 @@ Les alertes remontent dans **Amélioration** :
 
 Tout est gardé dans `data/administratif.json`.
 
+### Réserves à la livraison
+
+Le client signe son bon de livraison sur son lien de suivi. Il peut cocher
+« Je signe avec des réserves » et les écrire (1 000 caractères au plus) :
+élément manquant, abîmé ou non conforme.
+
+- Le bon signé les reprend mot pour mot : « reconnais avoir reçu … sous les
+  réserves suivantes, écrites par moi avant de signer ». Sans réserve, la
+  phrase reste « en bon état apparent ».
+- La direction est prévenue sur WhatsApp et dans le fil de l'équipe, avec le
+  texte des réserves.
+- Une réserve dite autrement (sur le bon papier, au téléphone) est notée par
+  l'équipe : dans la carte de la commande (vue Atelier, panneau « Réserves de
+  livraison »), ou au Director et aux agents SAV et Production (outil
+  `reserve_livraison`).
+- Une réserve ouverte est une anomalie **haute** confiée au **SAV** dans
+  **Amélioration**, et une alerte de la commande au carnet d'atelier.
+- On la lève en disant ce qui a été fait ; l'anomalie est alors levée. Le
+  client voit sur son lien chaque réserve et si elle est levée, jamais la note
+  de l'équipe.
+
 ---
 
 ## 1. Présentation

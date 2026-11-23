@@ -402,6 +402,12 @@ function workshopFacts(orders) {
         facts.push({ ...base, key: `atelier:${order.number}:${step.id}:retard`, kind: "retard", fact: `BC ${order.number} (${order.client}) : ${step.label} prévue le ${frenchDay(step.plannedDate)}, pas terminée` });
       }
     }
+    // A réserve written at the delivery is the SAV's until the team lifts it.
+    for (const reserve of order.reserves ?? []) {
+      if (reserve.status === "ouverte") {
+        facts.push({ source: "atelier", orderNumber: String(order.number), client: order.client ?? "", step: "livraison_installation", owner: "after_sales", severity: "haute", key: `atelier:${order.number}:reserve:${reserve.number}`, kind: "reserve_livraison", reference: reserve.deliveryNote ? `BL ${reserve.deliveryNote}` : "", fact: `BC ${order.number} (${order.client}) : réserve n° ${reserve.number} à la livraison${reserve.deliveryNote ? ` (bon de livraison n° ${reserve.deliveryNote})` : ""}, ${reserve.source === "client" ? "écrite par le client à la signature" : "notée par l'équipe"} : ${reserve.text}` });
+      }
+    }
   }
   return facts;
 }

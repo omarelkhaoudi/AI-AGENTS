@@ -32,7 +32,7 @@ export function signatureMoment(signedAt) {
   return `${part({ day: "2-digit", month: "2-digit", year: "numeric" })} à ${part({ hour: "2-digit", minute: "2-digit" })} (heure du Maroc)`;
 }
 
-export async function renderSignedPdf({ pdfBytes, signaturePng, name, signedAt, documentLabel, orderNumber, client = "", ip = "", fontPath = process.env.HKIDS_DOCUMENT_FONT_PATH ?? null, boldFontPath = process.env.HKIDS_DOCUMENT_BOLD_FONT_PATH ?? null }) {
+export async function renderSignedPdf({ pdfBytes, signaturePng, name, signedAt, documentLabel, orderNumber, client = "", ip = "", reserves = "", fontPath = process.env.HKIDS_DOCUMENT_FONT_PATH ?? null, boldFontPath = process.env.HKIDS_DOCUMENT_BOLD_FONT_PATH ?? null }) {
   const pdf = await PDFDocument.load(pdfBytes);
   pdf.registerFontkit(fontkit);
   const font = await pdf.embedFont(await readFile(await resolveDocumentFontPath("regular", fontPath)), { subset: true });
@@ -56,7 +56,16 @@ export async function renderSignedPdf({ pdfBytes, signaturePng, name, signedAt, 
   y -= 16;
   line(`${documentLabel} — bon de commande n° ${orderNumber}${client ? ` — ${client}` : ""}`, { face: bold });
   y -= 6;
-  line(`Je soussigné(e) ${name} reconnais avoir reçu la marchandise décrite dans le ${documentLabel.toLowerCase()} qui précède, en bon état apparent, sauf réserves communiquées à ${HKIDS_FIXED_IDENTITY.companyName}.`);
+  if (reserves) {
+    // The réserves are the signer's own words, written before signing.
+    line(`Je soussigné(e) ${name} reconnais avoir reçu la marchandise décrite dans le ${documentLabel.toLowerCase()} qui précède, sous les réserves suivantes, écrites par moi avant de signer :`);
+    y -= 2;
+    for (const said of String(reserves).split("\n")) {
+      line(`« ${said} »`, { face: bold });
+    }
+  } else {
+    line(`Je soussigné(e) ${name} reconnais avoir reçu la marchandise décrite dans le ${documentLabel.toLowerCase()} qui précède, en bon état apparent, sauf réserves communiquées à ${HKIDS_FIXED_IDENTITY.companyName}.`);
+  }
   y -= 8;
   line(`Signé le ${signatureMoment(signedAt)}`, { face: bold });
   line(`par ${name}`, { face: bold });

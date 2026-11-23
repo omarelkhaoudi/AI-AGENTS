@@ -1997,6 +1997,7 @@ const ANOMALY_SOURCE_LABELS = Object.freeze({ commercial: "Alerte commerciale", 
 const ANOMALY_KIND_LABELS = Object.freeze({
   retard: "retard",
   blocage: "blocage",
+  reserve_livraison: "réserve à la livraison",
   devis_expire: "devis expiré",
   remise_hors_plafond: "remise hors plafond",
   marge_sous_seuil: "marge sous le seuil",
@@ -3498,6 +3499,24 @@ function renderOrders(orders) {
     article.querySelectorAll("[data-signed-download]").forEach((button) => {
       button.addEventListener("click", () => downloadSignedNote(number, button.dataset.signedDownload, button.dataset.signedName));
     });
+    article.querySelector("[data-reserve-form]")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const said = form.elements.text.value.trim();
+      if (said.length < 3) {
+        showToast("Écrivez la réserve : ce qui manque, ce qui est abîmé ou ce qui ne va pas.", "warn");
+        return;
+      }
+      await sendReserve(number, { text: said, deliveryNote: form.elements.deliveryNote?.value ?? "" });
+    });
+    article.querySelectorAll("[data-reserve-lift]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const note = globalThis.prompt?.("Qu'est-ce qui a été fait pour lever cette réserve ? (pièce remplacée, retouche, livraison complétée…)") ?? "";
+        if (note.trim()) {
+          await liftReserve(number, button.dataset.reserveLift, note.trim());
+        }
+      });
+    });
     article.querySelectorAll("[data-cnc-decide]").forEach((button) => {
       button.addEventListener("click", async () => {
         const approve = button.dataset.cncDecide === "valider";
@@ -3578,6 +3597,7 @@ function orderCard(order) {
         ${designOffice(order)}
         ${manufacturingDossier(order)}
         ${clientAccess(order)}
+        ${deliveryReserves(order)}
         ${order.journal.length > 0 ? orderPanel(order, "journal", `${icon("history")}<span>Journal</span><small>${order.journal.length} entrée${order.journal.length > 1 ? "s" : ""}</small>`, `
           <ul class="order-journal">${[...order.journal].reverse().map((entry) => `<li><small>${escapeHtml(formatIsoDay(entry.at.slice(0, 10)))} ${escapeHtml(entry.at.slice(11, 16))}</small> ${escapeHtml(entry.text)}</li>`).join("")}</ul>
         `) : ""}
@@ -3927,6 +3947,58 @@ async function downloadCncFile(number, id, name, section = "cnc") {
   }
 }
 
+// The réserves of the delivery: the client's, written when signing the
+// delivery note on their link, and the team's, for words given another way.
+// An open one is the SAV's until the team lifts it, saying what was done.
+function deliveryReserves(order) {
+  const reserves = order.reserves ?? [];
+  if (reserves.length === 0 && order.deliveryNotes.length === 0) {
+    return "";
+  }
+  const open = reserves.filter((reserve) => reserve.status === "ouverte").length;
+  const summary = `${icon("alert")}<span>Réserves de livraison</span>${open > 0 ? `<span class="tag warning">${open} ouverte${open > 1 ? "s" : ""}</span>` : ""}<small>${reserves.length === 0 ? "aucune" : `${reserves.length} au total`}</small>`;
+  return orderPanel(order, "reserves", summary, `
+    ${reserves.length > 0 ? `<ul class="reserve-list">
+      ${reserves.map((reserve) => `<li class="reserve-${reserve.status}">
+        <span class="eyebrow">Réserve n° ${reserve.number}${reserve.deliveryNote ? ` · bon de livraison n° ${escapeHtml(reserve.deliveryNote)}` : ""} · ${reserve.source === "client" ? `écrite par le client (${escapeHtml(reserve.by)}) en signant` : "notée par l'équipe"} le ${escapeHtml(formatIsoDay(reserve.at.slice(0, 10)))}</span>
+        <p class="reserve-text">${escapeHtml(reserve.text)}</p>
+        ${reserve.status === "levee"
+          ? `<p class="muted text-[12.5px]">${icon("check-circle")} Levée le ${escapeHtml(formatIsoDay(reserve.liftedAt.slice(0, 10)))} : ${escapeHtml(reserve.liftNote)}</p>`
+          : `<button type="button" class="secondary" data-reserve-lift="${reserve.number}">${icon("check")}Lever la réserve</button>`}
+      </li>`).join("")}
+    </ul>` : `<p class="muted text-[12.5px]">Aucune réserve. Le client peut en écrire en signant son bon de livraison sur son lien de suivi.</p>`}
+    <form class="reserve-form" data-reserve-form>
+      <label>Noter une réserve dite par le client (bon papier, téléphone), avec ses mots
+        <textarea name="text" rows="2" maxlength="1000" required></textarea>
+      </label>
+      ${order.deliveryNotes.length > 1 ? `<label>Bon de livraison
+        <select name="deliveryNote">${order.deliveryNotes.map((note) => `<option value="${escapeHtml(note)}">n° ${escapeHtml(note)}</option>`).join("")}</select>
+      </label>` : ""}
+      <button type="submit" class="secondary">${icon("plus")}Noter la réserve</button>
+    </form>
+  `);
+}
+
+async function sendReserve(number, body) {
+  try {
+    await postJson(`/api/workshop/${encodeURIComponent(number)}/reserves`, body);
+    showToast(`Réserve notée sur le BC n° ${number} : elle est confiée au SAV.`);
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshOrders();
+}
+
+async function liftReserve(number, reserve, note) {
+  try {
+    await postJson(`/api/workshop/${encodeURIComponent(number)}/reserves/${encodeURIComponent(reserve)}/lift`, { note });
+    showToast(`Réserve n° ${reserve} levée.`);
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshOrders();
+}
+
 // What the client sees of the order, and the controls of the link: made,
 // copied, switched off; photos published and removed. Thumbnails come through
 // the client's own link, so they only show while it is active.
@@ -3950,7 +4022,7 @@ function clientAccess(order) {
       </div>
       ${(order.signatures ?? []).length > 0 ? `
         <ul class="order-journal">
-          ${order.signatures.map((entry) => `<li>${icon("check-circle")} Bon de livraison n° ${escapeHtml(entry.number)} signé en ligne par <b>${escapeHtml(entry.name)}</b> le ${escapeHtml(formatIsoDay(entry.signedAt.slice(0, 10)))} · <button type="button" class="link-button" data-signed-download="${escapeHtml(entry.id)}" data-signed-name="bon-de-livraison-${escapeHtml(entry.number)}-signe.pdf">Télécharger le bon signé</button></li>`).join("")}
+          ${order.signatures.map((entry) => `<li>${icon("check-circle")} Bon de livraison n° ${escapeHtml(entry.number)} signé en ligne par <b>${escapeHtml(entry.name)}</b> le ${escapeHtml(formatIsoDay(entry.signedAt.slice(0, 10)))}${entry.reserves ? ` <span class="tag warning">avec réserves</span>` : ""} · <button type="button" class="link-button" data-signed-download="${escapeHtml(entry.id)}" data-signed-name="bon-de-livraison-${escapeHtml(entry.number)}-signe.pdf">Télécharger le bon signé</button></li>`).join("")}
         </ul>` : order.deliveryNotes.length > 0 ? `<p class="muted text-[12.5px]">Bon de livraison n° ${escapeHtml(order.deliveryNotes.join(", "))} : pas encore signé en ligne. Le client peut le signer depuis son lien de suivi.</p>` : ""}
       <ul class="client-photos">
         ${order.photos.map((photo) => `

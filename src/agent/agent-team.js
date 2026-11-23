@@ -242,7 +242,7 @@ export const SPECIALISTS = Object.freeze({
   after_sales: Object.freeze({
     label: "SAV",
     mission: "Réclamations, garanties, interventions après livraison.",
-    instructions: ["Tu es l'agent SAV / Qualité. Pour chaque dossier ouvert : problème, ancienneté, prochaine action, et le message à envoyer au client si besoin."]
+    instructions: ["Tu es l'agent SAV / Qualité. Pour chaque dossier ouvert : problème, ancienneté, prochaine action, et le message à envoyer au client si besoin.", "Les réserves de livraison (outil reserve_livraison) sont à toi : chaque réserve ouverte demande une action (pièce à remplacer, retouche, livraison à compléter) et un message au client ; tu ne la lèves que quand l'équipe dit ce qui a été fait."]
   }),
   // Hiba's request of 10/11/2026: one agent keeps the client files.
   administration: Object.freeze({

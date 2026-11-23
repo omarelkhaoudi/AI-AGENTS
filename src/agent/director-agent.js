@@ -452,6 +452,27 @@ const CLIENT_LINK_TOOL = Object.freeze({
     }
 });
 
+// The réserves of a delivery: noted for the client's words given off the
+// link, lifted once the team fixed what they say.
+const RESERVE_TOOL = Object.freeze({
+  type: "function",
+  name: "reserve_livraison",
+  description: "Les réserves de la livraison d'un bon de commande : « lister » les montre (celles écrites par le client en signant son bon de livraison en ligne et celles notées par l'équipe), « noter » enregistre une réserve que le client a dite autrement (sur le bon papier, au téléphone), avec SES mots, « lever » la clôt en disant ce qui a été fait. Une réserve ouverte est une anomalie haute du SAV jusqu'à sa levée. Jamais de réserve inventée, jamais de levée sans ce qui a été fait.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      numero: { type: "string", description: "Numéro du bon de commande." },
+      action: { type: "string", enum: ["lister", "noter", "lever"] },
+      texte: { type: "string", description: "noter : la réserve, telle que le client l'a dite (ce qui manque, est abîmé ou ne va pas). Sinon vide." },
+      bon_de_livraison: { type: "string", description: "noter : numéro du bon de livraison concerné ; vide s'il n'y en a qu'un." },
+      reserve: { type: "string", description: "lever : numéro de la réserve. Sinon vide." },
+      note: { type: "string", description: "lever : ce qui a été fait (pièce remplacée, retouche, livraison complétée…). Sinon vide." }
+    },
+    required: ["numero", "action", "texte", "bon_de_livraison", "reserve", "note"]
+  }
+});
+
 // Who answers for an order: its chef de charge, the client's architect and
 // who deals with them, the draughtsman of the CNC files.
 const ORDER_TEAM_TOOL = Object.freeze({
@@ -579,6 +600,7 @@ const TOOLS = Object.freeze([
   ADVANCE_ORDER_TOOL,
   CLIENT_LINK_TOOL,
   ORDER_TEAM_TOOL,
+  RESERVE_TOOL,
   PUBLISH_PHOTO_TOOL,
   SALES_REPORT_TOOL,
   COMMERCIAL_ANALYSIS_TOOL,
@@ -1292,6 +1314,9 @@ async function runTool(call, context) {
     if (call.name === ORDER_TEAM_TOOL.name) {
       return await setOrderTeam(args, context, "director");
     }
+    if (call.name === RESERVE_TOOL.name) {
+      return await deliveryReserve(args, context, "director");
+    }
     if (call.name === PUBLISH_PHOTO_TOOL.name) {
       return await publishPhoto(args, context, "director");
     }
@@ -1667,7 +1692,8 @@ async function readWorkshopBook(args, context) {
       equipe: orderTeam(order),
       fiche_technique: order.technicalSheets.at(-1) ? manufacturingLinks(order.number, order.technicalSheets.at(-1)) : null,
       dossier_fabrication: order.fabricationDossiers.at(-1) ? manufacturingLinks(order.number, order.fabricationDossiers.at(-1)) : null,
-      bons_de_livraison_signes: (order.signatures ?? []).map((entry) => ({ numero: entry.number, signe_par: entry.name, le: frenchDay(entry.signedAt.slice(0, 10)) })),
+      bons_de_livraison_signes: (order.signatures ?? []).map((entry) => ({ numero: entry.number, signe_par: entry.name, le: frenchDay(entry.signedAt.slice(0, 10)), ...(entry.reserves ? { avec_reserves: entry.reserves } : {}) })),
+      reserves_livraison: (order.reserves ?? []).map((reserve) => `n° ${reserve.number}${reserve.deliveryNote ? ` (BL ${reserve.deliveryNote})` : ""} — ${reserve.status === "levee" ? "levée" : "ouverte"} — ${reserve.text}`),
       fichiers_cnc: order.cnc.map((entry) => ({
         id: entry.id,
         url: `/api/workshop/${encodeURIComponent(order.number)}/cnc/${entry.id}`,
@@ -1745,6 +1771,40 @@ function orderTeam(order) {
     // 16/11/2026): a person in this role is optional, never a blocker.
     dessinateur: drafter ? `${drafter}${drafterPhone ? ` (${drafterPhone})` : ""}` : "aucun (facultatif : fiche technique, DXF et G-code sont préparés par les agents IA du bureau d'études)"
   };
+}
+
+async function deliveryReserve(args, context, by) {
+  const { workshop, books } = context;
+  const number = text(args.numero);
+  const describe = (reserve) => ({
+    numero: reserve.number,
+    bon_de_livraison: reserve.deliveryNote || null,
+    reserve: reserve.text,
+    ecrite_par: reserve.source === "client" ? `le client (${reserve.by}), à la signature en ligne` : `l'équipe (${reserve.by})`,
+    le: frenchDay(reserve.at.slice(0, 10)),
+    statut: reserve.status === "levee" ? `levée le ${frenchDay(reserve.liftedAt.slice(0, 10))} : ${reserve.liftNote}` : "ouverte"
+  });
+  try {
+    if (args.action === "lister") {
+      const order = await workshop.order(number);
+      if (!order) {
+        return { ok: false, erreur: `Aucun bon de commande n° ${number} n'a été généré par le cockpit.` };
+      }
+      return { ok: true, bc: order.number, client: order.client, reserves: order.reserves.map(describe), info: order.reserves.length ? undefined : "Aucune réserve sur cette livraison." };
+    }
+    const agent = SPECIALISTS[by] ? by : "after_sales";
+    const { reserve, order } = args.action === "lever"
+      ? await workshop.liftReserve(number, text(args.reserve), { note: text(args.note), by })
+      : await workshop.addReserve(number, { deliveryNote: text(args.bon_de_livraison), text: text(args.texte), by });
+    await books?.team.log({ agent, kind: "atelier", text: `BC ${order.number} (${order.client}) — ${order.journal.at(-1).text}`, ref: `bc:${order.number}`, by });
+    await syncAnomalies(context).catch(() => []);
+    return { ok: true, bc: order.number, enregistre: order.journal.at(-1).text, reserve: describe(reserve) };
+  } catch (error) {
+    if (error instanceof WorkshopError) {
+      return { ok: false, erreur: error.message };
+    }
+    throw error;
+  }
 }
 
 async function setOrderTeam(args, { workshop, books }, by) {
@@ -2262,6 +2322,7 @@ function agentToolParams(agentId, context) {
       ...(SPECIALISTS[agentId].workshop === "write" ? [
         { tool: ORDER_TEAM_TOOL, run: (teamArgs, by) => setOrderTeam(teamArgs, context, by) }
       ] : []),
+      ...(["production", "after_sales"].includes(agentId) && context.workshop ? [{ tool: RESERVE_TOOL, run: (reserveArgs, by) => deliveryReserve(reserveArgs, context, by) }] : []),
       ...(SPECIALISTS[agentId].drafts && context.designOffice ? [
           { tool: FABRICATION_TOOL, run: (args, by) => prepareFabrication(args, context, by) },
           { tool: DRAW_DXF_TOOL, run: (drawArgs, by) => drawDxf(drawArgs, context, by) },

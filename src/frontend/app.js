@@ -705,6 +705,7 @@ async function sendToAgent(message) {
     refreshImprovement();
     refreshTeam();
     refreshHr();
+    refreshAdmin();
     refreshStock();
     if (response.directorResponse) {
       state.current = { ...response.directorResponse, receivedAt: Date.now() };
@@ -1563,6 +1564,123 @@ function renderHr({ overview, payroll, canDecide }) {
   hrBody.innerHTML = sections.join("");
 }
 
+// --- Administratif view ---------------------------------------------------------------
+// The register the Administratif keeps beside the documents: deadlines to
+// meet, the company's contracts and their notice, the mail register with the
+// letters prepared for the direction to read, and the suppliers.
+const adminStats = document.querySelector("#admin-stats");
+const adminBody = document.querySelector("#admin-body");
+const adminCount = document.querySelector("#admin-count");
+let adminLetterhead = [];
+let adminMail = [];
+document.querySelector("#refresh-admin").addEventListener("click", () => refreshAdmin());
+adminBody.addEventListener("click", async (event) => {
+  const copy = event.target.closest?.("[data-copy-letter]");
+  if (copy) {
+    const mail = adminMail.find((entry) => String(entry.number) === copy.dataset.copyLetter);
+    try {
+      await navigator.clipboard.writeText([...adminLetterhead, "", mail?.body ?? ""].join("\n"));
+      showToast("Courrier copié, avec l'en-tête.");
+    } catch {
+      showToast("Copie impossible : sélectionnez le texte à la main.", "warn");
+    }
+    return;
+  }
+  const button = event.target.closest?.("[data-deadline-done], [data-mail-close]");
+  if (!button) {
+    return;
+  }
+  button.disabled = true;
+  try {
+    if (button.dataset.deadlineDone) {
+      await postJson(`/api/admin/deadlines/${button.dataset.deadlineDone}/done`, {});
+      showToast("Échéance faite.");
+    } else {
+      await postJson(`/api/admin/mail/${button.dataset.mailClose}/close`, {});
+      showToast(button.dataset.way === "sortant" ? "Courrier noté envoyé." : "Courrier noté traité.");
+    }
+  } catch (error) {
+    showToast(error.message, "warn");
+  }
+  await refreshAdmin();
+});
+
+async function refreshAdmin() {
+  try {
+    const response = await fetch("/api/admin", { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error("Impossible de charger le registre administratif.");
+    }
+    renderAdmin(await response.json());
+  } catch (error) {
+    adminBody.innerHTML = card("Administratif indisponible", escapeHtml(error.message), "warning");
+  }
+}
+
+function renderAdmin({ overview, letterhead = [], canDecide }) {
+  adminLetterhead = letterhead;
+  adminMail = overview.mail;
+  const late = overview.deadlines.filter((deadline) => deadline.days < 0);
+  const soon = overview.deadlines.filter((deadline) => deadline.days >= 0 && deadline.days <= 30);
+  const toAnswer = overview.mail.filter((mail) => mail.status === "a_traiter");
+  const drafts = overview.mail.filter((mail) => mail.status === "brouillon");
+  adminCount.textContent = String(overview.alerts.length);
+  adminCount.hidden = overview.alerts.length === 0;
+  if (overview.suppliers.length + overview.contracts.length + overview.deadlines.length + overview.mail.length === 0) {
+    adminStats.innerHTML = "";
+    adminBody.innerHTML = `
+      <div class="all-clear">
+        <span class="badge">${icon("folder")}</span>
+        <h3>Registre administratif vide</h3>
+        <p>Dites au Director vos fournisseurs, vos contrats (bail, assurance, leasing…) et vos échéances régulières : « la TVA chaque mois avant le 20 », « l'assurance de l'atelier se renouvelle le 01/01, préavis de 2 mois ».</p>
+      </div>
+    `;
+    return;
+  }
+  const tiles = [
+    ["Échéances en retard", late.length, "à régler"],
+    ["Échéances", soon.length, "dans les 30 jours"],
+    ["Courriers à traiter", toAnswer.length, drafts.length > 0 ? `${drafts.length} brouillon${drafts.length > 1 ? "s" : ""} à relire` : "reçus"],
+    ["Contrats", overview.contracts.length, "en cours"]
+  ];
+  adminStats.innerHTML = tiles.map(([label, value, hint], index) => `
+    <div class="stat-tile ${index === 0 && value > 0 ? "is-alert" : ""}"><strong>${value}</strong><span>${escapeHtml(label)}</span><small>${escapeHtml(hint)}</small></div>
+  `).join("");
+  const table = (head, rows) => `<div class="answer-table"><table><thead><tr>${head.map((value) => `<th>${escapeHtml(value)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+  const sections = [];
+  if (overview.alerts.length > 0) {
+    sections.push(improvementSection("À traiter", "Elles sont aussi dans Amélioration, confiées à l'Administratif.", `<ul class="flex flex-col gap-1">${overview.alerts.map((alert) => `<li>${alert.severity === "haute" ? `<span class="tag warning">urgent</span> ` : ""}${escapeHtml(alert.text)}</li>`).join("")}</ul>`));
+  }
+  if (overview.deadlines.length > 0) {
+    sections.push(improvementSection("Échéances", "Une échéance récurrente faite passe à sa date suivante. Les échéances fiscales et sociales se confirment avec le comptable.", table(
+      ["Échéance", "Type", "Date", "Rythme", ""],
+      overview.deadlines.map((deadline) => `<tr><td>${escapeHtml(deadline.title)} <small>n° ${deadline.number}</small>${deadline.note ? `<br><small>${escapeHtml(deadline.note)}</small>` : ""}</td><td>${escapeHtml(deadline.label)}</td><td>${formatIsoDay(deadline.due)}<br><small class="${deadline.days < 0 ? "text-danger" : ""}">${deadline.days < 0 ? `en retard de ${-deadline.days} j` : deadline.days === 0 ? "aujourd'hui" : `dans ${deadline.days} j`}</small></td><td>${escapeHtml(deadline.recurrenceLabel)}</td><td><button type="button" class="secondary" data-deadline-done="${deadline.number}">${icon("check")}Faite</button></td></tr>`)
+    )));
+  }
+  if (overview.mail.length > 0) {
+    sections.push(improvementSection("Courriers", canDecide ? "Le registre chrono des courriers reçus et envoyés. Un courrier préparé reste un brouillon : relisez-le, copiez-le avec l'en-tête, envoyez-le, puis notez-le envoyé." : "Le registre chrono des courriers. Les brouillons sont relus par la direction.", overview.mail.map((mail) => `
+      <article class="rule-card">
+        <p><strong>${escapeHtml(mail.chrono)}</strong> · ${mail.way === "entrant" ? "reçu de" : "pour"} <strong>${escapeHtml(mail.party)}</strong> le ${formatIsoDay(mail.date)} — ${escapeHtml(mail.subject)} <span class="tag ${mail.status === "a_traiter" || mail.status === "brouillon" ? "warning" : ""}">${escapeHtml(mail.label)}</span>${mail.reference ? ` <small>réf. ${escapeHtml(mail.reference)}</small>` : ""}${mail.replyBy && mail.status === "a_traiter" ? `<br><small>Réponse avant le ${formatIsoDay(mail.replyBy)}</small>` : ""}</p>
+        ${mail.body ? `<details><summary>Lire le courrier</summary><div class="letter-preview">${letterhead.length > 0 ? `<p class="letter-head">${letterhead.map(escapeHtml).join("<br>")}</p>` : ""}<p>${escapeHtml(mail.body).replace(/\n/g, "<br>")}</p></div></details>` : ""}
+        ${(mail.status === "a_traiter" || (mail.status === "brouillon" && canDecide)) ? `<div class="flex gap-2">${mail.body && canDecide ? `<button type="button" class="secondary" data-copy-letter="${mail.number}">${icon("file")}Copier</button>` : ""}<button type="button" data-mail-close="${mail.number}" data-way="${mail.way}">${icon("check")}${mail.way === "sortant" ? "Envoyé" : "Traité"}</button></div>` : ""}
+      </article>
+    `).join("")));
+  }
+  if (overview.contracts.length > 0) {
+    sections.push(improvementSection("Contrats de l'entreprise", "Avec leur échéance et, pour une reconduction tacite, la dernière date pour résilier.", table(
+      ["Contrat", "Partie", "Échéance", "Renouvellement", ...(canDecide ? ["Montant"] : [])],
+      overview.contracts.map((contract) => `<tr><td>${escapeHtml(contract.title)} <small>n° ${contract.number} · ${escapeHtml(contract.label)}</small></td><td>${escapeHtml(contract.party || "—")}</td><td>${contract.currentEnd ? formatIsoDay(contract.currentEnd) : "—"}</td><td>${escapeHtml(contract.renewalLabel)}${contract.noticeBy ? `<br><small>résilier avant le ${formatIsoDay(contract.noticeBy)}</small>` : ""}</td>${canDecide ? `<td class="num">${contract.amount !== null ? `${formatDh(contract.amount)}${contract.period ? ` <small>${escapeHtml(contract.period)}</small>` : ""}` : "—"}</td>` : ""}</tr>`)
+    )));
+  }
+  if (overview.suppliers.length > 0) {
+    sections.push(improvementSection("Fournisseurs", "Leurs coordonnées et conditions, telles que la direction les a données.", table(
+      ["Fournisseur", "Activité", "Contact", "Conditions"],
+      overview.suppliers.map((supplier) => `<tr><td>${escapeHtml(supplier.name)}${supplier.ice ? `<br><small>ICE ${escapeHtml(supplier.ice)}</small>` : ""}</td><td>${escapeHtml(supplier.trade || "—")}</td><td>${[supplier.contact, supplier.phone, supplier.email].filter(Boolean).map(escapeHtml).join("<br>") || "—"}</td><td>${escapeHtml(supplier.terms || "—")}${supplier.note ? `<br><small>${escapeHtml(supplier.note)}</small>` : ""}</td></tr>`)
+    )));
+  }
+  adminBody.innerHTML = sections.join("");
+}
+
 // --- Abonnements view (the cockpit that sells the SaaS) -----------------------------
 // The client companies, the month's invoices to issue under H-KIDS' series,
 // the unpaid ones with their reminder ready to copy, and the suspensions to
@@ -1875,7 +1993,7 @@ async function refreshCommercialRules() {
 }
 
 // What each kind of anomaly is called in the cards.
-const ANOMALY_SOURCE_LABELS = Object.freeze({ commercial: "Alerte commerciale", stock: "Alerte de stock", budget: "Alerte budgétaire", planning: "Alerte de planning", rh: "Alerte RH" });
+const ANOMALY_SOURCE_LABELS = Object.freeze({ commercial: "Alerte commerciale", stock: "Alerte de stock", budget: "Alerte budgétaire", planning: "Alerte de planning", rh: "Alerte RH", administratif: "Alerte administrative" });
 const ANOMALY_KIND_LABELS = Object.freeze({
   retard: "retard",
   blocage: "blocage",
@@ -1888,6 +2006,11 @@ const ANOMALY_KIND_LABELS = Object.freeze({
   fin_essai: "fin de période d'essai",
   formation_a_renouveler: "formation à renouveler",
   donnees_candidats: "données de candidats à effacer",
+  echeance_proche: "échéance proche",
+  echeance_depassee: "échéance dépassée",
+  preavis_contrat: "préavis de contrat",
+  fin_contrat_entreprise: "fin de contrat",
+  courrier_a_traiter: "courrier à traiter",
   ecart_commande_facture: "écart commande / facture",
   doublon_document: "document en double",
   dossier_incomplet: "dossier incomplet",
@@ -2162,7 +2285,7 @@ function anomalyCard(anomaly, canAnalyse) {
         ${anomaly.task?.status === "resolue" ? `
           <button type="button" class="primary" data-closure="${anomaly.number}:confirmer">${icon("check")}Confirmer la clôture</button>
           <button type="button" class="link-button" data-closure="${anomaly.number}:rouvrir">Rouvrir</button>` : ""}
-        ${["signalee", "commercial", "stock", "budget", "planning", "rh"].includes(anomaly.source) && !anomaly.task ? `<button type="button" class="link-button" data-lift="${anomaly.number}">Marquer réglée</button>` : ""}
+        ${["signalee", "commercial", "stock", "budget", "planning", "rh", "administratif"].includes(anomaly.source) && !anomaly.task ? `<button type="button" class="link-button" data-lift="${anomaly.number}">Marquer réglée</button>` : ""}
         ${isOpenAnomaly(anomaly) && !anomaly.falseAlarm ? `<button type="button" class="link-button" data-false-alarm="${anomaly.number}">Fausse alerte</button>` : ""}
       </div>
     </article>
@@ -5123,6 +5246,7 @@ const COCKPIT_VIEWS = Object.freeze({
   file: "Dossier commercial",
   team: "Équipe IA",
   hr: "Équipe RH",
+  admin: "Administratif",
   stock: "Stock des matières",
   saas: "Abonnements"
 });
@@ -5130,7 +5254,7 @@ const COCKPIT_VIEWS = Object.freeze({
 // On a phone the tab bar keeps the four views of every day; the others open
 // from « Plus », which stays lit while one of them is shown. The cash of the
 // day is on the briefing's first card.
-const SHEET_VIEWS = Object.freeze(["cash", "saas", "whatsapp", "improvement", "stock", "hr", "team", "documents", "quotes", "file"]);
+const SHEET_VIEWS = Object.freeze(["cash", "saas", "whatsapp", "improvement", "stock", "hr", "admin", "team", "documents", "quotes", "file"]);
 const moreButton = document.querySelector("#more-button");
 const moreSheet = document.querySelector("#more-sheet");
 
@@ -5173,6 +5297,9 @@ function showView(name) {
   }
   if (view === "hr") {
     refreshHr();
+  }
+  if (view === "admin") {
+    refreshAdmin();
   }
   if (view === "stock") {
     refreshStock();
@@ -5706,6 +5833,7 @@ async function loadPanels() {
   refreshRegister();
   refreshStock();
   refreshHr();
+  refreshAdmin();
   refreshReports();
   refreshSales();
   renderHistory();

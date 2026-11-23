@@ -2382,6 +2382,20 @@
     @apply rounded-3xl border border-line bg-surface p-5 shadow-card;
   }
 
+  /* A letter prepared by the Administratif, with the company's letterhead. */
+  .letter-preview {
+    @apply mt-3 rounded-2xl border border-line p-4 text-sm leading-relaxed;
+    white-space: normal;
+  }
+
+  .letter-preview .letter-head {
+    @apply mb-3 border-b border-line pb-2 text-xs text-muted;
+  }
+
+  .text-danger {
+    color: var(--danger);
+  }
+
   .rule-card[data-status="proposee"] {
     @apply border-warn/40;
     box-shadow: inset 4px 0 0 var(--warn), var(--shadow-card);

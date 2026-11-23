@@ -25,6 +25,8 @@ import { configTools } from "./config-tools.js";
 import { COMPANY, brandPayload } from "../company/company-profile.js";
 import { AUTOMATION_TOOL_NAMES, CREATE_AUTOMATION_TOOL, LIST_AUTOMATIONS_TOOL, runAutomationTool } from "./automation-tools.js";
 import { createMemoryHrBook } from "./hr-book.js";
+import { createMemoryAdminBook } from "./admin-book.js";
+import { ADMIN_TOOLS, ADMIN_TOOL_NAMES, adminTools, runAdminTool } from "./admin-tools.js";
 import { DIRECTOR_HR_TOOLS, HR_TOOL_NAMES, hrTools, runHrTool } from "./hr-tools.js";
 import { createMemoryStockBook } from "./stock-book.js";
 import { DIRECTOR_STOCK_TOOLS, STOCK_TOOL_NAMES, runStockTool, stockTools } from "./stock-tools.js";
@@ -594,6 +596,7 @@ const TOOLS = Object.freeze([
   MARGINS_TOOL,
   FORECAST_TOOL,
   ...DIRECTOR_HR_TOOLS,
+  ...ADMIN_TOOLS,
   ...DIRECTOR_STOCK_TOOLS,
   ...DIRECTOR_BUDGET_TOOLS,
   ...DIRECTOR_CAPACITY_TOOLS,
@@ -687,7 +690,7 @@ function instructions(today, briefing = []) {
     "- N'écris jamais qu'une chose « est lancée », « est faite » ou « a eu lieu » si ni la direction ni une donnée ne l'a confirmé : c'est « prêt à lancer » ou « proposé ».",
     "- Donne une échéance réaliste aux étapes qui ne se font pas tout de suite. Marque toi-même tes étapes « director » avec ajuster_plan quand elles sont faites.",
     "- Signale toujours les incohérences renvoyées par verifier_coherence, avec les responsables concernés et l'action proposée ; ne les invente jamais.",
-    "- Tes responsables : Commercial (Directeur commercial), Finance, Production, Achats, Marketing, Community Manager (sous le Marketing), et aussi RH, SAV, Juridique, Administratif (registre et dossiers clients).",
+    "- Tes responsables : Commercial (Directeur commercial), Finance, Production, Achats, Marketing, Community Manager (sous le Marketing), et aussi RH, SAV, Juridique, Administratif (registre des documents et dossiers clients, fournisseurs, contrats de l'entreprise, échéances, courriers).",
     "- Pour le point complet de l'entreprise (« fais-moi le point »), après le plan, appelle point_entreprise puis résume l'essentiel en 5 lignes maximum, les urgences d'abord.",
     "- Pour une simple salutation ou une question générale, réponds directement sans outil.",
     "- Les messages aux clients ou fournisseurs sont rédigés par les responsables et s'affichent avec un bouton « Envoyer via WhatsApp » : c'est Hiba qui les envoie. Ne recopie pas leur texte : dis pour qui ils sont prêts.",
@@ -710,7 +713,7 @@ export class DirectorAgentError extends Error {
   }
 }
 
-export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, hrBook = undefined, stockBook = undefined, budgetBook = undefined, capacityBook = undefined, periodicReport = null, documentArchive = undefined, designProfileBook = null, aiUsage = null, social = null, agentConfig = null, automation = null, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
+export function createDirectorAgentFromEnv({ env = process.env, documentService, runDirectorRequest, toolRegistry = null, executeTool = null, checkCoherence = null, loadObjectiveRecords = null, planStore = undefined, conversationStore = undefined, workshopStore = undefined, cashBook = undefined, improvementBook = undefined, teamBook = undefined, followUpBook = undefined, hrBook = undefined, adminBook = undefined, stockBook = undefined, budgetBook = undefined, capacityBook = undefined, periodicReport = null, documentArchive = undefined, designProfileBook = null, aiUsage = null, social = null, agentConfig = null, automation = null, autoAnalyse = false, publicBaseUrl = env.PUBLIC_BASE_URL ?? "", client = null } = {}) {
   const apiKey = typeof env.OPENAI_API_KEY === "string" ? env.OPENAI_API_KEY.trim() : "";
   const model = typeof env.OPENAI_MODEL === "string" && env.OPENAI_MODEL.trim() !== "" ? env.OPENAI_MODEL.trim() : DEFAULT_AGENT_MODEL;
   const cataloguePath = typeof env.HKIDS_CATALOGUE_PATH === "string" && env.HKIDS_CATALOGUE_PATH.trim() !== "" ? env.HKIDS_CATALOGUE_PATH.trim() : undefined;
@@ -718,7 +721,7 @@ export function createDirectorAgentFromEnv({ env = process.env, documentService,
   // The dessinateur méthodes' engine runs with the Python of DESSINATEUR_PYTHON.
   const python = defaultPython(env);
   const designOffice = createDesignOffice({ book: designProfileBook ?? createMemoryDesignProfileBook(), engine: (request) => runEngine(request, { python }) });
-  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, hrBook, stockBook, budgetBook, capacityBook, periodicReport, documentArchive, designOffice, aiUsage, social, agentConfig, automation, autoAnalyse, publicBaseUrl, client, loadCatalogue });
+  return createDirectorAgent({ apiKey, model, documentService, runDirectorRequest, toolRegistry, executeTool, checkCoherence, loadObjectiveRecords, planStore, conversationStore, workshopStore, cashBook, improvementBook, teamBook, followUpBook, hrBook, adminBook, stockBook, budgetBook, capacityBook, periodicReport, documentArchive, designOffice, aiUsage, social, agentConfig, automation, autoAnalyse, publicBaseUrl, client, loadCatalogue });
 }
 
 export function createDirectorAgent({
@@ -741,6 +744,7 @@ export function createDirectorAgent({
   followUpBook = null,
   // The team's book: employees, absences, leave (data/rh.json).
   hrBook = null,
+  adminBook = null,
   // The register of the materials in stock (data/stock.json).
   stockBook = null,
   // The direction's budgets and minimum cash (data/budgets.json).
@@ -782,6 +786,7 @@ export function createDirectorAgent({
     team: teamBook ?? createMemoryTeamBook({ clock, agents: SPECIALIST_IDS }),
     followUps: followUpBook ?? createMemoryFollowUpBook({ clock }),
     hr: hrBook ?? createMemoryHrBook({ clock }),
+    admin: adminBook ?? createMemoryAdminBook({ clock }),
     stock: stockBook ?? createMemoryStockBook({ clock }),
     budget: budgetBook ?? createMemoryBudgetBook({ clock }),
     capacity: capacityBook ?? createMemoryCapacityBook({ clock })
@@ -1148,6 +1153,9 @@ async function runTool(call, context) {
     }
     if (HR_TOOL_NAMES.includes(call.name)) {
       return await runHrTool(call.name, args, context, context.userId ?? "director");
+    }
+    if (ADMIN_TOOL_NAMES.includes(call.name)) {
+      return await runAdminTool(call.name, args, context, context.userId ?? "director");
     }
     if (call.name === "rapport_periodique") {
       if (context.confidential === false) {
@@ -2189,7 +2197,7 @@ function agentToolParams(agentId, context) {
     agentId,
     extraTools: [
       ...(context.agentConfig ? configTools(context, agentId) : []),
-      ...(books ? [...(agentId === "finance" ? [...cashTools(context, agentId), ...analysisTools(context)] : []), ...(agentId === "commercial" ? salesTools(context, agentId) : []), ...(agentId === "hr" ? hrTools(context, agentId) : []), ...stockTools(context, agentId), ...budgetTools(context, agentId), ...capacityTools(context, agentId), ...improvementTools(context, agentId)] : []),
+      ...(books ? [...(agentId === "finance" ? [...cashTools(context, agentId), ...analysisTools(context)] : []), ...(agentId === "commercial" ? salesTools(context, agentId) : []), ...(agentId === "hr" ? hrTools(context, agentId) : []), ...(agentId === "administration" ? adminTools(context, agentId) : []), ...stockTools(context, agentId), ...budgetTools(context, agentId), ...capacityTools(context, agentId), ...improvementTools(context, agentId)] : []),
       ...(context.social ? socialTools(context, agentId) : []),
       ...(SPECIALISTS[agentId].keepsRegister ? [{ tool: SEARCH_DOCUMENT_TOOL, run: (searchArgs) => searchDocument(searchArgs, context) }] : []),
       ...(SPECIALISTS[agentId].coordinatesDesign ? [{ tool: DESIGN_DELEGATE_TOOL, run: async (args) => {

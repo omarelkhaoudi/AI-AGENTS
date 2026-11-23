@@ -39,6 +39,8 @@ import { COMPANY, brandPage } from "../company/company-profile.js";
 import { planFromEnv } from "../company/plans.js";
 import { AUTOMATION_ACTIONS, AUTOMATION_EVENTS, AutomationError, MAX_RUNS_PER_RULE_PER_DAY, createAutomation, createMemoryAutomationBook } from "../agent/automation.js";
 import { HrBookError, LEAVE_STATUSES as HR_LEAVE_STATUSES, createMemoryHrBook } from "../agent/hr-book.js";
+import { AdminBookError, createMemoryAdminBook } from "../agent/admin-book.js";
+import { letterhead } from "../agent/admin-tools.js";
 import { SubscriptionError, createMemorySubscriptionBook } from "../agent/subscription-book.js";
 import { CASH_CATEGORIES, CASH_METHODS, CONFIDENTIAL_CATEGORIES, CashBookError, EXPENSE_STATUSES, OPENING_CATEGORY, createMemoryCashBook } from "../agent/cash-book.js";
 
@@ -150,6 +152,7 @@ export function buildApi({
   followUpBook = null,
   // The team's book: employees, absences, leave (data/rh.json for the server process).
   hrBook = null,
+  adminBook = null,
   // The register of the materials in stock (data/stock.json for the server process).
   stockBook = null,
   // The direction's budgets and minimum cash (data/budgets.json for the server process).
@@ -409,6 +412,7 @@ export function buildApi({
   });
   const followUps = followUpBook ?? createMemoryFollowUpBook({ clock });
   const hr = hrBook ?? createMemoryHrBook({ clock });
+  const admin = adminBook ?? createMemoryAdminBook({ clock });
   const stock = stockBook ?? createMemoryStockBook({ clock });
   const budgets = budgetBook ?? createMemoryBudgetBook({ clock });
   const capacity = capacityBook ?? createMemoryCapacityBook({ clock });
@@ -493,11 +497,20 @@ export function buildApi({
       return undefined;
     }
   };
+  // The deadlines, the contracts to renew or give notice on, and the letters
+  // waiting for an answer (admin-book.js).
+  const readAdminFacts = async () => {
+    try {
+      return await admin.facts();
+    } catch {
+      return undefined;
+    }
+  };
   const improvement = Object.freeze({
     ...improvementRecords,
     async sync(orders) {
-      const [commercial, stockAlerts, budgetAlerts, planning, rh] = await Promise.all([readCommercialFacts(orders), readStockFacts(), readBudgetFacts(orders), readCapacityFacts(orders), readHrFacts()]);
-      const found = await improvementRecords.sync(orders, { commercial, stock: stockAlerts, budget: budgetAlerts, planning, rh });
+      const [commercial, stockAlerts, budgetAlerts, planning, rh, administratif] = await Promise.all([readCommercialFacts(orders), readStockFacts(), readBudgetFacts(orders), readCapacityFacts(orders), readHrFacts(), readAdminFacts()]);
+      const found = await improvementRecords.sync(orders, { commercial, stock: stockAlerts, budget: budgetAlerts, planning, rh, administratif });
       await whatsApp.alertLeads(found, orders);
       await whatsApp.alertSevere(found);
       for (const anomaly of found.filter((entry) => entry.kind === "retard")) {
@@ -596,6 +609,7 @@ export function buildApi({
     teamBook: teamFeed,
     followUpBook: followUps,
     hrBook: hr,
+    adminBook: admin,
     stockBook: stock,
     budgetBook: budgets,
     capacityBook: capacity,
@@ -2048,6 +2062,48 @@ export function buildApi({
           return reply.code(error.code === "HR_LEAVE_NOT_FOUND" ? 404 : 400).send({ error: error.message, code: error.code });
         }
         throw error;
+      }
+    });
+
+    // --- Administratif: suppliers, contracts, deadlines, mail (admin-book.js) --
+    // Everyone signed in reads it (contract amounts and letter drafts for the
+    // direction only) and may say a deadline done or a letter dealt with; the
+    // direction alone says a prepared letter sent.
+    app.get("/api/admin", readRouteOptions(), async (request) => {
+      const confidential = seesConfidential(request);
+      return { overview: await admin.overview({ confidential }), letterhead: confidential ? letterhead() : [], canDecide: confidential };
+    });
+
+    const sendAdminError = (reply, error) => {
+      if (error instanceof AdminBookError) {
+        return reply.code(/NOT_FOUND$/.test(error.code) ? 404 : 400).send({ error: error.message, code: error.code });
+      }
+      throw error;
+    };
+
+    app.post("/api/admin/deadlines/:number/done", writeRouteOptions(), async (request, reply) => {
+      try {
+        const by = request.principal.userId ?? "direction";
+        const deadline = await admin.completeDeadline(request.params.number, { note: typeof request.body?.note === "string" ? request.body.note : "", by });
+        await teamFeed.log({ agent: "administration", kind: "administratif", text: `Échéance faite : ${deadline.title} (cockpit).`, ref: `echeance:${deadline.number}`, by });
+        return { deadline };
+      } catch (error) {
+        return sendAdminError(reply, error);
+      }
+    });
+
+    app.post("/api/admin/mail/:number/close", writeRouteOptions(), async (request, reply) => {
+      try {
+        const mail = (await admin.state()).mail.find((entry) => String(entry.number) === String(request.params.number));
+        if (mail?.way === "sortant" && !seesConfidential(request)) {
+          return reply.code(403).send({ error: "Réservé à la direction : elle seule envoie un courrier préparé." });
+        }
+        const by = request.principal.userId ?? "direction";
+        const closed = await admin.closeMail(request.params.number, { by });
+        await teamFeed.log({ agent: "administration", kind: "administratif", text: `Courrier ${closed.chrono} ${closed.way === "sortant" ? "envoyé" : "traité"} (cockpit).`, ref: `courrier:${closed.number}`, by });
+        return { mail: closed };
+      } catch (error) {
+        return sendAdminError(reply, error);
       }
     });
 

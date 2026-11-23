@@ -41,7 +41,8 @@ const SOURCE_TEXTS = Object.freeze({
   stock: { found: "Alerte de stock relevée au registre de stock.", gone: "Le registre de stock ne la montre plus : alerte levée." },
   budget: { found: "Alerte budgétaire relevée sur la caisse et les budgets de la direction.", gone: "La caisse ne la montre plus : alerte levée." },
   planning: { found: "Date promise intenable d'après la charge de l'atelier.", gone: "La charge de l'atelier permet de nouveau la date promise : alerte levée." },
-  rh: { found: "Alerte RH relevée au carnet RH.", gone: "Le carnet RH ne la montre plus : alerte levée." }
+  rh: { found: "Alerte RH relevée au carnet RH.", gone: "Le carnet RH ne la montre plus : alerte levée." },
+  administratif: { found: "Alerte relevée au registre administratif.", gone: "Le registre administratif ne la montre plus : alerte levée." }
 });
 
 export class ImprovementError extends Error {
@@ -99,7 +100,7 @@ function createImprovementBook({ book, clock }) {
             const anomaly = { id: randomUUID(), number: nextNumber(state.anomalies), ...fact, severity: fact.severity ?? (fact.kind === "blocage" ? "haute" : "moyenne"), status: "a_analyser", detectedAt: at, journal: [{ at, by: "director", text: (SOURCE_TEXTS[fact.source] ?? SOURCE_TEXTS.atelier).found }] };
             state.anomalies.push(anomaly);
             found.push(Object.freeze({ ...anomaly }));
-          } else if (open && ["planning", "commercial", "rh"].includes(fact.source) && open.fact !== fact.fact) {
+          } else if (open && ["planning", "commercial", "rh", "administratif"].includes(fact.source) && open.fact !== fact.fact) {
             // The estimated end moves with the workshop's load, a file gets
             // completed, an amount is invoiced: the open alert says what is
             // true today, not what was first found.
@@ -254,7 +255,7 @@ function createImprovementBook({ book, clock }) {
         // while the documents, the registers or the cash book show the same
         // fact (a duplicate name cannot be unwritten; a material ordered is
         // still low until it arrives).
-        if (["commercial", "stock", "budget", "planning", "rh"].includes(anomaly.source)) {
+        if (["commercial", "stock", "budget", "planning", "rh", "administratif"].includes(anomaly.source)) {
           anomaly.heldUntilGone = true;
         }
         if (anomaly.task && anomaly.task.status !== "cloturee") {

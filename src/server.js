@@ -11,6 +11,7 @@ import { createFileDesignProfileBook } from "./agent/design-office.js";
 import { createFileAiUsageBook } from "./agent/ai-usage.js";
 import { createFileCashBook } from "./agent/cash-book.js";
 import { createFileHrBook } from "./agent/hr-book.js";
+import { createFileAdminBook } from "./agent/admin-book.js";
 import { createFileStockBook } from "./agent/stock-book.js";
 import { createFileBudgetBook } from "./agent/budget-book.js";
 import { createFileCapacityBook } from "./agent/workshop-capacity.js";
@@ -98,6 +99,7 @@ const agentConfigStore = createFileAgentConfig({ agents: SPECIALIST_IDS, templat
 const automationBook = createFileAutomationBook();
 // The team's employees, absences and leave (data/rh.json).
 const hrBook = createFileHrBook();
+const adminBook = createFileAdminBook();
 const stockBook = createFileStockBook();
 const budgetBook = createFileBudgetBook();
 const reportBook = createFileReportBook();
@@ -109,7 +111,7 @@ const subscriptionBook = createFileSubscriptionBook();
 // DocumentsH-KIDS Administratif unless HKIDS_ARCHIVE_DIR says where.
 const archiveDir = process.env.HKIDS_ARCHIVE_DIR?.trim() || DEFAULT_ARCHIVE_DIR;
 
-const app = buildApi({ repository, companyId: process.env.HKIDS_COMPANY_ID?.trim() || "hkids", config, toolRegistry, planStore, conversationStore, workshopStore, designProfileBook, aiUsageBook, cashBook, improvementBook, teamBook, followUpBook, hrBook, stockBook, budgetBook, capacityBook, reportBook, subscriptionBook, autoAnalyseAnomalies, whatsAppStore, socialStore, agentConfigStore, automationBook, archiveDir });
+const app = buildApi({ repository, companyId: process.env.HKIDS_COMPANY_ID?.trim() || "hkids", config, toolRegistry, planStore, conversationStore, workshopStore, designProfileBook, aiUsageBook, cashBook, improvementBook, teamBook, followUpBook, hrBook, adminBook, stockBook, budgetBook, capacityBook, reportBook, subscriptionBook, autoAnalyseAnomalies, whatsAppStore, socialStore, agentConfigStore, automationBook, archiveDir });
 
 // Every half hour, the workshop book is read for steps that became late, and
 // the quotes for follow-ups that became due.

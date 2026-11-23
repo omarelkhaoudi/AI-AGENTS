@@ -747,6 +747,48 @@ Documents\H-KIDS Administratif\
   Le dossier est `Documents\H-KIDS Administratif` ; `HKIDS_ARCHIVE_DIR` dans
   `.env` en choisit un autre (un dossier OneDrive ou partagé, par exemple).
 
+### Registre administratif : fournisseurs, contrats, échéances, courriers
+
+La vue **Administratif** du cockpit montre le reste du travail de
+l'Administratif, en plus des documents émis. On le tient en le disant au
+Director ou à l'agent Administratif.
+
+- **Fournisseurs** (outil `fournisseur`) : leur activité, leur contact, leurs
+  conditions, et l'ICE s'il est donné (15 chiffres, vérifié). Rien n'est
+  supposé : un téléphone ou un e-mail non dit reste vide.
+- **Contrats de l'entreprise** (outil `contrat_entreprise`) : bail, assurance,
+  leasing, maintenance, abonnement, contrat fournisseur ou client.
+  - On note les dates, la durée, le renouvellement (tacite, à décider, aucun)
+    et le préavis.
+  - Un contrat à reconduction tacite avance d'une période à chaque échéance.
+    Le registre donne la dernière date pour le résilier.
+  - Les montants ne sont montrés qu'à la direction, et seule la direction
+    enregistre un contrat.
+- **Échéances** (outil `echeance`) : fiscales, CNSS, assurance, loyer, banque…
+  - Une échéance arrive une fois, ou chaque mois, trimestre ou année.
+  - Dite faite, une échéance récurrente passe à sa date suivante.
+  - On les confirme avec le comptable : l'agent les rappelle, il ne déclare
+    rien.
+- **Courriers** (outil `courrier`) : chaque courrier reçu ou envoyé prend un
+  numéro chrono de l'année (2026-001).
+  - Un courrier reçu peut attendre une réponse avant une date.
+  - Un courrier à envoyer est rédigé par l'agent et gardé en **brouillon**.
+    La direction le lit dans la vue avec l'en-tête de l'entreprise, le copie,
+    l'envoie elle-même, puis le note envoyé.
+  - Un courrier envoyé en réponse règle le courrier reçu.
+
+Les alertes remontent dans **Amélioration** :
+
+| Alerte | Quand | Gravité | Confiée à |
+| --- | --- | --- | --- |
+| Échéance proche | dans le délai de rappel (7 jours par défaut) | haute à 2 jours ou moins, sinon moyenne | Finance (fiscale, sociale, banque), sinon Administratif |
+| Échéance dépassée | la date est passée | haute | idem |
+| Préavis de contrat | la dernière date pour résilier un contrat tacite est dans les 30 jours | haute à 7 jours ou moins, sinon moyenne | Administratif |
+| Fin de contrat | un contrat sans reconduction tacite finit dans les 30 jours | haute à 7 jours ou moins, sinon moyenne | Administratif |
+| Courrier à traiter | la réponse est attendue dans 3 jours ou moins, ou en retard | haute en retard, sinon moyenne | Administratif |
+
+Tout est gardé dans `data/administratif.json`.
+
 ---
 
 ## 1. Présentation

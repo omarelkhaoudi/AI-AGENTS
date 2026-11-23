@@ -250,6 +250,9 @@ test("a late step is analysed by Production on its own; validated, the rule goes
 test("the cockpit keeps the cash book, decides the rules and ties each agent to a person", async (t) => {
   const documents = await documentsWith(t, quote, order);
   const workshopStore = createMemoryWorkshopStore({ clock });
+  // A complete file (chef de charge, promised date): only the blocked step is an anomaly.
+  await workshopStore.setTeam("171", { lead: "Youssef" });
+  await workshopStore.updateStep("171", "livraison_installation", { plannedDate: "30/12/2026", by: "director" });
   await createWorkshop({ store: workshopStore, documentService: documents, clock }).advance("171", "decoupe_cnc", { status: "bloquee", note: "CNC en panne" });
   const improvementBook = createMemoryImprovementBook({ clock });
   const { app, inject } = await buildAuthenticatedApi({

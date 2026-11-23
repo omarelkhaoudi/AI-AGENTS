@@ -58,6 +58,10 @@ async function setUp(t, { role = "leader" } = {}) {
     await documents.generate({ ...input, previewToken: preview.previewToken, userConfirmation: true });
   }
   const workshopStore = createMemoryWorkshopStore({ clock });
+  // A complete file: a chef de charge and a promised date, so the order gives
+  // no « dossier incomplet » alert of its own.
+  await workshopStore.setTeam("171", { lead: "Youssef" });
+  await workshopStore.updateStep("171", "livraison_installation", { plannedDate: "30/11/2026", by: "director" });
   const workshop = createWorkshop({ store: workshopStore, documentService: documents, clock });
   const teamBook = createMemoryTeamBook({ clock, agents: SPECIALIST_IDS });
   const meta = fakeMeta();

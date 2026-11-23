@@ -98,9 +98,10 @@ function createImprovementBook({ book, clock }) {
             const anomaly = { id: randomUUID(), number: nextNumber(state.anomalies), ...fact, severity: fact.severity ?? (fact.kind === "blocage" ? "haute" : "moyenne"), status: "a_analyser", detectedAt: at, journal: [{ at, by: "director", text: (SOURCE_TEXTS[fact.source] ?? SOURCE_TEXTS.atelier).found }] };
             state.anomalies.push(anomaly);
             found.push(Object.freeze({ ...anomaly }));
-          } else if (open && fact.source === "planning" && open.fact !== fact.fact) {
-            // The estimated end moves with the workshop's load: the open
-            // alert says today's estimate, not the first one.
+          } else if (open && ["planning", "commercial"].includes(fact.source) && open.fact !== fact.fact) {
+            // The estimated end moves with the workshop's load, a file gets
+            // completed, an amount is invoiced: the open alert says what is
+            // true today, not what was first found.
             open.fact = fact.fact;
           }
         }

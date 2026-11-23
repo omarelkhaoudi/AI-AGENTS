@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { InMemoryRepository } from "../src/index.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { HkidsDocumentService, InMemoryRepository } from "../src/index.js";
 import { SPECIALIST_IDS } from "../src/agent/agent-team.js";
 import { createMemoryImprovementBook } from "../src/agent/improvement-book.js";
 import { createMemoryTeamBook } from "../src/agent/team-book.js";
@@ -86,7 +89,10 @@ test("the cockpit shows the indicators to the team; only the direction marks a f
   const clock = () => new Date("2026-11-20T10:00:00Z");
   const improvementBook = createMemoryImprovementBook({ clock });
   const teamBook = createMemoryTeamBook({ clock, agents: SPECIALIST_IDS });
-  const { app, inject } = await buildAuthenticatedApi({ repository, clock, improvementBook, teamBook, pilotStart: "2026-11-01", minutesPerMission: 15 });
+  // An empty folder of documents: none of this machine's documents counts.
+  const dir = await mkdtemp(join(tmpdir(), "pilote-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const { app, inject } = await buildAuthenticatedApi({ repository, clock, improvementBook, teamBook, pilotStart: "2026-11-01", minutesPerMission: 15, documentService: new HkidsDocumentService({ repository, outputDir: dir }) });
   t.after(() => app.close());
   const reported = await improvementBook.report({ fact: "Livraison du BC 205 oubliée au planning", area: "retard", agent: "production" });
   await improvementBook.report({ fact: "Rayure signalée par le client du BC 206", area: "qualite", agent: "production" });

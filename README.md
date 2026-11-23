@@ -198,10 +198,17 @@ indicateurs du pilote. Celles qui ne sont plus vraies sont levées toutes seules
 | Marge sous le seuil | BC terminé dont la marge, mesurée sur ses dépenses, est sous le minimum (agent Finance) | haute | Marge minimale d'une commande (%) |
 | Écart devis / commande | BC dont le montant TTC n'est pas celui de son devis | moyenne | — |
 | Client en double | Un même client écrit de plusieurs façons (civilité, accents, ordre des mots) | faible | — |
+| Écart commande / facture | BC livré et installé dont les factures, moins leurs avoirs, ne font pas son montant (agent Finance) | moyenne | — |
+| Document en double | Deux devis, BC ou factures de même client et même montant à moins de 8 jours (une facture : agent Finance) | moyenne, haute pour une facture | — |
+| Dossier incomplet | BC en cours depuis 3 jours sans devis d'origine, montant lisible, date de livraison promise ou chef de charge | moyenne | — |
+| Commande non confirmée | BC sans acompte au journal de caisse (sur son numéro ou celui de son devis) au-delà du délai | haute | Confirmation d'une commande (jours) |
 
-- Les trois règles se fixent dans **Amélioration → Règles commerciales**, par la
+- Les quatre règles se fixent dans **Amélioration → Règles commerciales**, par la
   direction seule. Une règle laissée vide ne donne aucune alerte : rien n'est
   supposé à sa place. Elles sont gardées dans `data/relances.json`.
+- Une alerte ouverte dit toujours les faits du jour : un dossier complété en
+  partie, un montant facturé depuis, un délai qui court mettent son texte à
+  jour.
 - Une alerte « Marquer réglée » ne revient pas tant que les documents montrent
   le même fait (un nom écrit de deux façons ne s'efface pas).
 - Le bilan commercial du Director et de l'agent Commercial les cite, avec les

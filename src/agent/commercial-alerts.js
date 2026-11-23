@@ -18,13 +18,14 @@ import { quotePipeline } from "./sales-book.js";
 export const COMMERCIAL_RULE_LIMITS = Object.freeze({
   validityDays: Object.freeze({ min: 1, max: 365, label: "Validité d'un devis (jours)" }),
   maxDiscountPercent: Object.freeze({ min: 0, max: 100, label: "Remise maximale sans accord (%)" }),
-  marginFloorPercent: Object.freeze({ min: -100, max: 100, label: "Marge minimale d'une commande (%)" })
+  marginFloorPercent: Object.freeze({ min: -100, max: 100, label: "Marge minimale d'une commande (%)" }),
+  confirmationDays: Object.freeze({ min: 1, max: 90, label: "Délai de confirmation d'une commande (jours)" })
 });
 
 const DAY_MS = 86_400_000;
 const TOLERANCE = 0.01;
 
-export function commercialFacts(issued, followUpState, { today = new Date(), rules = {}, margins = null } = {}) {
+export function commercialFacts(issued, followUpState, { today = new Date(), rules = {}, margins = null, entries = [], workshopOrders = [] } = {}) {
   const facts = [];
   const pipeline = quotePipeline(issued, followUpState, { today });
   const day = today.toISOString().slice(0, 10);
@@ -97,6 +98,106 @@ export function commercialFacts(issued, followUpState, { today = new Date(), rul
     }
   }
 
+  // A delivered order not invoiced for its amount: its invoices, less their
+  // credit notes, against the order. An invoice that names no quote cannot be
+  // tied to its order and is left out.
+  const invoices = latestIssued(issued, HKIDS_DOCUMENT_TYPES.INVOICE);
+  const credits = latestIssued(issued, HKIDS_DOCUMENT_TYPES.CREDIT_NOTE);
+  const finished = new Set(workshopOrders.filter((order) => order.finished).map((order) => String(order.number)));
+  for (const order of orders.filter((entry) => entry.quoteReference && finished.has(String(entry.number)) && Number.isFinite(entry.totalTtc))) {
+    const own = invoices.filter((invoice) => invoice.quoteReference === order.quoteReference);
+    const numbers = new Set(own.map((invoice) => String(invoice.number)));
+    const credited = credits.filter((credit) => numbers.has(String(credit.invoiceReference)));
+    const invoiced = round(own.reduce((sum, invoice) => sum + (invoice.totalTtc ?? 0), 0) - credited.reduce((sum, credit) => sum + (credit.totalTtc ?? 0), 0));
+    if (Math.abs(invoiced - order.totalTtc) > TOLERANCE) {
+      const gap = round(order.totalTtc - invoiced);
+      facts.push(fact({
+        key: `commercial:bc:${order.number}:facture`,
+        kind: "ecart_commande_facture",
+        severity: "moyenne",
+        owner: "finance",
+        client: order.client,
+        reference: `BC ${order.number}`,
+        orderNumber: order.number,
+        text: `BC n° ${order.number} (${order.client}) livré et installé : ${money(order.totalTtc)} TTC commandés, ${money(invoiced)} facturés${own.length > 0 ? ` (facture${own.length > 1 ? "s" : ""} n° ${own.map((invoice) => invoice.number).join(", ")}${credited.length > 0 ? `, avoir n° ${credited.map((credit) => credit.number).join(", ")}` : ""})` : ", aucune facture"}. ${gap > 0 ? `Reste ${money(gap)} à facturer.` : `Facturé ${money(-gap)} de plus que la commande : vérifier.`}`
+      }));
+    }
+  }
+
+  // The same document issued twice under two numbers: same kind, same client,
+  // same amount, within a week.
+  const KINDS = [[HKIDS_DOCUMENT_TYPES.QUOTE, "Devis", "moyenne"], [HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER, "BC", "moyenne"], [HKIDS_DOCUMENT_TYPES.INVOICE, "Facture", "haute"]];
+  for (const [type, label, severity] of KINDS) {
+    const documents = latestIssued(issued, type).filter((entry) => Number.isFinite(entry.totalTtc) && clientKey(entry.client) && dayOf(entry.date));
+    const groups = new Map();
+    for (const document of documents) {
+      const key = `${clientKey(document.client)}|${document.totalTtc.toFixed(2)}`;
+      groups.set(key, [...(groups.get(key) ?? []), document]);
+    }
+    for (const group of groups.values()) {
+      const sorted = group.sort((a, b) => dayOf(a.date).localeCompare(dayOf(b.date)) || Number(a.number) - Number(b.number));
+      const twins = sorted.filter((document, index) => sorted.some((other, j) => j !== index && Math.abs(Date.parse(`${dayOf(document.date)}T00:00:00Z`) - Date.parse(`${dayOf(other.date)}T00:00:00Z`)) <= 7 * DAY_MS));
+      if (twins.length > 1) {
+        const numbers = twins.map((document) => document.number);
+        facts.push(fact({
+          key: `commercial:doublon:${type}:${numbers.join("-")}`,
+          kind: "doublon_document",
+          severity,
+          owner: type === HKIDS_DOCUMENT_TYPES.INVOICE ? "finance" : "commercial",
+          client: twins[0].client,
+          reference: `${label} ${numbers.join(", ")}`,
+          orderNumber: type === HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER ? numbers[0] : "",
+          text: `${label === "Facture" ? "Factures" : label === "BC" ? "BC" : "Devis"} n° ${numbers.join(" et ")} : même client (${twins[0].client}), même montant (${money(twins[0].totalTtc)} TTC), à ${twins.length > 2 ? "quelques" : "moins de 8"} jours d'écart. ${type === HKIDS_DOCUMENT_TYPES.INVOICE ? "Une double facturation ? Si oui, l'annuler par un avoir." : "Un doublon ? Si oui, n'en garder qu'un."}`
+        }));
+      }
+    }
+  }
+
+  // An order in progress whose file lacks what the next steps need. Three
+  // days are left to complete it.
+  const open = new Map(workshopOrders.filter((order) => !order.finished).map((order) => [String(order.number), order]));
+  for (const order of orders.filter((entry) => open.has(String(entry.number)) && dayOf(entry.date) && daysBetween(dayOf(entry.date), day) >= 3)) {
+    const book = open.get(String(order.number));
+    const missing = [
+      order.quoteReference ? "" : "le devis d'origine",
+      Number.isFinite(order.totalTtc) ? "" : "un montant lisible",
+      book.steps?.find((step) => step.id === "livraison_installation")?.plannedDate ? "" : "la date de livraison promise",
+      book.team?.lead ? "" : "un chef de charge"
+    ].filter(Boolean);
+    if (missing.length > 0) {
+      facts.push(fact({
+        key: `commercial:bc:${order.number}:incomplet`,
+        kind: "dossier_incomplet",
+        severity: "moyenne",
+        client: order.client,
+        reference: `BC ${order.number}`,
+        orderNumber: order.number,
+        text: `Dossier du BC n° ${order.number} (${order.client}) incomplet depuis le ${french(dayOf(order.date))} : il manque ${listing(missing)}.`
+      }));
+    }
+  }
+
+  // An order no payment confirmed: no deposit in the cash book after the
+  // direction's delay. Not set, no alert.
+  if (Number.isFinite(rules.confirmationDays)) {
+    const paid = entries.filter((entry) => !entry.cancelled && entry.kind === "entree" && ["acompte_client", "solde_client", "vente_comptant"].includes(entry.category));
+    for (const order of orders.filter((entry) => !finished.has(String(entry.number)) && dayOf(entry.date))) {
+      const since = daysBetween(dayOf(order.date), day);
+      const confirmed = paid.some((entry) => String(entry.orderNumber ?? "") === String(order.number) || (order.quoteReference && String(entry.quoteNumber ?? "") === String(order.quoteReference)));
+      if (since > rules.confirmationDays && !confirmed) {
+        facts.push(fact({
+          key: `commercial:bc:${order.number}:non_confirmee`,
+          kind: "commande_non_confirmee",
+          severity: "haute",
+          client: order.client,
+          reference: `BC ${order.number}`,
+          orderNumber: order.number,
+          text: `BC n° ${order.number} (${order.client}) du ${french(dayOf(order.date))} : aucun acompte au journal de caisse depuis ${since} jours (délai de confirmation : ${rules.confirmationDays} jours). Confirmer la commande avec le client avant d'engager la fabrication, ou noter l'acompte reçu.`
+        }));
+      }
+    }
+  }
+
   // One client written several ways across the documents.
   const spellings = new Map();
   for (const document of issued) {
@@ -143,8 +244,8 @@ export function readCommercialRules(input = {}) {
       continue;
     }
     const value = Number(String(raw).replace(",", "."));
-    if (!Number.isFinite(value) || value < limit.min || value > limit.max || (name === "validityDays" && !Number.isInteger(value))) {
-      errors.push(`${limit.label} : entre ${limit.min} et ${limit.max}${name === "validityDays" ? ", en jours entiers" : ""}.`);
+    if (!Number.isFinite(value) || value < limit.min || value > limit.max || (["validityDays", "confirmationDays"].includes(name) && !Number.isInteger(value))) {
+      errors.push(`${limit.label} : entre ${limit.min} et ${limit.max}${["validityDays", "confirmationDays"].includes(name) ? ", en jours entiers" : ""}.`);
       continue;
     }
     rules[name] = value;
@@ -162,6 +263,22 @@ function percent(value) {
 
 function money(value) {
   return `${new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value).replace(/ | /g, " ")} DH`;
+}
+
+const round = (value) => Math.round(value * 100) / 100;
+
+function dayOf(value) {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(value ?? "").trim());
+  const iso = match ? `${match[3]}-${match[2]}-${match[1]}` : String(value ?? "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : null;
+}
+
+function daysBetween(from, to) {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS);
+}
+
+function listing(items) {
+  return items.length > 1 ? `${items.slice(0, -1).join(", ")} et ${items.at(-1)}` : items[0];
 }
 
 function french(iso) {

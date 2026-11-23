@@ -1805,7 +1805,7 @@ function renderBudgets({ status, categories, canDecide }) {
 // The direction's commercial rules, which the commercial alerts follow.
 const commercialRulesForm = document.querySelector("#commercial-rules-form");
 const commercialRulesSummary = document.querySelector("#commercial-rules-summary");
-const COMMERCIAL_RULE_NAMES = Object.freeze(["validityDays", "maxDiscountPercent", "marginFloorPercent"]);
+const COMMERCIAL_RULE_NAMES = Object.freeze(["validityDays", "maxDiscountPercent", "marginFloorPercent", "confirmationDays"]);
 commercialRulesForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const body = Object.fromEntries(COMMERCIAL_RULE_NAMES.map((name) => [name, commercialRulesForm.querySelector(`[name='${name}']`)?.value ?? ""]));
@@ -1838,7 +1838,8 @@ async function refreshCommercialRules() {
     const set = [
       Number.isFinite(rules.validityDays) ? `devis valable ${rules.validityDays} j` : "",
       Number.isFinite(rules.maxDiscountPercent) ? `remise ≤ ${rules.maxDiscountPercent} %` : "",
-      Number.isFinite(rules.marginFloorPercent) ? `marge ≥ ${rules.marginFloorPercent} %` : ""
+      Number.isFinite(rules.marginFloorPercent) ? `marge ≥ ${rules.marginFloorPercent} %` : "",
+      Number.isFinite(rules.confirmationDays) ? `acompte sous ${rules.confirmationDays} j` : ""
     ].filter(Boolean);
     commercialRulesSummary.textContent = set.length > 0 ? set.join(" · ") : "aucune règle fixée";
   } catch {
@@ -1856,6 +1857,10 @@ const ANOMALY_KIND_LABELS = Object.freeze({
   marge_sous_seuil: "marge sous le seuil",
   ecart_devis_commande: "écart devis / commande",
   client_en_double: "client en double",
+  ecart_commande_facture: "écart commande / facture",
+  doublon_document: "document en double",
+  dossier_incomplet: "dossier incomplet",
+  commande_non_confirmee: "commande non confirmée",
   date_promise_intenable: "date promise intenable",
   budget_depasse: "budget dépassé",
   tresorerie_insuffisante: "trésorerie insuffisante",

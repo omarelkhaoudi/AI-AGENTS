@@ -367,7 +367,8 @@ export async function salesReportFor(args, { books, documentService, workshop = 
     regles_commerciales: {
       validite_devis: Number.isFinite(rules.validityDays) ? `${rules.validityDays} jours` : "non fixée : pas d'alerte de devis expiré",
       remise_maximale: Number.isFinite(rules.maxDiscountPercent) ? `${rules.maxDiscountPercent} %` : "non fixée : pas d'alerte de remise",
-      marge_minimale: Number.isFinite(rules.marginFloorPercent) ? `${rules.marginFloorPercent} %` : "non fixée : pas d'alerte de marge"
+      marge_minimale: Number.isFinite(rules.marginFloorPercent) ? `${rules.marginFloorPercent} %` : "non fixée : pas d'alerte de marge",
+      delai_de_confirmation: Number.isFinite(rules.confirmationDays) ? `${rules.confirmationDays} jours pour recevoir l'acompte d'une commande` : "non fixé : pas d'alerte de commande non confirmée"
     }
   };
 }

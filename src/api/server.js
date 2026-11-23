@@ -427,7 +427,7 @@ export function buildApi({
     try {
       const [issued, state, rules, entries] = await Promise.all([hkidsDocuments.listIssued(), followUps.state(), followUps.rules(), cashRecords.entries()]);
       const margins = Number.isFinite(rules.marginFloorPercent) ? orderMargins(orders, entries, { from: "0000-01-01", to: "9999-12-31", confidential: true }) : null;
-      return commercialFacts(issued, state, { today: clock(), rules, margins });
+      return commercialFacts(issued, state, { today: clock(), rules, margins, entries, workshopOrders: orders });
     } catch {
       return undefined;
     }

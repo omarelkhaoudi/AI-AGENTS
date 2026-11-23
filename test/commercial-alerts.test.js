@@ -101,7 +101,7 @@ test("the direction sets the rules in the cockpit; the alerts follow, read by ev
   t.after(() => app.close());
 
   let listed = JSON.parse((await inject({ method: "GET", url: "/api/commercial" })).body);
-  assert.deepEqual(listed.alerts.map((entry) => entry.kind).sort(), ["client_en_double", "ecart_devis_commande"]);
+  assert.deepEqual(listed.alerts.map((entry) => entry.kind).sort(), ["client_en_double", "dossier_incomplet", "ecart_devis_commande"], "BC 166 has no promised date and no chef de charge");
 
   const operator = await createAuthenticatedUser(repository, { id: "karim", role: "operator" });
   assert.equal((await app.inject({ method: "PUT", url: "/api/commercial/rules", payload: { maxDiscountPercent: "5" }, headers: operator.headers })).statusCode, 403);
@@ -120,4 +120,59 @@ test("the direction sets the rules in the cockpit; the alerts follow, read by ev
 
   const improvement = JSON.parse((await app.inject({ method: "GET", url: "/api/improvement", headers: operator.headers })).body);
   assert.ok(improvement.anomalies.some((entry) => entry.source === "commercial" && entry.kind === "remise_hors_plafond"), "followed in Amélioration like any anomaly");
+});
+
+const invoice = (number, date, client, totalTtc, quoteReference) => ({ type: "invoice", number: String(number), date, client, totalTtc, quoteReference });
+const book = (number, { finished = false, promised = "2026-12-15", lead = "Youssef" } = {}) => ({ number: String(number), finished, team: lead ? { lead } : {}, steps: [{ id: "livraison_installation", plannedDate: promised }] });
+const kinds = (facts) => facts.map((entry) => entry.kind).sort();
+
+test("a delivered order invoiced short or over is told to Finance, with its documents", () => {
+  const issued = [quote(170, "01/11/2026", "Client A", 12000), order(166, "02/11/2026", "Client A", 12000, "170"), invoice(80, "03/11/2026", "Client A", 7200, "170"), { type: "credit_note", number: "5", date: "04/11/2026", client: "Client A", totalTtc: 200, invoiceReference: "80" }];
+  const entries = [{ kind: "entree", category: "acompte_client", amount: 7200, orderNumber: "166", day: "2026-11-03" }];
+  assert.deepEqual(kinds(commercialFacts(issued, EMPTY_STATE, { today, entries, workshopOrders: [book(166)] })), [], "not delivered yet: invoicing goes on");
+  const [gap] = commercialFacts(issued, EMPTY_STATE, { today, entries, workshopOrders: [book(166, { finished: true })] });
+  assert.deepEqual([gap.kind, gap.owner, gap.severity, gap.orderNumber], ["ecart_commande_facture", "finance", "moyenne", "166"]);
+  assert.match(gap.fact, /BC n° 166 \(Client A\) livré et installé : 12.000,00 DH TTC commandés, 7.000,00 DH facturés \(facture n° 80, avoir n° 5\)\. Reste 5.000,00 DH à facturer\./);
+  const settled = [...issued, invoice(81, "15/11/2026", "Client A", 5000, "170")];
+  assert.deepEqual(kinds(commercialFacts(settled, EMPTY_STATE, { today, entries, workshopOrders: [book(166, { finished: true })] })), []);
+});
+
+test("the same document twice under two numbers is a doublon; an invoice twice is grave", () => {
+  const issued = [quote(170, "01/11/2026", "Mme Client A", 12000), quote(171, "04/11/2026", "Client A", 12000), quote(172, "20/11/2026", "Client A", 12000), invoice(80, "05/11/2026", "Client B", 3000, ""), invoice(81, "05/11/2026", "Client B", 3000, ""), invoice(82, "05/11/2026", "Client B", 3100, "")];
+  const facts = commercialFacts(issued, EMPTY_STATE, { today }).filter((entry) => entry.kind === "doublon_document");
+  assert.deepEqual(facts.map((entry) => [entry.key, entry.severity, entry.owner]), [
+    ["commercial:doublon:quote:170-171", "moyenne", "commercial"],
+    ["commercial:doublon:invoice:80-81", "haute", "finance"]
+  ], "quote 172 comes 16 days later: a new request, not a doublon; invoice 82 is another amount");
+  assert.match(facts[1].fact, /^Factures n° 80 et 81 : même client \(Client B\), même montant \(3.000,00 DH TTC\).*l'annuler par un avoir/);
+});
+
+test("an order's file is incomplete three days on without its quote, promised date or chef de charge", () => {
+  const issued = [order(166, "10/11/2026", "Client A", 9600, ""), order(167, "19/11/2026", "Client B", 9600, "")];
+  const [incomplete] = commercialFacts(issued, EMPTY_STATE, { today, workshopOrders: [book(166, { promised: null, lead: "" }), book(167, { promised: null, lead: "" })] });
+  assert.equal(incomplete.kind, "dossier_incomplet");
+  assert.equal(incomplete.orderNumber, "166", "BC 167 has one more day to be completed");
+  assert.match(incomplete.fact, /Dossier du BC n° 166 \(Client A\) incomplet depuis le 10\/11\/2026 : il manque le devis d'origine, la date de livraison promise et un chef de charge\./);
+  assert.deepEqual(commercialFacts([order(166, "10/11/2026", "Client A", 9600, "170"), quote(170, "01/11/2026", "Client A", 9600)], EMPTY_STATE, { today, workshopOrders: [book(166)] }), []);
+});
+
+test("an order with no deposit after the direction's delay is not confirmed; without the rule, no alert", async () => {
+  const issued = [quote(170, "01/11/2026", "Client A", 9600), order(166, "05/11/2026", "Client A", 9600, "170"), quote(171, "01/11/2026", "Client B", 4800), order(167, "05/11/2026", "Client B", 4800, "171")];
+  const entries = [{ kind: "entree", category: "acompte_client", amount: 2400, quoteNumber: "171", day: "2026-11-06" }, { kind: "entree", category: "acompte_client", amount: 999, orderNumber: "166", day: "2026-11-06", cancelled: true }];
+  const workshopOrders = [book(166), book(167)];
+  assert.deepEqual(kinds(commercialFacts(issued, EMPTY_STATE, { today, entries, workshopOrders })), []);
+  const facts = commercialFacts(issued, EMPTY_STATE, { today, entries, workshopOrders, rules: { confirmationDays: 7 } });
+  assert.deepEqual(facts.map((entry) => [entry.kind, entry.orderNumber, entry.severity]), [["commande_non_confirmee", "166", "haute"]], "BC 167's deposit is noted on its quote; a cancelled line confirms nothing");
+  assert.match(facts[0].fact, /BC n° 166 \(Client A\) du 05\/11\/2026 : aucun acompte au journal de caisse depuis 15 jours \(délai de confirmation : 7 jours\)/);
+  assert.deepEqual(readCommercialRules({ confirmationDays: "2,5" }).errors, ["Délai de confirmation d'une commande (jours) : entre 1 et 90, en jours entiers."]);
+
+  // In Amélioration, the alert follows the file: its text says today's facts,
+  // and it is lifted once the deposit is noted.
+  const improvement = createMemoryImprovementBook({ clock: () => today });
+  await improvement.sync([], { commercial: facts });
+  const later = commercialFacts(issued, EMPTY_STATE, { today: new Date("2026-11-22T10:00:00Z"), entries, workshopOrders, rules: { confirmationDays: 7 } });
+  await improvement.sync([], { commercial: later });
+  assert.match((await improvement.state()).anomalies[0].fact, /depuis 17 jours/);
+  await improvement.sync([], { commercial: commercialFacts(issued, EMPTY_STATE, { today, entries: [...entries, { kind: "entree", category: "acompte_client", amount: 2880, orderNumber: "166", day: "2026-11-21" }], workshopOrders, rules: { confirmationDays: 7 } }) });
+  assert.equal((await improvement.state()).anomalies[0].status, "levee");
 });

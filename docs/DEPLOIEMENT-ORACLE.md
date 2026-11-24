@@ -311,6 +311,17 @@ sh scripts/tenant.sh user atelier-exemple --id=sara --email=sara@exemple.ma --na
   cockpit passe en lecture seule (consulter et exporter, rien modifier).
   `resume` le réactive. La vue **Abonnements** du cockpit H-KIDS propose cette
   commande après 30 jours de retard.
+- `sh scripts/tenant.sh delete atelier-exemple --confirm=atelier-exemple` :
+  suppression définitive, encadrée par trois verrous.
+  1. L'entreprise est arrêtée (`stop`).
+  2. Un export de moins de 7 jours est dans `deploy/exports/` : faites-le
+     pendant qu'elle tourne, puis remettez l'archive à l'entreprise. Ses pièces
+     comptables sont à garder dix ans (loi n° 9-88).
+  3. Son identifiant est retapé dans `--confirm`.
+
+  Le cockpit, la base, les fichiers et les réglages sont effacés. L'export
+  reste ; effacez-le une fois remis. Chaque suppression est notée dans
+  `deploy/tenants-supprimees.log`.
 
 **Facturer l'abonnement.** Ajoutez l'entreprise dans la vue **Abonnements** du
 cockpit H-KIDS, avec le même identifiant que pour `tenant.sh create`, son nom

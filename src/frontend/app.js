@@ -490,6 +490,7 @@ async function showSecurityState() {
       <button type="button" class="primary mt-5 w-full justify-center" id="security-start">${icon("shield")}Activer</button>`;
     securityBody.querySelector("#security-start").addEventListener("click", startTwoFactorSetup);
     appendPasswordSection();
+    appendDataSection();
     return;
   }
   securityBody.innerHTML = `
@@ -516,10 +517,46 @@ async function showSecurityState() {
     showSecurityState();
   });
   appendPasswordSection();
+  appendDataSection();
 }
 
 // Each person changes their own password here, with the one they have now.
 // The other devices signed in to the account are signed out.
+// The company's data, for the direction: everything in one ZIP, and how a
+// deletion goes. The server refuses the export to anyone else.
+function appendDataSection() {
+  const section = document.createElement("section");
+  section.id = "security-data";
+  section.className = "mt-5 border-t border-line pt-4";
+  section.innerHTML = `
+    <p class="font-semibold">Données de l'entreprise</p>
+    <p class="mt-2 text-muted">Toutes vos données dans un fichier ZIP : registres (caisse, atelier, RH, administratif…), documents émis en PDF et Word, copies classées et journal d'audit. Ni mots de passe ni clés de service.</p>
+    <p class="mt-3 text-[14px] text-danger" id="security-data-error" role="alert" hidden></p>
+    <button type="button" class="secondary mt-3 w-full justify-center" id="security-export">${icon("database")}Exporter toutes les données</button>
+    <p class="mt-3 text-[13px] text-muted">Suppression du compte : demandez-la à votre fournisseur. Elle n'a lieu qu'après un export complet qui vous est remis ; les pièces comptables sont à garder dix ans (loi n° 9-88).</p>`;
+  securityBody.append(section);
+  const button = section.querySelector("#security-export");
+  button.addEventListener("click", async () => {
+    const error = section.querySelector("#security-data-error");
+    error.hidden = true;
+    button.disabled = true;
+    try {
+      const response = await fetch("/api/company/export", { headers: await authHeaders() });
+      if (!response.ok) {
+        throw new Error((await response.json().catch(() => ({}))).error ?? "L'export n'a pas pu être fait.");
+      }
+      const name = /filename="([^"]+)"/.exec(response.headers.get("content-disposition") ?? "")?.[1] ?? "export-donnees.zip";
+      saveBlob(await response.blob(), name);
+      showToast(`Export prêt : ${response.headers.get("x-export-files") ?? "tous les"} fichiers.`);
+    } catch (failure) {
+      error.textContent = failure.message;
+      error.hidden = false;
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 function appendPasswordSection() {
   const section = document.createElement("form");
   section.id = "security-password-change";
@@ -3753,9 +3790,66 @@ function registerRow(entry) {
       <span class="register-amount">${entry.totalTtc === null || entry.totalTtc === undefined ? "" : escapeHtml(formatDh(entry.totalTtc))}</span>
       <span class="tag ${entry.status === "commandé" ? "ok" : ""}">${escapeHtml(entry.status)}</span>
       <button type="button" class="secondary" data-open-pdf="${escapeHtml(entry.stem)}">${icon("file")}Ouvrir le PDF</button>
+      ${emailView.configured ? `<details class="mail-send register-mail">
+        <summary>${icon("send")}Envoyer par e-mail</summary>
+        <form data-email-form data-document="${escapeHtml(entry.stem)}" data-recipient="${escapeHtml(entry.client || "")}" data-kind="document">
+          <label>Adresse e-mail<input name="to" type="email" required placeholder="client@exemple.ma"></label>
+          <label>Objet<input name="subject" required maxlength="200" value="${escapeHtml(`${entry.typeLabel} n° ${entry.number} — ${companyName()}`)}"></label>
+          <label>Message<textarea name="message" rows="5" required>${escapeHtml(`Bonjour,\n\nVeuillez trouver ci-joint notre ${String(entry.typeLabel).toLowerCase()} n° ${entry.number}.\n\nCordialement,\n${companyName()}`)}</textarea></label>
+          <button type="submit" class="secondary">${icon("send")}Envoyer avec le PDF</button>
+        </form>
+      </details>` : ""}
     </li>
   `;
 }
+
+// The company's e-mail: whether its mail server is set, and from which address.
+const emailView = { configured: false, from: null, company: null };
+
+async function refreshEmail() {
+  try {
+    const response = await fetch("/api/email", { headers: await authHeaders() });
+    const data = response.ok ? await response.json() : {};
+    emailView.configured = data.configured === true;
+    emailView.from = data.from ?? null;
+    emailView.company = data.company ?? null;
+  } catch {
+    emailView.configured = false;
+  }
+}
+
+function companyName() {
+  return emailView.company ?? "H-KIDS";
+}
+
+// Every e-mail form, wherever it is drawn: a message drafted by an agent (its
+// text is the card's) or a document of the register (its PDF is joined).
+document.body?.addEventListener?.("submit", async (event) => {
+  const form = event.target.closest?.("[data-email-form]");
+  if (!form) {
+    return;
+  }
+  event.preventDefault();
+  const message = form.elements.message?.value ?? form.closest(".msg-card")?.querySelector(".msg-text")?.value ?? "";
+  const button = form.querySelector("button[type='submit']");
+  button.disabled = true;
+  try {
+    const { message: sent } = await postJson("/api/email/send", {
+      to: form.elements.to.value.trim(),
+      subject: form.elements.subject.value.trim(),
+      message,
+      recipient: form.dataset.recipient ?? "",
+      kind: form.dataset.kind ?? "autre",
+      documents: form.dataset.document ? [form.dataset.document] : []
+    });
+    showToast(`E-mail envoyé à ${sent.to}${sent.documents.length ? ` avec ${sent.documents.join(", ")}` : ""}.`);
+    form.closest("details")?.removeAttribute("open");
+  } catch (error) {
+    showToast(error.message, "warn");
+  } finally {
+    button.disabled = false;
+  }
+});
 
 // What the Director found in the register, under its answer.
 function foundCard(found) {
@@ -4208,6 +4302,15 @@ function messageCard(draft) {
         <input class="msg-phone" value="${escapeHtml(draft.phone ? `+${draft.phone}` : "")}" placeholder="06 12 34 56 78">
       </label>
       <textarea class="msg-text" rows="${Math.min(10, Math.max(3, draft.message.split("\n").length + 1))}">${escapeHtml(draft.message)}</textarea>
+      ${emailView.configured ? `<details class="mail-send">
+        <summary>${icon("send")}Envoyer plutôt par e-mail</summary>
+        <form data-email-form data-recipient="${escapeHtml(draft.recipient)}" data-kind="${escapeHtml(draft.kind)}">
+          <label>Adresse e-mail<input name="to" type="email" required placeholder="client@exemple.ma"></label>
+          <label>Objet<input name="subject" required maxlength="200" value="${escapeHtml(`${MESSAGE_KIND_LABELS[draft.kind] ?? "Message"} — ${companyName()}`)}"></label>
+          <button type="submit" class="secondary">${icon("send")}Envoyer l'e-mail</button>
+          <span class="muted">Le texte ci-dessus part tel que vous l'avez relu, depuis ${escapeHtml(emailView.from ?? "l'adresse de l'entreprise")}.</span>
+        </form>
+      </details>` : ""}
       <div class="doc-actions">
         ${viaApi
           ? `<button type="button" class="whatsapp-button" data-whatsapp-api>${icon("send")}Envoyer depuis le numéro H-KIDS</button>
@@ -6030,6 +6133,7 @@ function renderSales({ report, axes, targets, canDecide }) {
 
 async function loadPanels() {
   await checkAgentStatus();
+  await refreshEmail();
   applyCompanyPaymentPlans();
   refreshPlans();
   refreshOrders();

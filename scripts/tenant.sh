@@ -17,6 +17,8 @@
 #   sh scripts/tenant.sh start <slug>
 #   sh scripts/tenant.sh suspend <slug>     (unpaid subscription: read only, data kept)
 #   sh scripts/tenant.sh resume <slug>      (paid again: the cockpit works as before)
+#   sh scripts/tenant.sh delete <slug> --confirm=<slug>
+#                                           (for good: stopped first, exported within 7 days)
 #
 # Each company's settings are in deploy/tenants/<slug>/.env (readable by this
 # account only). The company's own WhatsApp and Meta keys go there too.
@@ -211,6 +213,31 @@ set_suspended() {
   compose "$slug" up -d
 }
 
+# A company deleted for good (CDC section 11: « suppression encadrée »).
+# Three locks: the company is stopped, an export of less than 7 days is in
+# deploy/exports (made while it ran, and handed to the company: its books and
+# documents are its own, and the law n° 9-88 has it keep its accounting
+# records ten years), and its identifier is typed again. Its cockpit, its
+# database, its files and its settings go; the export stays, and the deletion
+# is written in deploy/tenants-supprimees.log.
+delete_tenant() {
+  slug=$1
+  shift
+  check_slug "$slug"
+  env_file="$TENANTS/$slug/.env"
+  [ -f "$env_file" ] || fail "aucune entreprise « $slug »."
+  [ "$(option confirm "$@")" = "$slug" ] || fail "suppression définitive de « $slug » : relancez avec --confirm=$slug."
+  [ ! -f "$CADDY_SITES/$slug.caddy" ] || fail "arrêtez d'abord l'entreprise : sh scripts/tenant.sh stop $slug."
+  latest=$(find "$ROOT/deploy/exports" -maxdepth 1 -name "$slug-*.tar.gz" -mtime -7 2>/dev/null | sort | tail -n 1)
+  [ -n "$latest" ] || fail "aucun export de « $slug » de moins de 7 jours : relancez-la (start), exportez (export), remettez l'archive à l'entreprise, arrêtez-la (stop), puis supprimez."
+  name=$(env_value "$env_file" COMPANY_NAME)
+  compose "$slug" down --volumes --remove-orphans
+  rm -rf "${TENANTS:?}/$slug"
+  echo "$(date -u +%Y-%m-%dT%H:%MZ) $slug « $name » supprimée — export gardé : $(basename "$latest")" >> "$ROOT/deploy/tenants-supprimees.log"
+  echo "« $slug » supprimée : cockpit, base, fichiers et réglages effacés."
+  echo "L'export reste dans $latest ; effacez-le une fois remis à l'entreprise."
+}
+
 command=${1:-}
 [ $# -gt 0 ] && shift
 case "$command" in
@@ -223,5 +250,6 @@ case "$command" in
   start) [ $# -gt 0 ] || fail "identifiant manquant."; start "$1" ;;
   suspend) [ $# -gt 0 ] || fail "identifiant manquant."; set_suspended "$1" on; echo "« $1 » suspendue : lecture seule, données gardées (réactiver : sh scripts/tenant.sh resume $1)." ;;
   resume) [ $# -gt 0 ] || fail "identifiant manquant."; set_suspended "$1" off; echo "« $1 » réactivée." ;;
-  *) sed -n '2,22p' "$0"; exit 1 ;;
+  delete) [ $# -gt 0 ] || fail "identifiant manquant."; delete_tenant "$@" ;;
+  *) sed -n '2,24p' "$0"; exit 1 ;;
 esac

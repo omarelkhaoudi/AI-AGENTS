@@ -36,6 +36,8 @@ import { CONSISTENCY_DOMAINS, checkConsistency } from "../agent/consistency.js";
 import { PlanStoreError, createMemoryPlanStore } from "../agent/plan-store.js";
 import { ORDER_ROLE_IDS, WORKSHOP_STEPS, WorkshopError, createMemoryWorkshopStore, createWorkshop } from "../agent/workshop-book.js";
 import { COMPANY, brandPage } from "../company/company-profile.js";
+import { EXPORT_README, buildDataExport, exportFileName } from "../company/data-export.js";
+import { DATA_DIR } from "../agent/json-book.js";
 import { planFromEnv } from "../company/plans.js";
 import { AUTOMATION_ACTIONS, AUTOMATION_EVENTS, AutomationError, MAX_RUNS_PER_RULE_PER_DAY, createAutomation, createMemoryAutomationBook } from "../agent/automation.js";
 import { HrBookError, LEAVE_STATUSES as HR_LEAVE_STATUSES, createMemoryHrBook } from "../agent/hr-book.js";
@@ -56,6 +58,8 @@ import { CapacityError, STEP_LABELS as CAPACITY_STEP_LABELS, capacityFacts, crea
 import { orderMargins } from "../agent/business-analysis.js";
 import { SPECIALISTS, SPECIALIST_IDS } from "../agent/agent-team.js";
 import { createMemoryWhatsAppInbox } from "../agent/whatsapp-inbox.js";
+import { createMemoryEmailOutbox } from "../agent/email-outbox.js";
+import { EmailError, MAX_ATTACHMENTS, createSmtpMailer, emailSettingsFromEnv, isEmailAddress } from "../integrations/email-smtp.js";
 import { createWhatsAppGateway } from "../agent/whatsapp-gateway.js";
 import { SALE_CHANNELS, SalesBookError, createMemoryFollowUpBook, dueReminders, isoDay, quotePipeline, salesReport } from "../agent/sales-book.js";
 import { REPORT_AXES, commercialReport } from "../agent/commercial-report.js";
@@ -173,6 +177,10 @@ export function buildApi({
   // not given), where its messages are kept, and the fetch it calls Meta with.
   whatsAppConfig = null,
   whatsAppStore = null,
+  // The company's e-mail: the mail server (SMTP_* in .env) and what left
+  // through it (data/emails.json).
+  emailMailer = null,
+  emailOutbox = null,
   whatsAppFetch = null,
   // Turns voice notes into text; from OPENAI_API_KEY when not given, null for none.
   whatsAppTranscriber = undefined,
@@ -213,6 +221,9 @@ export function buildApi({
   // Where the Administratif files the PDFs, one folder per client. Null (a
   // test): the register is read and searched, nothing is copied on the PC.
   archiveDir = null,
+  // The folder of the company's books, for the export of its data. Null: the
+  // project's data/ folder, as the books themselves use.
+  dataDir = null,
   // A seam, not a feature: the derived idempotency key names a day, and a test
   // cannot cross a day boundary by waiting for one.
   clock = () => new Date()
@@ -628,6 +639,9 @@ export function buildApi({
   // given by a test may not know them: the book is then synced directly.
   const whatsAppSettings = whatsAppConfig ?? loadWhatsAppCloudConfig();
   const whatsAppInbox = whatsAppStore ?? createMemoryWhatsAppInbox({ clock });
+  const emailSettings = emailSettingsFromEnv(process.env, { companyEmail: COMPANY.email ?? "", companyName: COMPANY.name });
+  const mailer = emailMailer ?? createSmtpMailer(emailSettings, { clock });
+  const emails = emailOutbox ?? createMemoryEmailOutbox({ clock });
   const whatsApp = createWhatsAppGateway({
     config: whatsAppSettings,
     client: createWhatsAppCloudClient({ config: whatsAppSettings, ...(whatsAppFetch ? { fetchImpl: whatsAppFetch } : {}) }),
@@ -1207,6 +1221,35 @@ export function buildApi({
       // (the « Abonnements » view).
       saas: sellsSubscriptions && seesConfidential(request)
     }));
+
+    // All the company's data in one ZIP, for the direction: its books, its
+    // documents, its classified copies and the audit log. It works while the
+    // subscription is suspended too: the data stays the company's.
+    app.get("/api/company/export", readRouteOptions(), async (request, reply) => {
+      if (!seesConfidential(request)) {
+        return reply.code(403).send({ error: "Seule la direction exporte les données de l'entreprise.", details: { code: "EXPORT_DIRECTION_ONLY" } });
+      }
+      const at = clock().toISOString();
+      const audit = typeof repository.listAuditEvents === "function" ? await Promise.resolve().then(() => repository.listAuditEvents({})).catch(() => []) : [];
+      const { stream, files } = await buildDataExport({
+        roots: [
+          { dir: dataDir ?? DATA_DIR, as: "donnees" },
+          { dir: hkidsDocuments.outputDir, as: "documents" },
+          ...(archiveDir ? [{ dir: archiveDir, as: "classement" }] : [])
+        ],
+        extras: [
+          { name: "LISEZ-MOI.txt", content: EXPORT_README(COMPANY.name, at) },
+          { name: "journal-d-audit.json", content: JSON.stringify(audit, null, 2) }
+        ]
+      });
+      await auditSecurityEvent(repository, { type: "data_exported", actorUserId: request.principal.userId ?? null, resourceType: "company", resourceId: companyId, metadata: { files: files.length } });
+      return reply
+        .type("application/zip")
+        .header("Content-Disposition", `attachment; filename="${exportFileName(companyId, at)}"`)
+        .header("Cache-Control", "no-store")
+        .header("X-Export-Files", String(files.length))
+        .send(stream);
+    });
 
     app.get("/api/agent/status", readRouteOptions(), async () => ({
       configured: agent.isConfigured(),
@@ -2557,6 +2600,61 @@ export function buildApi({
           return reply.code(WHATSAPP_STATUS[error.code] ?? 502).send({ error: error.message, details: { code: error.code } });
         }
         return sendDomainError(reply, "WhatsApp send failed.", error);
+      }
+    });
+
+    // --- E-mail: the company's address, out -------------------------------
+    app.get("/api/email", readRouteOptions(), async () => ({
+      configured: mailer.configured,
+      missing: emailMailer ? [] : emailSettings.missing,
+      from: mailer.configured ? mailer.from : null,
+      company: COMPANY.name,
+      messages: await emails.messages({ limit: 100 })
+    }));
+
+    // A message read and sent from the cockpit: the click is the validation.
+    // The documents are joined as the PDFs of the register (documents: stems).
+    app.post("/api/email/send", writeRouteOptions(), async (request, reply) => {
+      const field = (name, max) => (typeof request.body?.[name] === "string" ? request.body[name].trim().slice(0, max) : "");
+      const to = field("to", 254);
+      const subject = field("subject", 200);
+      const text = field("message", 20_000);
+      const stems = Array.isArray(request.body?.documents) ? [...new Set(request.body.documents.filter((stem) => typeof stem === "string"))] : [];
+      const by = request.principal.name ?? request.principal.userId ?? "direction";
+      if (!mailer.configured) {
+        return reply.code(503).send({ error: `L'e-mail n'est pas configuré : renseignez ${emailSettings.missing.join(", ") || "SMTP_HOST"} dans .env.`, details: { code: "EMAIL_NOT_CONFIGURED" } });
+      }
+      if (!isEmailAddress(to)) {
+        return reply.code(400).send({ error: "Adresse e-mail du destinataire illisible.", details: { code: "EMAIL_ADDRESS_INVALID" } });
+      }
+      if (!subject || !text) {
+        return reply.code(400).send({ error: "Un objet et un message sont nécessaires.", details: { code: "EMAIL_EMPTY" } });
+      }
+      if (stems.length > MAX_ATTACHMENTS) {
+        return reply.code(400).send({ error: `${MAX_ATTACHMENTS} documents au plus par e-mail.`, details: { code: "EMAIL_TOO_MANY_ATTACHMENTS" } });
+      }
+      const attachments = [];
+      for (const stem of stems) {
+        const found = await archive.pdf(stem);
+        if (!found) {
+          return reply.code(404).send({ error: "Un des documents n'est pas dans le registre, ou son PDF manque.", details: { code: "EMAIL_DOCUMENT_NOT_FOUND" } });
+        }
+        attachments.push({ name: `${found.entry.typeLabel} ${found.entry.number}.pdf`, content: found.bytes, contentType: "application/pdf", label: `${found.entry.typeLabel} n° ${found.entry.number}` });
+      }
+      const recipient = field("recipient", 120);
+      const record = { to, recipient, subject, text, documents: attachments.map((file) => file.label), kind: field("kind", 40) || "autre", by };
+      try {
+        const { messageId } = await mailer.send({ to, subject, text, attachments });
+        const sent = await emails.record({ ...record, status: "envoye", messageId });
+        await auditSecurityEvent(repository, { type: "email_sent", actorUserId: request.principal.userId ?? null, resourceType: "email", resourceId: String(sent.number), metadata: { documents: sent.documents.length } });
+        await teamFeed.log({ agent: "commercial", kind: "document", text: `E-mail « ${subject} » envoyé à ${recipient || to}${sent.documents.length ? ` avec ${sent.documents.join(", ")}` : ""}.`, by });
+        return reply.code(201).send({ message: sent });
+      } catch (error) {
+        if (error instanceof EmailError) {
+          await emails.record({ ...record, status: "echec", error: error.message });
+          return reply.code(["EMAIL_ADDRESS_INVALID", "EMAIL_TOO_MANY_ATTACHMENTS"].includes(error.code) ? 400 : error.code === "EMAIL_NOT_CONFIGURED" ? 503 : 502).send({ error: error.message, details: { code: error.code } });
+        }
+        return sendDomainError(reply, "E-mail send failed.", error);
       }
     });
 

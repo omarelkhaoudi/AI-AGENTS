@@ -31,7 +31,11 @@ export const AUDIT_EVENT_TYPES = Object.freeze([
   "recovery_code_used",
   "password_changed",
   "authorization_denied",
-  "rate_limit_exceeded"
+  "rate_limit_exceeded",
+  // The direction took all the company's data away (GET /api/company/export).
+  "data_exported",
+  // A message left the company's e-mail address (POST /api/email/send).
+  "email_sent"
 ]);
 
 export class AuditEventError extends Error {

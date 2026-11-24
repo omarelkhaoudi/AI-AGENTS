@@ -1813,6 +1813,35 @@
     @apply mb-2 flex max-w-[260px] flex-col gap-1;
   }
 
+  .mail-send {
+    @apply mt-2 rounded-xl border border-line px-3 py-2 text-[12.5px];
+  }
+
+  .mail-send summary {
+    @apply flex cursor-pointer items-center gap-1.5 font-semibold text-brand;
+  }
+
+  .mail-send form {
+    @apply mt-3 flex flex-col gap-2;
+  }
+
+  .mail-send label {
+    @apply flex flex-col gap-1 font-semibold text-ink-2;
+  }
+
+  .mail-send input,
+  .mail-send textarea {
+    @apply font-normal;
+  }
+
+  .mail-send button {
+    @apply self-start;
+  }
+
+  .register-mail {
+    @apply basis-full;
+  }
+
   .msg-text {
     @apply text-[13.5px] leading-normal;
   }

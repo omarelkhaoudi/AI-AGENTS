@@ -711,6 +711,47 @@ vue **Abonnements**, visible de la direction seule :
 Rien n'est émis, envoyé ou suspendu seul. Le paiement est noté à réception du
 virement (« Virement reçu »). Tout est gardé dans `data/abonnements.json`.
 
+### Données de l'entreprise : export et suppression
+
+- **Export.** La direction télécharge toutes les données de son entreprise dans
+  un fichier ZIP : fenêtre **Sécurité du compte** (bouclier en haut), section
+  « Données de l'entreprise » (route `GET /api/company/export`).
+  - Le ZIP contient les registres en JSON (`donnees/`), chaque document émis en
+    PDF, Word et JSON (`documents/`), les copies classées (`classement/`) et le
+    journal d'audit.
+  - Il ne contient ni mot de passe, ni code de double authentification, ni clé
+    de service ; un fichier `.env` ou `.key` laissé dans `data/` est écarté.
+  - L'export marche aussi pendant une suspension, et il est noté au journal
+    d'audit. Un autre compte que la direction est refusé.
+- **Suppression.** Seul le fournisseur supprime une entreprise, avec
+  `sh scripts/tenant.sh delete` et ses trois verrous : l'entreprise est
+  arrêtée, un export de moins de 7 jours existe et lui a été remis, et
+  l'identifiant est retapé. Voir `docs/DEPLOIEMENT-ORACLE.md`.
+
+### E-mail
+
+Un message ou un document part de l'adresse de l'entreprise, par son propre
+serveur d'e-mail (SMTP), une fois que quelqu'un a cliqué « Envoyer » dans le
+cockpit. Aucun agent n'envoie d'e-mail seul.
+
+- **Réglages** dans `.env` : `SMTP_HOST`, `SMTP_PORT` (587 ou 465),
+  `SMTP_USER`, `SMTP_PASSWORD`, et au besoin `SMTP_FROM` (par défaut
+  `COMPANY_EMAIL`) et `SMTP_FROM_NAME`. Pour Gmail, il faut un « mot de passe
+  d'application ». Sans `SMTP_HOST`, rien ne part par e-mail.
+- **Chiffrement.** La connexion est toujours chiffrée : TLS dès le départ
+  (port 465) ou STARTTLS (port 587). Un serveur qui n'offre pas de chiffrement
+  est refusé, sauf `SMTP_SECURE=none` pour un serveur sur la même machine.
+- **Envoyer un document** : vue Documents, registre, « Envoyer par e-mail » sur
+  la ligne du document. On relit l'adresse, l'objet et le message ; le PDF est
+  joint.
+- **Envoyer un message préparé par un agent** : sous la carte du message,
+  « Envoyer plutôt par e-mail ».
+- Chaque envoi, réussi ou en échec avec sa raison, est gardé dans
+  `data/emails.json`, écrit dans le fil de l'équipe et noté au journal d'audit.
+
+La réception d'e-mails (lire une boîte) n'est pas branchée : les réponses des
+clients arrivent dans la boîte habituelle de l'entreprise.
+
 ### Application installable
 
 Le cockpit s'installe comme une application, sur téléphone ou sur ordinateur :

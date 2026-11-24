@@ -25,6 +25,7 @@ data/
 # passwords, their sites and exports carry their names and data.
 deploy/tenants/
 deploy/exports/
+deploy/tenants-supprimees.log
 deploy/tenants-caddy/*
 !deploy/tenants-caddy/_aucune.caddy
 

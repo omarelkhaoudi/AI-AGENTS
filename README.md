@@ -132,6 +132,12 @@ Manager (le périmètre validé par Hiba), plus RH, SAV et Juridique. Chaque age
 lit que ses propres données (§22 du CDC), rédige et propose ; il n'envoie, ne paie
 et ne commande jamais rien lui-même.
 
+**Écrire directement à un agent (§2 du CDC).** Le menu **À** du Briefing choisit
+le destinataire : Director par défaut, ou un agent de l'équipe. L'agent répond
+lui-même, avec ses outils et ses règles, sans passer par le Director ; chaque
+destinataire garde sa propre conversation. Les photos et les documents passent
+par le Director, qui les transmet.
+
 **Français, arabe et darija.** On écrit (ou on parle, en note vocale) au Director
 en français, en arabe ou en darija, en lettres arabes ou latines (« chhal dkhel f
 la caisse lyoum ? »). Il répond en français, ou en darija si la direction n'écrit
@@ -731,6 +737,28 @@ contient les dépenses confidentielles et les absences de l'équipe.
 Rien n'est inventé : les comptes sont une proposition, la TVA est celle des
 factures ; la TVA due et la TVA récupérable sur les achats se calculent par le
 comptable sur les pièces. Le téléchargement est noté au journal d'audit.
+
+### Double authentification obligatoire pour la direction
+
+En production, un compte de la direction (qui voit les données confidentielles)
+n'ouvre rien tant que la double authentification n'est pas activée : à la
+connexion, la fenêtre « Sécurité du compte » s'ouvre seule (QR code à scanner
+avec Google ou Microsoft Authenticator, code à 6 chiffres, dix codes de
+secours), et le cockpit se charge ensuite. Elle ne se désactive pas pour la
+direction. Les autres comptes la choisissent eux-mêmes. Réglage :
+`DIRECTION_TWO_FACTOR` (vide = obligatoire en production ; `required` ou `off`).
+
+### Loi 09-08 : la mention sur les données personnelles
+
+Chaque document client (devis, BC, BL, facture, avoir, reçu, en PDF et en
+Word), la page de suivi du client, la feuille de signature du BL et la
+**première** réponse privée Instagram / Facebook à une personne portent la
+mention : qui traite ses données, pour quoi, et l'adresse où exercer ses droits
+d'accès, de rectification et d'opposition. Une réponse publique sous un
+commentaire ne la porte pas ; une réponse refusée par la direction ne compte pas.
+Deux réglages du `.env` la complètent, et n'apparaissent qu'une fois remplis :
+`CNDP_NUMBER` (le numéro du récépissé de la CNDP) et `DATA_HOSTING_COUNTRY`
+(le pays où le serveur est hébergé).
 
 ### Données de l'entreprise : export et suppression
 

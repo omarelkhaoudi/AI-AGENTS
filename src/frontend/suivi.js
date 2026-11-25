@@ -40,7 +40,8 @@ function render(view) {
   const contact = document.getElementById("contact");
   contact.innerHTML = `Une question sur votre commande ? ${escapeHtml(view.company.name)}`
     + (view.company.phone ? ` · <a class="font-semibold text-brand" href="tel:${escapeHtml(view.company.phone.replace(/\s+/g, ""))}">${escapeHtml(view.company.phone)}</a>` : "")
-    + (view.company.email ? ` · <a class="font-semibold text-brand" href="mailto:${escapeHtml(view.company.email)}">${escapeHtml(view.company.email)}</a>` : "");
+    + (view.company.email ? ` · <a class="font-semibold text-brand" href="mailto:${escapeHtml(view.company.email)}">${escapeHtml(view.company.email)}</a>` : "")
+    + (view.company.privacy ? `<span class="mt-2 block text-[11px]">${escapeHtml(view.company.privacy)}</span>` : "");
   contact.hidden = false;
   document.title = `Commande n° ${view.order.number} - H-KIDS`;
   show("tracking");

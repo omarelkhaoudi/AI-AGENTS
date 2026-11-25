@@ -209,7 +209,7 @@
               <textarea id="director-message" name="message" rows="2" class="min-h-16 resize-none border-0 bg-transparent px-2.5 py-2 text-[16px] leading-normal shadow-none focus:shadow-none" placeholder="Que souhaitez-vous faire ?">Fais-moi le point sur mon entreprise aujourd'hui.</textarea>
               <ul id="photo-tray" class="photo-tray" aria-label="Photos jointes" hidden></ul>
               <div class="composer-bar flex items-center justify-between gap-3 pr-1 pb-0.5 pl-2.5">
-                <span class="kbd-hint max-md:hidden"><kbd>Ctrl</kbd> + <kbd>Entrée</kbd> pour envoyer</span>
+                <span class="flex items-center gap-2"><span id="director-agent-field" class="flex items-center gap-2" hidden><label for="director-agent" class="text-[13px] text-muted">À</label><select id="director-agent" class="max-w-44 py-1 text-[13px]" title="Écrire au Director ou directement à un agent"><option value="">Director</option></select></span><span class="kbd-hint max-md:hidden"><kbd>Ctrl</kbd> + <kbd>Entrée</kbd> pour envoyer</span></span>
                 <div class="composer-actions flex shrink-0 gap-2 max-md:flex-1">
                   <input type="file" id="photo-input" accept="image/*,.pdf,.docx,.xlsx,.txt,.csv,.md" multiple hidden>
                   <button type="button" class="icon-button" id="photo-button" title="Joindre des photos ou des documents : PDF, Word, Excel (ou glissez-les, ou collez-les)" hidden>
@@ -461,6 +461,10 @@
                   <div class="field">
                     <label for="cash-order">BC n°</label>
                     <input id="cash-order" name="orderNumber" inputmode="numeric" placeholder="171">
+                  </div>
+                  <div class="field col-span-2" id="cash-campaign-field" hidden>
+                    <label for="cash-campaign">Campagne</label>
+                    <input id="cash-campaign" name="campaign" placeholder="Rentrée 2026">
                   </div>
                   <label class="cash-confidential col-span-2" id="cash-confidential-field" hidden>
                     <input id="cash-confidential" name="confidential" type="checkbox">

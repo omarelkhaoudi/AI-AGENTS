@@ -560,6 +560,20 @@ export function buildApi({
 
   // Salaries and confidential expenses: the direction only.
   const seesConfidential = (request) => roleSatisfiesCapability(request.principal?.role, "view_confidential");
+  // Accounts already seen with two-step sign-in on: they are not read again on
+  // every request. Turning it off removes the account from the set.
+  const twoFactorOn = new Set();
+  const twoFactorRequiredFor = (role) => securityConfig.directionTwoFactor && roleSatisfiesCapability(role, "view_confidential");
+  async function mustEnableTwoFactor(principal) {
+    if (!twoFactorRequiredFor(principal?.role) || !principal.userId || twoFactorOn.has(principal.userId)) {
+      return false;
+    }
+    const state = await repository.getTwoFactor?.(principal.userId);
+    if (state?.secret) {
+      twoFactorOn.add(principal.userId);
+    }
+    return Boolean(state) && !state.secret;
+  }
   async function refusedConfidential(request, number) {
     await auditSecurityEvent(repository, { type: "authorization_denied", actorUserId: request.principal.userId, resourceType: "cash_entry", resourceId: String(number), metadata: { method: request.method, code: "CONFIDENTIAL" } });
   }
@@ -863,6 +877,15 @@ export function buildApi({
           details: { code: "PASSWORD_CHANGE_REQUIRED" }
         });
       }
+      // The direction's account holds everything: with DIRECTION_TWO_FACTOR on,
+      // it opens nothing but the setting up of two-step sign-in until it is on.
+      // An account without a password (a service token) is not concerned.
+      if (await mustEnableTwoFactor(request.principal) && !TWO_FACTOR_SETUP_ROUTES.has(`${request.method} ${routeIdentifier(request)}`)) {
+        return reply.code(403).send({
+          error: "Activez d'abord la double authentification : elle est obligatoire pour la direction.",
+          details: { code: "TWO_FACTOR_SETUP_REQUIRED" }
+        });
+      }
       // A company suspended for an unpaid subscription reads its cockpit and
       // exports it; it changes nothing until its seller lifts the suspension.
       if (suspended && !["GET", "HEAD"].includes(request.method) && !PASSWORD_CHANGE_ROUTES.has(`${request.method} ${routeIdentifier(request)}`)) {
@@ -977,7 +1000,7 @@ export function buildApi({
       const material = createApiTokenMaterial({ userId: found.user.id, name: "session", expiresAt });
       await repository.createApiToken(material.record);
       await auditSecurityEvent(repository, { type: "login_succeeded", actorUserId: found.user.id, resourceType: "endpoint", resourceId: "/api/auth/login" });
-      return reply.code(200).send({ token: material.secret, expiresAt, user: { name: found.user.name, role: found.user.role }, mustChangePassword: found.user.metadata?.mustChangePassword === true });
+      return reply.code(200).send({ token: material.secret, expiresAt, user: { name: found.user.name, role: found.user.role }, mustChangePassword: found.user.metadata?.mustChangePassword === true, mustEnableTwoFactor: twoFactorRequiredFor(found.user.role) && !found.twoFactor?.secret });
     });
 
     // Routes are declared after the rate limiter has loaded, so its per-route
@@ -1590,6 +1613,7 @@ export function buildApi({
           party: field("party"),
           quoteNumber: field("quoteNumber"),
           orderNumber: field("orderNumber"),
+          campaign: field("campaign"),
           day: field("day"),
           announcedBy: "cockpit",
           by,
@@ -2844,7 +2868,8 @@ export function buildApi({
     app.get("/api/auth/me", readRouteOptions(), async (request) => ({
       user: { name: request.principal.name, role: request.principal.role },
       demo: securityConfig.demoModeEnabled,
-      mustChangePassword: request.principal.mustChangePassword === true
+      mustChangePassword: request.principal.mustChangePassword === true,
+      mustEnableTwoFactor: await mustEnableTwoFactor(request.principal)
     }));
 
     // Two-step sign-in, turned on and off by each person for their own account.
@@ -2904,6 +2929,9 @@ export function buildApi({
       if (!found?.twoFactor?.secret) {
         return reply.code(409).send({ error: "La double authentification n'est pas active sur ce compte." });
       }
+      if (twoFactorRequiredFor(request.principal.role)) {
+        return reply.code(403).send({ error: "La double authentification est obligatoire pour la direction : elle ne se désactive pas.", details: { code: "TWO_FACTOR_REQUIRED_FOR_DIRECTION" } });
+      }
       const password = typeof request.body?.password === "string" ? request.body.password : "";
       const code = typeof request.body?.code === "string" ? request.body.code.trim() : "";
       const passwordOk = await verifyPassword(password, found.passwordHash);
@@ -2913,6 +2941,7 @@ export function buildApi({
         return reply.code(400).send({ error: passwordOk ? "Code incorrect ou déjà utilisé." : "Mot de passe incorrect." });
       }
       await repository.updateTwoFactor(userId, { secret: null, pendingSecret: null, lastStep: null, enabledAt: null, recoveryCodeHashes: [] });
+      twoFactorOn.delete(userId);
       await auditSecurityEvent(repository, { type: "two_factor_disabled", actorUserId: userId, resourceType: "user", resourceId: userId });
       return { enabled: false };
     });
@@ -2973,11 +3002,14 @@ export function buildApi({
           files: request.body?.files,
           conversationId: typeof request.body?.conversationId === "string" ? request.body.conversationId : null,
           userId: request.principal.userId,
-          confidential: seesConfidential(request)
+          confidential: seesConfidential(request),
+          // To one agent directly (CDC section 2), rather than the Director.
+          agent: typeof request.body?.agent === "string" && request.body.agent !== "" ? request.body.agent : null,
+          author: request.principal.name ?? ""
         }));
       } catch (error) {
         if (error instanceof DirectorAgentError) {
-          const statusCode = ["AGENT_MESSAGE_EMPTY", "AGENT_PHOTO_INVALID", "AGENT_FILE_INVALID"].includes(error.code) ? 400 : 503;
+          const statusCode = ["AGENT_MESSAGE_EMPTY", "AGENT_PHOTO_INVALID", "AGENT_FILE_INVALID", "AGENT_UNKNOWN"].includes(error.code) ? 400 : 503;
           return reply.code(statusCode).send({ error: error.message, details: { code: error.code, ...error.details } });
         }
         return sendDomainError(reply, "Director agent failed.", error);
@@ -3357,6 +3389,9 @@ function shouldAuditRateLimit(auditedKeys, key, timeWindow) {
 // What a person signed in with a temporary password may reach: changing it,
 // signing out, who they are, and the company's name for the page.
 const PASSWORD_CHANGE_ROUTES = new Set(["POST /api/auth/password", "POST /api/auth/logout", "GET /api/auth/me", "GET /api/company"]);
+// What a direction account without two-step sign-in may still reach: setting
+// it up, its own password, and signing out.
+const TWO_FACTOR_SETUP_ROUTES = new Set([...PASSWORD_CHANGE_ROUTES, "GET /api/auth/two-factor", "POST /api/auth/two-factor/setup", "POST /api/auth/two-factor/enable"]);
 
 function routeIdentifier(request) {
   return request.routeOptions?.url ?? request.url;

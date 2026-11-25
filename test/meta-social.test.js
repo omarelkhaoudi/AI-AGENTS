@@ -165,6 +165,30 @@ test("a refused reply sends nothing, and without Meta's keys an approved one say
   assert.match(result.reply.error, /pas encore reliés/);
 });
 
+// Law 09-08: the first private answer to a person tells who processes their
+// data and where to exercise their rights; the following ones do not repeat it,
+// a public comment never carries it, and a refused answer did not count.
+test("the first private answer to a person carries the 09-08 notice, once", async () => {
+  const { social, repository } = service();
+  const notice = /Loi 09-08 : H KIDS traite vos données .* hkidsmaroc@gmail\.com\./;
+  const [first] = await social.receive(instagramMessage("Bonjour", "mid.a"));
+  const refused = await social.proposeReply({ itemId: first.id, text: "Bonjour !", by: "community_manager" });
+  assert.match(refused.reply.text, notice);
+  assert.match(refused.approval.reason, notice, "the direction sees it before approving");
+  await social.decideReply(await repository.rejectApproval(refused.approval.id, { approverId: "hiba" }));
+
+  const again = await social.proposeReply({ itemId: first.id, text: "Bonjour, que cherchez-vous ?", by: "community_manager" });
+  assert.match(again.reply.text, notice, "the refused one never reached them");
+  await social.decideReply(await repository.approveApproval(again.approval.id, { approverId: "hiba" }));
+
+  const [second] = await social.receive(instagramMessage("Et le prix ?", "mid.b"));
+  const later = await social.proposeReply({ itemId: second.id, text: "3 000 DH.", by: "community_manager" });
+  assert.equal(later.reply.text, "3 000 DH.");
+
+  const [other] = await social.receive(instagramMessage("Salam", "mid.c", "igsid-77"));
+  assert.match((await social.proposeReply({ itemId: other.id, text: "Salam !", by: "community_manager" })).reply.text, notice);
+});
+
 test("the CM qualifies a prospect and hands it to the Commercial, who sees it in its news", async () => {
   const { social, teamBook } = service();
   const [item] = await social.receive(instagramMessage("Bonjour, je veux un lit cabane pour 2 enfants à Casablanca"));
@@ -256,5 +280,5 @@ test("the server: Meta's webhook is signed, and approving the reply in « À val
   const approved = await inject({ method: "POST", url: `/api/approvals/${approval.id}/approve`, payload: {} });
   assert.equal(approved.statusCode, 200, approved.body);
   assert.equal(JSON.parse(approved.body).socialReply.reply.status, "envoyee");
-  assert.equal(graph.calls.at(-1).body.message.text, "Bonjour ! Pour quelles dimensions ?");
+  assert.match(graph.calls.at(-1).body.message.text, /^Bonjour ! Pour quelles dimensions \?\n\nLoi 09-08 : /, "the first private answer carries the 09-08 notice");
 });

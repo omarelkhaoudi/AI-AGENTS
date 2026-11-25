@@ -618,6 +618,7 @@ function drawLogo(w) {
 function drawFooter(w) {
   w.text(HKIDS_FIXED_IDENTITY.footerMention, L, 792, { size: 6.5, color: COLORS.gray });
   w.text(HKIDS_FIXED_IDENTITY.legalLine, L, 804, { size: 5.7, color: COLORS.gray });
+  w.text(HKIDS_FIXED_IDENTITY.privacyMention, L, 815, { size: 5.4, color: COLORS.gray });
 }
 
 function wrapText(value, font, size, width) {

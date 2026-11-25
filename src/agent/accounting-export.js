@@ -30,6 +30,7 @@ export const DEFAULT_ACCOUNTS = Object.freeze({
     salaire: Object.freeze(["6171", "Rémunérations du personnel"]),
     loyer: Object.freeze(["6131", "Locations et charges locatives"]),
     transport: Object.freeze(["6143", "Transports"]),
+    publicite: Object.freeze(["6144", "Publicité, publications et relations publiques"]),
     charges: Object.freeze(["6125", "Achats non stockés de matières et fournitures"]),
     impots_taxes: Object.freeze(["6165", "Impôts et taxes"]),
     autre_sortie: Object.freeze(["6181", "Charges d'exploitation diverses"])

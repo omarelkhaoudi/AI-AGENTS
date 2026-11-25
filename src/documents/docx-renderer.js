@@ -134,7 +134,8 @@ function createDocumentXml(document) {
     p(""),
     table(totals),
     ...paymentLines,
-    p(HKIDS_FIXED_IDENTITY.footerMention, { size: 17 })
+    p(HKIDS_FIXED_IDENTITY.footerMention, { size: 17 }),
+    p(HKIDS_FIXED_IDENTITY.privacyMention, { size: 14 })
   ].join("");
 
   return wrapDocument(body);
@@ -169,7 +170,8 @@ function createReceiptBody(document) {
     p("POUR ACQUIT", { bold: true }),
     p("Reçu par H KIDS — Nom, signature et cachet :"),
     p(`Versé par le client — Nom : ${document.client.name} — Signature :`),
-    p(HKIDS_FIXED_IDENTITY.footerMention, { size: 17 })
+    p(HKIDS_FIXED_IDENTITY.footerMention, { size: 17 }),
+    p(HKIDS_FIXED_IDENTITY.privacyMention, { size: 14 })
   ].join("");
 }
 
@@ -205,6 +207,7 @@ function purchaseOrderBody(document, { headers, rows, totals, objectLine, noteLi
     p("Pour H KIDS — Nom, signature et cachet :"),
     p(`Le client — Nom : ${document.client.name} — Signature :`),
     p(HKIDS_FIXED_IDENTITY.footerMention, { size: 17 }),
+    p(HKIDS_FIXED_IDENTITY.privacyMention, { size: 14 }),
     p(HKIDS_FIXED_IDENTITY.legalLine, { size: 15 })
   ].join("");
 }
@@ -258,7 +261,8 @@ function createQuoteBody(document) {
     p(`Moyen de paiement : ${view.paymentMethod}`),
     p(view.paymentTerms),
     scheduleBlock,
-    p(view.footerMention, { size: 17 })
+    p(view.footerMention, { size: 17 }),
+    p(view.privacyMention, { size: 14 })
   ].join("");
 }
 
@@ -298,7 +302,8 @@ function createGoodsOnlyDeliveryNoteBody(document) {
     // Written exactly as the document carries it: a delivery nobody has
     // scheduled reads "Date de livraison : à définir".
     p(document.deliveryDateText, { bold: true }),
-    p(HKIDS_FIXED_IDENTITY.footerMention, { size: 17 })
+    p(HKIDS_FIXED_IDENTITY.footerMention, { size: 17 }),
+    p(HKIDS_FIXED_IDENTITY.privacyMention, { size: 14 })
   ].join("");
 }
 

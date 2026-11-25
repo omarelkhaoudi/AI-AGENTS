@@ -14,7 +14,7 @@ async function appWith(t, { mustChangePassword = false } = {}) {
   const repository = new InMemoryRepository();
   repository.upsertUser({ id: "sara", name: "Sara", email: "sara@exemple.ma", role: "leader", metadata: mustChangePassword ? { mustChangePassword: true } : {} });
   repository.setUserPassword("sara", await hashPassword(TEMPORARY));
-  const app = buildApi({ repository, security: createSecurityConfig({ NODE_ENV: "production", RATE_LIMIT_LOGIN_MAX: "100" }) });
+  const app = buildApi({ repository, security: createSecurityConfig({ NODE_ENV: "production", DIRECTION_TWO_FACTOR: "off", RATE_LIMIT_LOGIN_MAX: "100" }) });
   t.after(() => app.close());
   return { app, repository };
 }

@@ -18,6 +18,7 @@ export const REPORT_AXES = Object.freeze({ produit: "Produit", canal: "Canal", c
 export const UNSET = "non renseigné";
 export const UNLINKED = "non rattaché";
 const PAID_CATEGORIES = Object.freeze(["acompte_client", "solde_client", "vente_comptant"]);
+export const AD_CATEGORY = "publicite";
 const NETWORK_CHANNELS = Object.freeze({ instagram: "instagram", facebook: "facebook", messenger: "facebook", whatsapp: "whatsapp" });
 
 const round = (value) => Math.round(value * 100) / 100;
@@ -67,11 +68,16 @@ function figures(issued, state, entries, prospects, { from, to, today, days }) {
     facts.push({ quote, kind: "paid", amount: entry.amount, ref: `caisse n° ${entry.number ?? "?"}` });
   }
   const leads = prospects.filter((prospect) => inPeriod(dayOf(prospect.createdAt)));
-  return { pipeline, quotes, facts, leads };
+  // What advertising cost: the ad expenses of the cash book, each on the
+  // campaign the direction named, or « non renseigné ».
+  const spend = entries
+    .filter((entry) => !entry.cancelled && !entry.confidential && entry.kind === "sortie" && entry.category === AD_CATEGORY && inPeriod(entry.day))
+    .map((entry) => ({ campaign: String(entry.campaign ?? "").trim(), amount: Number(entry.amount) || 0, ref: `caisse n° ${entry.number ?? "?"}` }));
+  return { pipeline, quotes, facts, leads, spend };
 }
 
 function emptyRow(key, label) {
-  return { key, label, prospects: 0, issued: { count: 0, totalTtc: 0, refs: [] }, signed: { count: 0, totalTtc: 0, refs: [] }, lost: { count: 0, totalTtc: 0, refs: [] }, invoiced: { totalTtc: 0, refs: [] }, paid: { total: 0, refs: [] }, unknownAmounts: [] };
+  return { key, label, prospects: 0, issued: { count: 0, totalTtc: 0, refs: [] }, signed: { count: 0, totalTtc: 0, refs: [] }, lost: { count: 0, totalTtc: 0, refs: [] }, invoiced: { totalTtc: 0, refs: [] }, paid: { total: 0, refs: [] }, adSpend: { total: 0, refs: [] }, unknownAmounts: [] };
 }
 
 function add(row, fact) {
@@ -88,7 +94,15 @@ function add(row, fact) {
 
 function finish(row) {
   // Transformation: the quotes of the period already ordered, among those issued.
-  return Object.freeze({ ...row, conversion: row.issued.count > 0 ? Math.round((row.converted ?? 0) / row.issued.count * 100) : null });
+  // The cost of acquisition: the ad spend per prospect and per order signed,
+  // only where there is spend and something to divide it by.
+  const spent = row.adSpend.total;
+  return Object.freeze({
+    ...row,
+    conversion: row.issued.count > 0 ? Math.round((row.converted ?? 0) / row.issued.count * 100) : null,
+    costPerLead: spent > 0 && row.prospects > 0 ? round(spent / row.prospects) : null,
+    costPerSale: spent > 0 && row.signed.count > 0 ? round(spent / row.signed.count) : null
+  });
 }
 
 // The value of a quote along an axis: [key, label].
@@ -106,11 +120,19 @@ function axisValue(axis, quote) {
   return [UNSET, UNSET];
 }
 
+function addSpend(row, spend) {
+  for (const item of spend) {
+    row.adSpend.total = round(row.adSpend.total + item.amount);
+    row.adSpend.refs.push(item.ref);
+  }
+}
+
 function totalsOf(found) {
   const row = emptyRow("total", "Total");
   row.converted = found.pipeline.filter((quote) => found.facts.some((fact) => fact.kind === "issued" && fact.quote === quote.number) && quote.order).length;
   for (const fact of found.facts) add(row, fact);
   row.prospects = found.leads.length;
+  addSpend(row, found.spend);
   return finish(row);
 }
 
@@ -148,6 +170,11 @@ export function commercialReport({ issued = [], followUps = { quotes: {} }, entr
       for (const lead of found.leads) {
         const channel = NETWORK_CHANNELS[String(lead.reseau ?? "").toLowerCase()];
         rowFor(channel ? [channel, SALE_CHANNELS[channel]] : [UNSET, UNSET]).prospects += 1;
+      }
+    }
+    if (axis === "campagne") {
+      for (const item of found.spend) {
+        addSpend(rowFor(item.campaign ? [keyOf(item.campaign), item.campaign] : [UNSET, UNSET]), [item]);
       }
     }
     if (axis === "produit") {
@@ -194,6 +221,9 @@ export function describeRow(row) {
     `CA commandé ${dh(row.signed.totalTtc)} (${row.signed.count} BC)`,
     `CA facturé ${dh(row.invoiced.totalTtc)}`,
     `CA encaissé ${dh(row.paid.total)}`,
-    row.conversion === null ? "" : `transformation ${row.conversion} %`
+    row.conversion === null ? "" : `transformation ${row.conversion} %`,
+    row.adSpend?.total > 0 ? `dépense publicitaire ${dh(row.adSpend.total)}` : "",
+    row.costPerLead === null || row.costPerLead === undefined ? "" : `coût par prospect ${dh(row.costPerLead)}`,
+    row.costPerSale === null || row.costPerSale === undefined ? "" : `coût par commande ${dh(row.costPerSale)}`
   ].filter(Boolean).join(", ");
 }

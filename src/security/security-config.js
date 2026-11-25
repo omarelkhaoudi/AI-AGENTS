@@ -34,6 +34,10 @@ export function createSecurityConfig(env = process.env) {
     // what lets the limiter tell one visitor from another.
     trustProxy: env.TRUST_PROXY === "true",
     sessionDays: normalizePositiveInteger(env.SESSION_DAYS, 30),
+    // The direction's accounts open the cockpit only with two-step sign-in on.
+    // Required by default in production; DIRECTION_TWO_FACTOR=required or off
+    // decides it anywhere.
+    directionTwoFactor: env.DIRECTION_TWO_FACTOR ? env.DIRECTION_TWO_FACTOR === "required" : environment === "production",
     bodyLimitBytes: normalizePositiveInteger(env.API_BODY_LIMIT_BYTES, DEFAULT_BODY_LIMIT_BYTES),
     rateLimits: Object.freeze({
       read: normalizeRateLimit(env.RATE_LIMIT_READ_MAX, DEFAULT_RATE_LIMITS.read),

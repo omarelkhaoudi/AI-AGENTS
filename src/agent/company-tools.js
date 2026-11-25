@@ -42,12 +42,13 @@ export const CASH_RECORD_TOOL = Object.freeze({
       tiers: { type: "string", description: "Qui a payé ou a été payé (client, fournisseur, salarié) ; chaîne vide si non précisé." },
       reference_devis: { type: "string", description: "Numéro du devis de la vente concernée ; chaîne vide sinon." },
       reference_bc: { type: "string", description: "Numéro du bon de commande concerné ; chaîne vide sinon." },
+      campagne: { type: "string", description: "Pour une dépense publicite : la campagne qu'elle paie, telle que la direction la nomme (« rentrée 2026 », « Instagram lits cabane ») ; chaîne vide sinon. Ne jamais l'inventer." },
       date: { type: "string", description: "JJ/MM/AAAA seulement si le mouvement n'a pas eu lieu aujourd'hui ; chaîne vide sinon." },
       annonce_par: { type: "string", description: "Qui l'a annoncé (« Hiba », « Omar », « la direction »)." },
       confirme_doublon: { type: "boolean", description: "true seulement si la mission dit clairement que c'est un second paiement identique le même jour." },
       confidentiel: { type: "boolean", description: "true si la direction dit que cette dépense est confidentielle (un salaire l'est toujours) : seule la direction en verra le détail." }
     },
-    required: ["sens", "montant", "categorie", "libelle", "moyen", "tiers", "reference_devis", "reference_bc", "date", "annonce_par", "confirme_doublon", "confidentiel"]
+    required: ["sens", "montant", "categorie", "libelle", "moyen", "tiers", "reference_devis", "reference_bc", "campagne", "date", "annonce_par", "confirme_doublon", "confidentiel"]
   }
 });
 
@@ -283,7 +284,10 @@ export async function commercialAnalysisFor(args, { books, documentService, soci
       ca_commande: `${formatDh(t.signed.totalTtc)}, ${t.signed.count} BC, ${variation(t.signed.totalTtc, p.signed.totalTtc)} (avant : ${formatDh(p.signed.totalTtc)}) — ${t.signed.refs.join(", ") || "aucun"}`,
       ca_facture: `${formatDh(t.invoiced.totalTtc)}, ${variation(t.invoiced.totalTtc, p.invoiced.totalTtc)} (avant : ${formatDh(p.invoiced.totalTtc)}) — ${t.invoiced.refs.join(", ") || "aucun"}`,
       ca_encaisse: `${formatDh(t.paid.total)}, ${variation(t.paid.total, p.paid.total)} (avant : ${formatDh(p.paid.total)})`,
-      devis_perdus: `${t.lost.count} pour ${formatDh(t.lost.totalTtc)}`
+      devis_perdus: `${t.lost.count} pour ${formatDh(t.lost.totalTtc)}`,
+      depense_publicitaire: t.adSpend.total > 0
+        ? `${formatDh(t.adSpend.total)} (avant : ${formatDh(p.adSpend.total)})${t.costPerLead === null ? "" : `, coût par prospect ${formatDh(t.costPerLead)}`}${t.costPerSale === null ? "" : `, coût par commande ${formatDh(t.costPerSale)}`}`
+        : "aucune dépense de publicité au journal de caisse sur la période (catégorie publicite, avec sa campagne)"
     },
     objectif: report.objective ? `${formatDh(report.objective.target)} de CA commandé pour ${salesDay(`${report.objective.month}-01`).slice(3)} : ${formatDh(report.objective.achieved)} atteints, soit ${report.objective.percent} %` : "aucun objectif fixé pour cette période (objectif_commercial quand la direction en donne un)",
     analyse: Object.fromEntries(axes.map((axis) => [axis, report.axes[axis].map((row) => `${row.label} : ${describeRow(row)}${row.signed.refs.length > 0 ? ` [${row.signed.refs.join(", ")}]` : ""}`)])),
@@ -525,6 +529,7 @@ export async function recordCash(args, { books, documentService, confidential = 
       party: text(args.tiers),
       quoteNumber: text(args.reference_devis),
       orderNumber: text(args.reference_bc),
+      campaign: text(args.campagne),
       day: text(args.date),
       announcedBy: text(args.annonce_par) || "direction",
       by,

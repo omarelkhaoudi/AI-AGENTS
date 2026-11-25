@@ -219,6 +219,7 @@ export async function renderQuotePdf(quote, {
   for (const current of pdf.getPages()) {
     current.drawText(view.footerMention, { x: MARGIN, y: 62, size: 6.6, font, color: MUTED });
     current.drawText(view.issuer.legalLine, { x: MARGIN, y: 50, size: 5.6, font, color: MUTED });
+    current.drawText(view.privacyMention, { x: MARGIN, y: 39, size: 5.4, font, color: MUTED });
   }
 
   return Buffer.from(await pdf.save({ useObjectStreams: false }));

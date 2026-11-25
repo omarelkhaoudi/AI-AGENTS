@@ -689,7 +689,7 @@ function instructions(today, briefing = []) {
     "Tâches et clôture (chaque anomalie est une tâche, même numéro) : le résumé des anomalies t'est donné à chaque message ; dans tout point de situation, dis ce qui est ouvert, grave, sans responsable, en retard, et résolu à confirmer. « Assigne l'anomalie 4 à la production, Samir, pour le 25/11 » → assigner_tache (la personne est prévenue sur WhatsApp). N'assigne jamais de toi-même : propose (à qui, pour quand) et laisse la direction décider. Un fait annoncé (« Samir s'en occupe », « c'est réglé, le chevet est remplacé ») → suivre_tache. Une tâche résolue n'est clôturée que par la direction : dans le cockpit (vue Amélioration) ou en répondant « clôture tâche N » sur WhatsApp ; ne dis jamais qu'elle est close avant.",
     "",
     "Bilan commercial et relances : « fais le bilan commercial du mois », « quels devis relancer ? », « où en sont les ventes » → bilan_commercial (chiffres calculés sur les documents du cockpit : cite les numéros, ne recalcule rien, ne complète jamais avec un chiffre supposé). « J'ai relancé Mme Alami pour le devis 170, elle réfléchit », « le client du devis 172 a refusé, trop cher » → enregistrer_relance toi-même (perdu avec son motif pour un refus). Un devis ouvert sans nouvelles depuis 5 jours est à relancer : le responsable commercial est prévenu sur WhatsApp, et la direction au bout de 10 jours ; pour rédiger les messages de relance, confie-les au commercial.",
-    "Analyse commerciale : « quels produits se vendent le mieux », « d'où viennent mes clients », « pourquoi les ventes ont baissé », « où en est l'objectif » → analyse_commerciale (prospects, CA commandé, facturé et encaissé séparés, par produit, canal, client, vendeur ou campagne, comparés à la période précédente et à l'objectif). « Le devis 170 vient d'Instagram, vendu par Nadia » → qualifier_devis ; « objectif de 100 000 DH en décembre » → objectif_commercial. Ne devine jamais un canal ni une campagne.",
+    "Analyse commerciale : « quels produits se vendent le mieux », « d'où viennent mes clients », « pourquoi les ventes ont baissé », « où en est l'objectif » → analyse_commerciale (prospects, CA commandé, facturé et encaissé séparés, par produit, canal, client, vendeur ou campagne, comparés à la période précédente et à l'objectif, avec la dépense publicitaire de la caisse et le coût par prospect et par commande). Une dépense de publicité annoncée (« 1 500 DH de pub Instagram pour la campagne rentrée ») s'enregistre en catégorie publicite avec sa campagne. « Le devis 170 vient d'Instagram, vendu par Nadia » → qualifier_devis ; « objectif de 100 000 DH en décembre » → objectif_commercial. Ne devine jamais un canal ni une campagne.",
     "",
     "Bureau d'études : Production coordonne deux agents IA distincts via deleguer_bureau_etudes : dessinateur_2d3d (plans et fiche technique à valider) et dessinateur_methodes (dossier de fabrication depuis la fiche validée, opérations nécessaires uniquement). Les demandes de fabrication, DXF, débit, calepinage et G-code sont confiées à production, qui rassemble les livrables par BC et version. Production présente les DXF à la direction avec leurs liens. Aucun G-code avant la validation humaine de tous les DXF courants ; paramètres réels CNC, post-processeur qualifié, simulation et validation du responsable atelier requis. Toute information manquante se demande avant génération. Tu ne valides jamais les fiches ou fichiers. Les dessinateurs sont des agents IA de l'ERP, pas des personnes : ne demande jamais à la direction de désigner un dessinateur ; les personnes qui valident sont la direction (fiche technique, DXF) et le responsable atelier (G-code).",
     "",
@@ -1004,9 +1004,19 @@ export function createDirectorAgent({
     // confidential expenses; the direction on WhatsApp may.
     // channel: "whatsapp" when the direction writes on the company's number;
     // what waits for a validation is then validated there, by a word.
-    async chat({ message, photos = [], files = [], conversationId = null, userId = null, confidential = true, channel = "cockpit" } = {}) {
+    // agent: a specialist the person writes to directly (CDC section 2),
+    // instead of the Director; null or "director" for the Director.
+    async chat({ message, photos = [], files = [], conversationId = null, userId = null, confidential = true, channel = "cockpit", agent = null, author = "" } = {}) {
+      const direct = agent && agent !== "director" ? String(agent) : null;
+      if (direct && !SPECIALISTS[direct]) {
+        throw new DirectorAgentError(`Agent inconnu : ${direct}.`, "AGENT_UNKNOWN");
+      }
+      if (direct && ((Array.isArray(photos) && photos.length > 0) || (Array.isArray(files) && files.length > 0))) {
+        throw new DirectorAgentError("Les photos et les documents s'envoient au Director, qui les transmet à l'agent concerné.", "AGENT_FILE_INVALID");
+      }
       const stored = conversationId ? await conversationStore.get(conversationId) : null;
-      const previous = stored && stored.userId === (userId ?? null) ? stored : null;
+      // A conversation goes on with the one it was started with.
+      const previous = stored && stored.userId === (userId ?? null) && (stored.agent ?? null) === direct ? stored : null;
       const id = previous ? conversationId : randomUUID();
       const newPhotos = checkPhotos(photos);
       const newFiles = checkFiles(files, (previous?.fileCount ?? 0) + 1);
@@ -1040,6 +1050,24 @@ export function createDirectorAgent({
 
       const outcome = freshOutcome(conversationPhotos);
       const context = baseContext(outcome, userId, confidential !== false);
+      if (direct) {
+        const reply = await directMessage(direct, typed, previous?.items ?? [], { context, author });
+        items.push({ role: "assistant", content: reply });
+        await conversationStore.save(id, { userId: userId ?? null, agent: direct, updatedAt: clock().toISOString(), items: recentTurns(items), photos: [], fileCount: 0 });
+        return Object.freeze({
+          conversationId: id,
+          agent: Object.freeze({ id: direct, label: SPECIALISTS[direct].label }),
+          reply,
+          documents: Object.freeze(outcome.documents),
+          directorResponse: null,
+          agentRuns: Object.freeze(outcome.agentRuns),
+          messages: Object.freeze(outcome.messages),
+          foundDocuments: Object.freeze(outcome.found),
+          exports: Object.freeze(outcome.exports),
+          plan: null,
+          alerts: outcome.alerts
+        });
+      }
       const briefing = [...await directorBriefing(context), await activeTeamNote(agentConfig), ...(channel === "whatsapp" ? [WHATSAPP_CHANNEL_NOTE] : []), darijaAmountNote(typed)].filter(Boolean);
       let reply = "";
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
@@ -1100,6 +1128,30 @@ export function createDirectorAgent({
       });
     }
   });
+}
+
+// A message written straight to one agent: it answers with its own tools,
+// settings and rights, as on a mission from the Director, and is told who
+// wrote and what was said before in this conversation.
+async function directMessage(agentId, typed, earlier, { context, author }) {
+  const said = (item) => {
+    if (typeof item?.content === "string") return item.content;
+    if (Array.isArray(item?.content)) return item.content.map((part) => part?.text ?? "").filter(Boolean).join(" ");
+    return "";
+  };
+  const history = earlier
+    .filter((item) => item?.role === "user" || item?.role === "assistant")
+    .slice(-6)
+    .map((item) => `${item.role === "user" ? author || "Direction" : "Toi"} : ${said(item).slice(0, 1200)}`)
+    .filter((line) => !/ : $/.test(line));
+  const mission = [
+    `${author ? `${author} t'écrit` : "La direction t'écrit"} directement, sans passer par le Director.`,
+    ...(history.length > 0 ? ["Ce que vous vous êtes dit juste avant :", ...history] : []),
+    `Message : ${typed}`,
+    "Réponds-lui directement, dans ton métier, avec tes outils et tes droits habituels. Ce qui revient à un autre responsable ou demande une décision de la direction, dis-le et propose de passer par le Director ; ne génère aucun document définitif et n'écris à aucun client sans sa validation."
+  ].join("\n");
+  const run = await runAgent(agentId, mission, context);
+  return run.answer || "Je n'ai pas pu formuler de réponse. Pouvez-vous reformuler ?";
 }
 
 // The cockpit sends each photo as a JPEG or PNG data URL, the two formats a

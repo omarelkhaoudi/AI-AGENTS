@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { InMemoryRepository } from "../src/index.js";
-import { PILOT_COMPANY, brandPage, brandPayload, brandText, companyFileTag, loadCompanyProfile, parsePaymentPlans } from "../src/company/company-profile.js";
+import { PILOT_COMPANY, brandPage, brandPayload, brandText, companyFileTag, loadCompanyProfile, parsePaymentPlans, privacyMention } from "../src/company/company-profile.js";
 import { PLANS, aiBudgetOf, assertSeatAvailable, planFromEnv } from "../src/company/plans.js";
 import { BLANK_LOGO_PATH, HKIDS_FIXED_IDENTITY, HKIDS_LOGO_PATH, companyLogoPath } from "../src/documents/hkids-template.js";
 import { buildAuthenticatedApi } from "../test-support/api-auth.js";
@@ -103,4 +103,17 @@ test("the cockpit says which company and which subscription it runs", async (t) 
   assert.equal(company.plan.label, "Business");
   assert.equal(company.plan.maxUsers, 10);
   assert.equal(company.plan.usersUsed, 0, "the test signs in with a token: no password account yet");
+});
+
+// Law 09-08: who processes the data, what for and where to exercise one's
+// rights. The CNDP number and the hosting country appear only once they are
+// set, never as a blank to fill.
+test("the 09-08 notice names the company and its address, and the CNDP number only once it is set", () => {
+  const bare = privacyMention(PILOT_COMPANY, {});
+  assert.equal(bare, "Loi 09-08 : H KIDS traite vos données pour votre commande ; droits d'accès, de rectification et d'opposition : hkidsmaroc@gmail.com.");
+  const full = privacyMention(PILOT_COMPANY, { CNDP_NUMBER: " D-123/2026 ", DATA_HOSTING_COUNTRY: "France" });
+  assert.match(full, /\(hébergement : France\)/);
+  assert.match(full, /Notifié à la CNDP, n° D-123\/2026\.$/);
+  const other = loadCompanyProfile({ COMPANY_NAME: "Atelier Exemple" });
+  assert.match(privacyMention(other, {}), /^Loi 09-08 : Atelier Exemple traite .* d'opposition auprès de Atelier Exemple\.$/, "no e-mail: the company itself");
 });

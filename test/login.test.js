@@ -13,7 +13,7 @@ async function signedUpApp(t, env = {}) {
   const repository = new InMemoryRepository();
   repository.upsertUser({ id: "hiba", name: "Hiba", email: "hiba@exemple.ma", role: "leader" });
   repository.setUserPassword("hiba", await hashPassword(PASSWORD));
-  const app = buildApi({ repository, security: createSecurityConfig({ NODE_ENV: "production", ...env }) });
+  const app = buildApi({ repository, security: createSecurityConfig({ NODE_ENV: "production", DIRECTION_TWO_FACTOR: "off", ...env }) });
   t.after(() => app.close());
   return { app, repository };
 }

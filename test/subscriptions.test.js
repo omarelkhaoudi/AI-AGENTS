@@ -31,7 +31,7 @@ async function setup(t, { day = "2026-12-01", saasOperator, suspended = false } 
   const app = buildApi({
     repository, clock, subscriptionBook, saasOperator, suspended,
     documentService: new HkidsDocumentService({ repository, outputDir: dir }),
-    security: createSecurityConfig({ NODE_ENV: "production", RATE_LIMIT_LOGIN_MAX: "100" })
+    security: createSecurityConfig({ NODE_ENV: "production", DIRECTION_TWO_FACTOR: "off", RATE_LIMIT_LOGIN_MAX: "100" })
   });
   t.after(() => app.close());
   const tokenOf = async (id) => JSON.parse((await app.inject({ method: "POST", url: "/api/auth/login", payload: { email: `${id}@exemple.ma`, password: CHOSEN } })).body).token;

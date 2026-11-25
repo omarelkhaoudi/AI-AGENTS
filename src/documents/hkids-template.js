@@ -1,7 +1,7 @@
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HKIDS_DOCUMENT_TYPE_LABELS, HKIDS_DOCUMENT_TYPES } from "./document-schema.js";
-import { COMPANY, PILOT_COMPANY } from "../company/company-profile.js";
+import { COMPANY, PILOT_COMPANY, PRIVACY_MENTION } from "../company/company-profile.js";
 
 const PROJECT_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
@@ -35,6 +35,7 @@ export const HKIDS_FIXED_IDENTITY = Object.freeze({
   phone: COMPANY.phone,
   legalLine: COMPANY.legalLine,
   footerMention: COMPANY.footerMention,
+  privacyMention: PRIVACY_MENTION,
   deliveryNoteColumns: Object.freeze(["Désignation", "Qté", "Prix unitaire HT", "Montant HT"]),
   invoiceColumns: Object.freeze(["Désignation", "Qté", "Unité", "PU HT", "TVA", "PU TTC", "Total HT", "Total TTC"]),
   columns: Object.freeze(["Désignation", "Qté", "Prix unitaire HT", "Montant HT"])

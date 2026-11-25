@@ -100,6 +100,20 @@ export function loadCompanyProfile(env = process.env) {
 
 export const COMPANY = loadCompanyProfile();
 
+// The notice the law 09-08 asks for wherever personal data is collected: who
+// processes it, what for, and where to exercise one's rights. The CNDP number
+// is printed only once the company has one (CNDP_NUMBER), never a blank to fill;
+// the hosting country (DATA_HOSTING_COUNTRY) only when the instance states it.
+export function privacyMention(company = COMPANY, env = process.env) {
+  const setting = (key) => (typeof env[key] === "string" ? env[key].trim().slice(0, 60) : "");
+  const cndp = setting("CNDP_NUMBER");
+  const hosting = setting("DATA_HOSTING_COUNTRY");
+  const contact = company.email ? ` : ${company.email}` : ` auprès de ${company.name}`;
+  return `Loi 09-08 : ${company.name} traite vos données pour votre commande${hosting ? ` (hébergement : ${hosting})` : ""} ; droits d'accès, de rectification et d'opposition${contact}.${cndp ? ` Notifié à la CNDP, n° ${cndp}.` : ""}`;
+}
+
+export const PRIVACY_MENTION = privacyMention();
+
 // The company's tag in the names of its document files (« devis_HKIDS_170_… »).
 // The pilot keeps HKIDS, so every file it already issued is still found;
 // another company gets its short name, in capitals and letters only.

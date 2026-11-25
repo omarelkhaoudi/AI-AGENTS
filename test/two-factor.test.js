@@ -34,11 +34,11 @@ test("each recovery code works once", () => {
   assert.equal(useRecoveryCode(left, codes[3]), null);
 });
 
-async function signedUpApp(t, now) {
+async function signedUpApp(t, now, env = { DIRECTION_TWO_FACTOR: "off" }) {
   const repository = new InMemoryRepository();
   repository.upsertUser({ id: "hiba", name: "Hiba", email: "hiba@exemple.ma", role: "leader" });
   repository.setUserPassword("hiba", await hashPassword(PASSWORD));
-  const app = buildApi({ repository, clock: () => now.value, security: createSecurityConfig({ NODE_ENV: "production", RATE_LIMIT_LOGIN_MAX: "100" }) });
+  const app = buildApi({ repository, clock: () => now.value, security: createSecurityConfig({ NODE_ENV: "production", RATE_LIMIT_LOGIN_MAX: "100", ...env }) });
   t.after(() => app.close());
   return { app, repository };
 }
@@ -102,4 +102,35 @@ test("turning it off takes the password and a code", async (t) => {
   assert.equal((await call(app, token, "POST", "/api/auth/two-factor/disable", { password: "example-mauvais-mdp", code })).statusCode, 400);
   assert.equal((await call(app, token, "POST", "/api/auth/two-factor/disable", { password: PASSWORD, code })).statusCode, 200);
   assert.equal((await login(app, { email: "hiba@exemple.ma", password: PASSWORD })).statusCode, 200, "the password alone opens again");
+});
+
+// In production the direction's account opens nothing but the setting up of
+// two-step sign-in until it is on, and cannot turn it off. Another role, and
+// an instance that says DIRECTION_TWO_FACTOR=off, are not held.
+test("the direction must turn two-step sign-in on before anything opens, and cannot turn it off", async (t) => {
+  const now = { value: new Date("2026-11-14T09:00:00Z") };
+  const { app, repository } = await signedUpApp(t, now, {});
+  repository.upsertUser({ id: "sara", name: "Sara", email: "sara@exemple.ma", role: "operator" });
+  repository.setUserPassword("sara", await hashPassword(PASSWORD));
+
+  const signedIn = JSON.parse((await login(app, { email: "hiba@exemple.ma", password: PASSWORD })).body);
+  assert.equal(signedIn.mustEnableTwoFactor, true);
+  const token = signedIn.token;
+  assert.equal(JSON.parse((await call(app, token, "GET", "/api/auth/me")).body).mustEnableTwoFactor, true);
+  const held = await call(app, token, "GET", "/api/cash");
+  assert.equal(held.statusCode, 403);
+  assert.equal(JSON.parse(held.body).details.code, "TWO_FACTOR_SETUP_REQUIRED");
+
+  const secret = JSON.parse((await call(app, token, "POST", "/api/auth/two-factor/setup")).body).secret.replace(/ /g, "");
+  assert.equal((await call(app, token, "POST", "/api/auth/two-factor/enable", { code: totpCode(secret, currentStep(now.value)) })).statusCode, 200);
+  assert.equal(JSON.parse((await call(app, token, "GET", "/api/auth/me")).body).mustEnableTwoFactor, false);
+  assert.notEqual((await call(app, token, "GET", "/api/cash")).statusCode, 403, "the cockpit opens");
+
+  now.value = new Date(now.value.getTime() + 30_000);
+  const refused = await call(app, token, "POST", "/api/auth/two-factor/disable", { password: PASSWORD, code: totpCode(secret, currentStep(now.value)) });
+  assert.equal(refused.statusCode, 403);
+  assert.equal(JSON.parse(refused.body).details.code, "TWO_FACTOR_REQUIRED_FOR_DIRECTION");
+
+  const operator = JSON.parse((await login(app, { email: "sara@exemple.ma", password: PASSWORD })).body);
+  assert.equal(operator.mustEnableTwoFactor, false, "the rule is for the direction");
 });

@@ -37,6 +37,7 @@ export const CASH_CATEGORIES = Object.freeze({
     salaire: "Salaires",
     loyer: "Loyer",
     transport: "Transport et livraison",
+    publicite: "Publicité et marketing",
     charges: "Charges (eau, électricité, téléphone…)",
     impots_taxes: "Impôts et taxes",
     autre_sortie: "Autre sortie"
@@ -111,7 +112,7 @@ function createCashBook({ book, receipts, clock, expenseThreshold }) {
     // A line identical to one already in the book that day (same direction,
     // amount and party or sale) is refused unless confirmed: Hiba often tells
     // the same news twice.
-    async record({ kind, amount, label = "", category = "", method = "", party = "", quoteNumber = "", orderNumber = "", day = "", announcedBy = "direction", by = "direction", confirmDuplicate = false, confidential = false }) {
+    async record({ kind, amount, label = "", category = "", method = "", party = "", quoteNumber = "", orderNumber = "", campaign = "", day = "", announcedBy = "direction", by = "direction", confirmDuplicate = false, confidential = false }) {
       if (!Object.hasOwn(CASH_CATEGORIES, kind)) {
         throw new CashBookError("Dire s'il s'agit d'une entrée ou d'une sortie d'argent.", "CASH_KIND_UNKNOWN");
       }
@@ -142,6 +143,10 @@ function createCashBook({ book, receipts, clock, expenseThreshold }) {
         party: text(party),
         quoteNumber: text(quoteNumber),
         orderNumber: text(orderNumber),
+        // The advertising campaign an ad expense paid for, as the direction
+        // names it; the commercial report sets it against what the campaign
+        // brought.
+        campaign: kind === "sortie" ? text(campaign) : "",
         announcedBy: text(announcedBy) || "direction",
         recordedBy: text(by) || "direction",
         at: clock().toISOString(),
@@ -357,6 +362,7 @@ export function describeEntry(entry) {
     party: entry.party,
     quoteNumber: entry.quoteNumber,
     orderNumber: entry.orderNumber,
+    campaign: entry.campaign ?? "",
     announcedBy: entry.announcedBy,
     recordedBy: entry.recordedBy,
     at: entry.at,

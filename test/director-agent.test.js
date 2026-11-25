@@ -242,3 +242,28 @@ test("a long conversation is cut where the direction spoke, never between a reas
   // A conversation saved before the rule, starting on a tool call, is mended.
   assert.equal(recentTurns(items.slice(2, 20))[0].content, "question 1");
 });
+
+// CDC section 2: the direction can write to an agent directly. The Director's
+// model is never called, the agent keeps its own conversation, and a switch of
+// recipient starts a fresh one rather than mixing the two.
+test("a message written directly to an agent reaches it without the Director, and it remembers the exchange", async (t) => {
+  const client = scriptedClient([], [textReply("Trois commandes attendent le bois."), textReply("Oui, la commande la plus ancienne date du 28.")]);
+  const { inject } = await createApi(t, client);
+  const send = async (payload) => inject({ method: "POST", url: "/api/agent/chat", payload });
+
+  const first = await send({ message: "Qu'est-ce qui bloque en atelier ?", agent: "production" });
+  assert.equal(first.statusCode, 200, first.body);
+  const body = JSON.parse(first.body);
+  assert.deepEqual([body.agent.id, body.reply], ["production", "Trois commandes attendent le bois."]);
+  assert.ok(client.calls.every((call) => !call.instructions.startsWith("Tu es le Director IA")), "the Director stays out of it");
+  assert.match(JSON.stringify(client.calls[0]), /directement/);
+
+  const second = await send({ message: "La plus ancienne ?", agent: "production", conversationId: body.conversationId });
+  assert.equal(JSON.parse(second.body).reply, "Oui, la commande la plus ancienne date du 28.");
+  assert.match(JSON.stringify(client.calls.at(-1)), /Qu'est-ce qui bloque en atelier/, "the earlier exchange is given back");
+
+  const unknown = await send({ message: "Bonjour", agent: "astrologue" });
+  assert.equal(unknown.statusCode, 400);
+  const withPhoto = await send({ message: "Regarde", agent: "production", photos: ["data:image/png;base64,iVBORw0KGgo="] });
+  assert.equal(withPhoto.statusCode, 400);
+});

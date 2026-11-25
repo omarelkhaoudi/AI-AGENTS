@@ -87,6 +87,8 @@ export async function renderSignedPdf({ pdfBytes, signaturePng, name, signedAt, 
   }
   const legal = HKIDS_FIXED_IDENTITY.legalLine;
   page.drawText(legal, { x: (PAGE.width - font.widthOfTextAtSize(legal, 6.5)) / 2, y: PAGE.margin - 22, size: 6.5, font, color: MUTED });
+  const privacy = HKIDS_FIXED_IDENTITY.privacyMention;
+  page.drawText(privacy, { x: (PAGE.width - font.widthOfTextAtSize(privacy, 5.6)) / 2, y: PAGE.margin - 31, size: 5.6, font, color: MUTED });
   return Buffer.from(await pdf.save({ useObjectStreams: false }));
 }
 

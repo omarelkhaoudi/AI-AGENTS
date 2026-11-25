@@ -165,6 +165,7 @@ export function createQuotePresentation(quote) {
     installments: Object.freeze(installments),
 
     footerMention: HKIDS_FIXED_IDENTITY.footerMention,
+    privacyMention: HKIDS_FIXED_IDENTITY.privacyMention,
 
     // Everything the quote cannot state, listed so a renderer can show it as
     // absent instead of leaving a gap a reader has to interpret.

@@ -630,7 +630,7 @@ export function createWorkshop({ store, documentService, clock = () => new Date(
     const delivery = current.steps.at(-1);
     const record = (await store.all())[current.number];
     return Object.freeze({
-      company: Object.freeze({ name: HKIDS_FIXED_IDENTITY.companyName, phone: HKIDS_FIXED_IDENTITY.phone, email: HKIDS_FIXED_IDENTITY.email }),
+      company: Object.freeze({ name: HKIDS_FIXED_IDENTITY.companyName, phone: HKIDS_FIXED_IDENTITY.phone, email: HKIDS_FIXED_IDENTITY.email, privacy: HKIDS_FIXED_IDENTITY.privacyMention }),
       order: Object.freeze({ number: current.number, date: current.date, object: current.object, client: current.client }),
       progress: current.progress,
       finished: current.finished,

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { MAX_CAPTION_LENGTH, MAX_COMMENT_REPLY_LENGTH, MAX_MESSAGE_LENGTH, SOCIAL_PLATFORMS, parseMetaWebhook } from "../integrations/meta-social.js";
+import { PRIVACY_MENTION } from "../company/company-profile.js";
 import { instantOfLocalSlot, localSlotOf } from "./publication-calendar.js";
 import { createPublication, markPublicationFailed, markPublicationPublished, prepareAndSubmitPublication, schedulePublication } from "./publication-service.js";
 
@@ -28,8 +29,28 @@ export function isSocialReplyApproval(approval) {
   return typeof approval?.metadata?.socialReplyId === "string" && approval.metadata.socialReplyId.length > 0;
 }
 
-export function createSocialService({ inbox, client = null, config = { configured: false, missing: [] }, repository, teamBook = null, clock = () => new Date() }) {
+export function createSocialService({ inbox, client = null, config = { configured: false, missing: [] }, repository, teamBook = null, clock = () => new Date(), privacyNotice = PRIVACY_MENTION }) {
   let publishing = null;
+
+  // Law 09-08: a person who writes in private is told once, in the first
+  // answer, who processes their data and where to exercise their rights. A
+  // public comment is not the place for it; a refused or failed answer did not
+  // reach them, so the next one carries it.
+  async function firstPrivateAnswer(item) {
+    if (item.kind === "comment" || !privacyNotice) {
+      return false;
+    }
+    for (const earlier of await inbox.replies({ limit: 1000 })) {
+      if (earlier.kind === "comment" || ["refusee", "echec"].includes(earlier.status)) {
+        continue;
+      }
+      const other = earlier.itemId === item.id ? item : await inbox.item(earlier.itemId);
+      if (other && other.platform === item.platform && other.senderId === item.senderId) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   async function log(entry) {
     try {
@@ -77,11 +98,12 @@ export function createSocialService({ inbox, client = null, config = { configure
       if (!item) {
         throw new SocialServiceError(`Message inconnu : ${itemId}.`, "SOCIAL_ITEM_NOT_FOUND");
       }
-      const body = typeof text === "string" ? text.trim() : "";
+      const written = typeof text === "string" ? text.trim() : "";
       const limit = item.kind === "comment" ? MAX_COMMENT_REPLY_LENGTH : MAX_MESSAGE_LENGTH[item.platform];
-      if (!body) {
+      if (!written) {
         throw new SocialServiceError("La réponse est vide.", "SOCIAL_REPLY_EMPTY");
       }
+      const body = !written.includes(privacyNotice) && await firstPrivateAnswer(item) ? `${written}\n\n${privacyNotice}` : written;
       if (body.length > limit) {
         throw new SocialServiceError(`La réponse dépasse ${limit} caractères (${body.length}).`, "SOCIAL_REPLY_TOO_LONG");
       }

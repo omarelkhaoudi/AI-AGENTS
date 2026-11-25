@@ -338,6 +338,9 @@ function askLogin() {
           await askPasswordChange(typed);
         }
         loginScreen.hidden = true;
+        if (payload.mustEnableTwoFactor) {
+          await requireTwoFactor();
+        }
         pendingLogin = null;
         resolve({ user: payload.user, demo: false });
       } catch {
@@ -419,6 +422,9 @@ async function ensureSession() {
         await askPasswordChange(null);
         loginScreen.hidden = true;
       }
+      if (session.mustEnableTwoFactor) {
+        await requireTwoFactor();
+      }
       showSession(session);
       return true;
     }
@@ -466,6 +472,35 @@ document.querySelector("#security-button").addEventListener("click", () => {
 });
 document.querySelector("#security-close").addEventListener("click", () => securityDialog.close());
 
+// Two-step sign-in is required for the direction (DIRECTION_TWO_FACTOR): the
+// dialog opens on its own, cannot be closed, and the cockpit loads once the
+// recovery codes are kept.
+let twoFactorGate = null;
+securityDialog.addEventListener("cancel", (event) => {
+  if (twoFactorGate) {
+    event.preventDefault();
+  }
+});
+
+function requireTwoFactor() {
+  return new Promise((resolve) => {
+    twoFactorGate = resolve;
+    document.querySelector("#security-close").hidden = true;
+    securityDialog.showModal();
+    showSecurityState();
+  });
+}
+
+function closeSecurity() {
+  securityDialog.close();
+  if (twoFactorGate) {
+    const open = twoFactorGate;
+    twoFactorGate = null;
+    document.querySelector("#security-close").hidden = false;
+    open();
+  }
+}
+
 async function securityCall(method, url, body) {
   const response = await fetch(url, {
     method,
@@ -489,6 +524,10 @@ async function showSecurityState() {
       <p class="mt-3 text-muted">Il vous faut une application d'authentification : Google Authenticator ou Microsoft Authenticator (gratuites).</p>
       <button type="button" class="primary mt-5 w-full justify-center" id="security-start">${icon("shield")}Activer</button>`;
     securityBody.querySelector("#security-start").addEventListener("click", startTwoFactorSetup);
+    if (twoFactorGate) {
+      securityBody.insertAdjacentHTML("afterbegin", `<p class="mb-4 flex items-center gap-2 rounded-xl border border-line bg-surface-2 px-3 py-2 font-semibold">${icon("shield")}Obligatoire pour la direction : le cockpit s'ouvre une fois la double authentification activée.</p>`);
+      return;
+    }
     appendPasswordSection();
     appendDataSection();
     return;
@@ -654,7 +693,7 @@ function showRecoveryCodes(codes) {
       showToast("Copie impossible : notez-les à la main.");
     }
   });
-  securityBody.querySelector("#security-done").addEventListener("click", () => securityDialog.close());
+  securityBody.querySelector("#security-done").addEventListener("click", closeSecurity);
 }
 
 async function resolveApiToken() {
@@ -674,6 +713,43 @@ async function authHeaders() {
 // The Director answers as a conversational agent when the server has one
 // configured; otherwise the cockpit keeps the keyword Director it always had.
 const agentState = { enabled: false, conversationId: null, busy: false };
+// CDC section 2: the direction may write to an agent directly, not only
+// through the Director. Each recipient keeps its own conversation.
+const agentPicker = document.querySelector("#director-agent");
+agentPicker?.addEventListener("change", () => {
+  agentState.conversationId = null;
+  const label = agentPicker.selectedOptions[0]?.textContent ?? "Director";
+  sendButton.querySelector(".max-sm\\:hidden").textContent = `Envoyer ${agentPicker.value ? "à" : "au"} ${label}`;
+});
+
+// Writing to an agent directly takes the AI model: without it, only the
+// Director is offered, and the menu stays hidden.
+async function loadAgentPicker() {
+  const field = document.querySelector("#director-agent-field");
+  if (field) {
+    field.hidden = !agentState.enabled;
+  }
+  if (!agentState.enabled) {
+    return;
+  }
+  try {
+    const response = await fetch("/api/team", { headers: await authHeaders() });
+    if (response.ok) {
+      fillAgentPicker((await response.json()).agents ?? []);
+    }
+  } catch {
+    // The Director alone stays offered.
+  }
+}
+
+function fillAgentPicker(agents) {
+  if (!agentPicker) {
+    return;
+  }
+  const chosen = agentPicker.value;
+  agentPicker.innerHTML = `<option value="">Director</option>${agents.map((agent) => `<option value="${escapeHtml(agent.id)}">${escapeHtml(agent.label)}</option>`).join("")}`;
+  agentPicker.value = agents.some((agent) => agent.id === chosen) ? chosen : "";
+}
 const agentPanel = document.querySelector("#agent-panel");
 const agentThread = document.querySelector("#agent-thread");
 
@@ -726,12 +802,13 @@ async function sendToAgent(message) {
   const pending = appendBubble("agent pending", '<span class="typing"><i></i><i></i><i></i></span>');
   sendButton.disabled = true;
   sendButton.className = "primary send-button is-loading";
-  uiState.textContent = "Le Director réfléchit…";
+  const recipient = agentPicker?.value ? agentPicker.selectedOptions[0].textContent : "Le Director";
+  uiState.textContent = `${recipient} réfléchit…`;
   try {
-    const response = await postJson("/api/agent/chat", { message: text, photos, files, conversationId: agentState.conversationId });
+    const response = await postJson("/api/agent/chat", { message: text, photos, files, conversationId: agentState.conversationId, agent: agentPicker?.value || null });
     agentState.conversationId = response.conversationId;
     pending.remove?.();
-    appendBubble("agent", formatAgentText(response.reply), response.documents ?? [], response.agentRuns ?? [], response.messages ?? [], { plan: response.plan, alerts: response.alerts, found: response.foundDocuments ?? [], exports: response.exports ?? [] });
+    appendBubble("agent", formatAgentText(response.reply), response.documents ?? [], response.agentRuns ?? [], response.messages ?? [], { plan: response.plan, alerts: response.alerts, found: response.foundDocuments ?? [], exports: response.exports ?? [], from: response.agent?.id ?? "director" });
     uiState.textContent = "Réponse reçue.";
     if (response.plan) {
       refreshPlans();
@@ -767,11 +844,11 @@ async function sendToAgent(message) {
   }
 }
 
-function appendBubble(kind, html, documents = [], runs = [], messages = [], { plan = null, alerts = null, photos = [], files = [], found = [], exports = [] } = {}) {
+function appendBubble(kind, html, documents = [], runs = [], messages = [], { plan = null, alerts = null, photos = [], files = [], found = [], exports = [], from = "director" } = {}) {
   const bubble = document.createElement("div");
   bubble.className = `bubble ${kind}`;
   bubble.innerHTML = `
-    ${kind.startsWith("agent") ? avatar("director") : ""}
+    ${kind.startsWith("agent") ? avatar(from) : ""}
     <div class="bubble-body">
       ${plan ? planCard(plan) : ""}
       ${runs.length > 0 ? teamStrip(runs) : ""}
@@ -1071,6 +1148,9 @@ const cashQuote = document.querySelector("#cash-quote");
 const cashOrder = document.querySelector("#cash-order");
 const cashConfidential = document.querySelector("#cash-confidential");
 const cashConfidentialField = document.querySelector("#cash-confidential-field");
+// The campaign an ad expense pays for, asked only for that category.
+const cashCampaign = document.querySelector("#cash-campaign");
+const cashCampaignField = document.querySelector("#cash-campaign-field");
 const cashSubmit = document.querySelector("#cash-submit");
 const cashView = { data: null, kind: "entree" };
 
@@ -1081,6 +1161,7 @@ cashForm.addEventListener("change", (event) => {
     cashView.kind = event.target.value;
     fillCashChoices();
   }
+  showCashCampaign();
 });
 cashForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1373,6 +1454,13 @@ function fillCashChoices() {
   if (data.confidential !== true) {
     cashCategory.querySelector("option[value='salaire']")?.remove();
   }
+  showCashCampaign();
+}
+
+function showCashCampaign() {
+  if (cashCampaignField) {
+    cashCampaignField.hidden = !(cashView.kind === "sortie" && cashCategory.value === "publicite");
+  }
 }
 
 async function submitCashMovement(confirmDuplicate) {
@@ -1386,6 +1474,7 @@ async function submitCashMovement(confirmDuplicate) {
     party: cashParty.value,
     quoteNumber: cashQuote.value,
     orderNumber: cashOrder.value,
+    campaign: cashCampaignField && !cashCampaignField.hidden ? cashCampaign.value : "",
     confidential: cashView.kind === "sortie" && cashConfidential.checked,
     confirmDuplicate
   };
@@ -1408,7 +1497,7 @@ async function submitCashMovement(confirmDuplicate) {
       throw new Error(payload.error ?? "Le mouvement n'a pas été enregistré.");
     }
     showToast(`${body.kind === "entree" ? "Entrée" : "Sortie"} n° ${payload.entry.number} enregistrée.`);
-    for (const field of [cashAmount, cashLabel, cashParty, cashQuote, cashOrder]) {
+    for (const field of [cashAmount, cashLabel, cashParty, cashQuote, cashOrder, cashCampaign].filter(Boolean)) {
       field.value = "";
     }
     cashDay.value = payload.entry.day;
@@ -2573,6 +2662,7 @@ async function refreshTeam() {
       throw new Error("Impossible de charger l'équipe.");
     }
     teamView.data = await response.json();
+    fillAgentPicker(teamView.data.agents ?? []);
     await Promise.all([loadAgentSettings(), refreshHeldActions()]);
     renderTeam();
   } catch (error) {
@@ -6138,7 +6228,10 @@ function renderSales({ report, axes, targets, canDecide }) {
     ["Transformation", percent(now.conversion), `avant : ${percent(before.conversion)}`],
     ["CA commandé", formatDh(now.signed.totalTtc), `${now.signed.count} BC · ${salesVariation(now.signed.totalTtc, before.signed.totalTtc)} (avant : ${formatDh(before.signed.totalTtc)})`],
     ["CA facturé", formatDh(now.invoiced.totalTtc), `avoirs déduits · ${salesVariation(now.invoiced.totalTtc, before.invoiced.totalTtc)}`],
-    ["CA encaissé", formatDh(now.paid.total), `caisse : acomptes, soldes, comptant · ${salesVariation(now.paid.total, before.paid.total)}`]
+    ["CA encaissé", formatDh(now.paid.total), `caisse : acomptes, soldes, comptant · ${salesVariation(now.paid.total, before.paid.total)}`],
+    ["Publicité", formatDh(now.adSpend?.total ?? 0), now.adSpend?.total > 0
+      ? [now.costPerLead === null ? "" : `${formatDh(now.costPerLead)} par prospect`, now.costPerSale === null ? "" : `${formatDh(now.costPerSale)} par commande`].filter(Boolean).join(" · ") || "rien à diviser sur la période"
+      : "dépenses « Publicité et marketing » de la caisse"]
   ];
   salesTiles.innerHTML = tiles.map(([label, value, hint]) => `<div class="pilot-tile"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(hint)}</small></div>`).join("")
     + `<p class="pilot-foot muted">Du ${escapeHtml(formatIsoDay(report.from))} au ${escapeHtml(formatIsoDay(report.to))}, comparé au ${escapeHtml(formatIsoDay(report.previous.from))} – ${escapeHtml(formatIsoDay(report.previous.to))}.</p>`;
@@ -6158,10 +6251,10 @@ function renderSales({ report, axes, targets, canDecide }) {
   const rows = report.axes[salesView.axis] ?? [];
   salesTable.innerHTML = rows.length === 0
     ? `<p class="muted">Rien à compter sur cette période.</p>`
-    : `<div class="answer-table"><table><thead><tr><th>${escapeHtml(axes[salesView.axis])}</th><th class="num">Prospects</th><th class="num">Devis émis</th><th class="num">Transfo.</th><th class="num">CA commandé</th><th class="num">CA facturé</th><th class="num">CA encaissé</th></tr></thead><tbody>${rows.map((row) => {
+    : `<div class="answer-table"><table><thead><tr><th>${escapeHtml(axes[salesView.axis])}</th><th class="num">Prospects</th><th class="num">Devis émis</th><th class="num">Transfo.</th><th class="num">CA commandé</th><th class="num">CA facturé</th><th class="num">CA encaissé</th>${salesView.axis === "campagne" ? `<th class="num">Publicité</th><th class="num">Coût / commande</th>` : ""}</tr></thead><tbody>${rows.map((row) => {
         const refs = [...row.issued.refs, ...row.signed.refs, ...row.invoiced.refs, ...row.paid.refs, ...row.lost.refs.map((ref) => `${ref} (perdu)`)];
         const label = refs.length > 0 ? `<details class="sales-refs"><summary>${escapeHtml(row.label)}</summary><small>${escapeHtml([...new Set(refs)].join(" · "))}</small></details>` : escapeHtml(row.label);
-        return `<tr><td>${label}</td><td class="num">${row.prospects || "—"}</td><td class="num">${row.issued.count}</td><td class="num">${percent(row.conversion)}</td><td class="num">${escapeHtml(formatDh(row.signed.totalTtc))}</td><td class="num">${escapeHtml(formatDh(row.invoiced.totalTtc))}</td><td class="num">${escapeHtml(formatDh(row.paid.total))}</td></tr>`;
+        return `<tr><td>${label}</td><td class="num">${row.prospects || "—"}</td><td class="num">${row.issued.count}</td><td class="num">${percent(row.conversion)}</td><td class="num">${escapeHtml(formatDh(row.signed.totalTtc))}</td><td class="num">${escapeHtml(formatDh(row.invoiced.totalTtc))}</td><td class="num">${escapeHtml(formatDh(row.paid.total))}</td>${salesView.axis === "campagne" ? `<td class="num">${row.adSpend?.total > 0 ? escapeHtml(formatDh(row.adSpend.total)) : "—"}</td><td class="num">${row.costPerSale === null || row.costPerSale === undefined ? "—" : escapeHtml(formatDh(row.costPerSale))}</td>` : ""}</tr>`;
       }).join("")}</tbody></table></div>`;
   const unknown = report.unattributed.quotes;
   salesHint.hidden = !["canal", "vendeur", "campagne"].includes(salesView.axis) || unknown.length === 0;
@@ -6170,6 +6263,7 @@ function renderSales({ report, axes, targets, canDecide }) {
 
 async function loadPanels() {
   await checkAgentStatus();
+  loadAgentPicker();
   await refreshEmail();
   applyCompanyPaymentPlans();
   refreshPlans();

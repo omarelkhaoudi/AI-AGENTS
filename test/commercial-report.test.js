@@ -131,3 +131,29 @@ test("the cockpit shows the report to everyone signed in; the direction alone se
   assert.deepEqual(after.report.objective, { month: "2026-11", target: 50000, achieved: 0, percent: 0 });
   assert.equal(after.canDecide, true);
 });
+
+test("what advertising cost is set against what it brought: per campaign, per prospect and per order", async () => {
+  const followUps = await (await salesBook()).state();
+  const ads = [
+    ...ENTRIES,
+    { number: 7, kind: "sortie", category: "publicite", amount: 1500, day: "2026-11-04", campaign: "Rentrée" },
+    { number: 8, kind: "sortie", category: "publicite", amount: 500, day: "2026-11-12", campaign: "rentrée " },
+    { number: 9, kind: "sortie", category: "publicite", amount: 400, day: "2026-11-13" },
+    { number: 10, kind: "sortie", category: "publicite", amount: 900, day: "2026-11-14", campaign: "Rentrée", cancelled: true },
+    { number: 11, kind: "sortie", category: "publicite", amount: 700, day: "2026-11-15", campaign: "Rentrée", confidential: true },
+    { number: 12, kind: "sortie", category: "transport", amount: 200, day: "2026-11-15", campaign: "Rentrée" },
+    { number: 13, kind: "sortie", category: "publicite", amount: 600, day: "2026-10-15", campaign: "Rentrée" }
+  ];
+  const report = commercialReport({ issued: ISSUED, followUps, entries: ads, prospects: PROSPECTS, from: "2026-11-01", to: "2026-11-30", today: TODAY });
+  const t = report.totals;
+  assert.equal(t.adSpend.total, 2400, "ad expenses only, not cancelled, not confidential, in the period");
+  assert.deepEqual([t.costPerLead, t.costPerSale], [1200, 2400], "2 prospects, 1 order");
+  assert.equal(report.previous.totals.adSpend.total, 600);
+
+  const campaign = Object.fromEntries(report.axes.campagne.map((row) => [row.label, row]));
+  assert.deepEqual([campaign["Rentrée"].adSpend.total, campaign["Rentrée"].signed.count, campaign["Rentrée"].costPerSale], [2000, 1, 2000], "« rentrée » is the same campaign");
+  assert.deepEqual([campaign["non renseigné"].adSpend.total, campaign["non renseigné"].costPerSale], [400, null], "spend without a campaign, never guessed");
+
+  const none = commercialReport({ issued: ISSUED, followUps, entries: ENTRIES, prospects: PROSPECTS, from: "2026-11-01", to: "2026-11-30", today: TODAY });
+  assert.deepEqual([none.totals.adSpend.total, none.totals.costPerLead, none.totals.costPerSale], [0, null, null]);
+});

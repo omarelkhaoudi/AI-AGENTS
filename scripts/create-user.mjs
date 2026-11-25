@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline";
 import { USER_ROLES, normalizeUserRole } from "../src/security/authorization.js";
 import { hashPassword } from "../src/security/password.js";
+import { readHiddenLine } from "../src/security/hidden-input.js";
 import { loadDotEnvIfPresent } from "../src/load-dotenv.js";
 import { createRepository } from "../src/persistence/repository-factory.js";
 import { assertSeatAvailable, planFromEnv } from "../src/company/plans.js";
@@ -26,23 +27,22 @@ function readOption(name, fallback = null) {
   return match ? match.slice(prefix.length) : fallback;
 }
 
-// Reads a line without echoing it when a terminal is attached; piped input is
-// read as is, which is how a deployment script can supply it.
-function askHidden(question) {
-  return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY === true });
-    if (process.stdin.isTTY) {
-      rl._writeToOutput = (text) => {
-        if (text.includes(question)) {
-          process.stdout.write(text);
-        }
-      };
+// Reads a line with nothing echoed when a terminal is attached (key by key, see
+// hidden-input.js); piped input is read as is, which is how a deployment
+// script can supply it.
+async function askHidden(question) {
+  if (process.stdin.isTTY) {
+    const answer = await readHiddenLine(question);
+    if (answer === null) {
+      console.error("Interrompu. Rien n'a été modifié.");
+      process.exit(130);
     }
+    return answer;
+  }
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
     rl.question(question, (answer) => {
       rl.close();
-      if (process.stdin.isTTY) {
-        process.stdout.write("\n");
-      }
       resolve(answer);
     });
   });

@@ -400,8 +400,12 @@ Les messages préparés par les agents gardent leur validation humaine : le bout
 « Envoyer depuis le numéro H-KIDS » du cockpit, ou le mot « envoie » de la
 direction sur WhatsApp, les envoie tels que relus. WhatsApp n'autorise
 un message libre que dans les **24 heures** qui suivent le dernier message de la
-personne ; au-delà, Meta exige un modèle approuvé. Le cockpit le dit, et le
-bouton « Ouvrir dans WhatsApp » reste disponible pour ce cas.
+personne ; au-delà, Meta exige un modèle approuvé. Avec un modèle réglé
+(`WHATSAPP_TEMPLATE_NAME`), le cockpit envoie ce modèle à la place, qui invite
+la personne à répondre, et garde le message « en attente » ; dès qu'elle
+répond, la fenêtre est rouverte et le message part, une seule fois. Sans
+modèle, le cockpit dit que la fenêtre est fermée et le bouton « Ouvrir dans
+WhatsApp » reste disponible.
 
 Mise en route, une fois :
 
@@ -419,6 +423,14 @@ Mise en route, une fois :
    URL*) `https://<votre-domaine>/webhooks/whatsapp` (la vue WhatsApp du cockpit
    l'affiche), le même `WHATSAPP_VERIFY_TOKEN`, puis s'abonner au champ
    **messages**.
+4. Dans le Gestionnaire WhatsApp → **Modèles de message** → **Créer** : catégorie
+   **Utilitaire**, langue **Français**, nom `hkids_message_en_attente`, texte :
+   « Bonjour {{1}}, H-KIDS a un message pour vous concernant {{2}}. Répondez à
+   ce message pour le recevoir. » (exemples demandés par Meta : « Mme Alami »,
+   « votre devis »). Une fois approuvé, mettre son nom dans
+   `WHATSAPP_TEMPLATE_NAME`. Le cockpit remplit {{1}} avec le nom de la personne
+   et {{2}} avec le sujet : votre devis, votre règlement, votre commande, une
+   tâche…
 
 Chaque appel de Meta est vérifié avec la signature faite à partir de
 `WHATSAPP_APP_SECRET` ; un appel non signé est refusé.
@@ -529,6 +541,15 @@ direction seule peut le modifier (rôle `leader`). Il contient :
     du métier (armoire, placard, dressing ; prix, tarif ; pose, montage). Un
     mot rare pèse plus qu'un mot présent partout. Les mots de la question côte
     à côte (« lit cabane ») font passer le bon passage devant.
+  - Elle cherche aussi **par le sens** (recherche vectorielle, §11 du CDC) :
+    « un meuble pour faire dormir deux enfants l'un au-dessus de l'autre »
+    trouve le « lit superposé » sans un mot en commun. Chaque passage reçoit
+    une fois son empreinte (`OPENAI_EMBEDDING_MODEL`, `text-embedding-3-small`
+    par défaut, même clé), gardée à côté du document. Les deux classements sont
+    fusionnés : ce que les deux trouvent passe devant. Sans clé, ou si OpenAI
+    ne répond pas, la recherche par mots répond seule. Son coût figure dans
+    les coûts IA sous « recherche_documents ». `HKIDS_SEMANTIC_SEARCH=off` la
+    coupe.
   - Importer un document sous le même titre crée la **version suivante** et
     rend l'ancienne **périmée**. Un document périmé ne sert plus que
     d'historique.
@@ -1875,25 +1896,33 @@ exigent, ni plus ni moins. Ce modèle est figé par un test.
 
 - Tant que le classeur d'Hiba n'est pas importé, les agents travaillent sur des
   **données de démonstration** (« Demo Client Atlas ») et le signalent.
-- Une confirmation donnée au Director (« l'acompte est arrivé ») met à jour le
-  **plan**, pas encore les **données métier** : elles se mettent à jour par un
-  nouvel import du classeur.
-- Les conversations avec le Director sont gardées en mémoire du serveur : un
-  redémarrage les efface (les plans, eux, sont conservés).
+- Les chiffres tirés du classeur importé (commandes, factures, créances du
+  classeur) se mettent à jour par un nouvel import ; la caisse, les documents,
+  les relances, l'atelier et les tâches sont tenus au fil de l'eau par les
+  agents et la direction.
+- Les conversations avec le Director sont gardées sur le disque du serveur
+  (`data/`) et survivent à un redémarrage.
 - Le mode `AUTH_MODE="demo"` donne l'accès à quiconque atteint le serveur : il
   convient à un poste local, pas à un accès en ligne.
-- Il n'existe ni sauvegarde planifiée ni restauration à un instant donné.
+- Sauvegarde chaque nuit, copiée hors du serveur (un PC, et le stockage objet
+  Oracle une fois réglé) et restauration testée chaque mois
+  (`docs/DEPLOIEMENT-ORACLE.md`, section 8). Pas de restauration à la minute
+  près : on revient à la sauvegarde de la nuit.
+- WhatsApp, Instagram et Facebook ne fonctionnent qu'une fois l'application
+  Meta reliée et, hors fenêtre de 24 h, le modèle de message approuvé.
 
 ### Prochaines étapes
 
-1. Importer les données réelles et le catalogue d'Hiba.
-2. Héberger le système (serveur au nom de l'entreprise) avec un compte par
-   personne (Hiba, Hicham, Omar).
-3. Faire mettre à jour les données métier par les confirmations données au
-   Director, et conserver les conversations.
-4. Envoi WhatsApp automatique (WhatsApp Business Platform de Meta, modèles
-   approuvés) si le volume le justifie.
-5. Sauvegardes planifiées avant toute mise en production.
+1. Relier l'application Meta (WhatsApp, Instagram, Facebook) et faire approuver
+   le modèle `hkids_message_en_attente`.
+2. Créer les comptes de Hiba et de Hicham, importer les données réelles et le
+   catalogue.
+3. Régler l'e-mail (SMTP), le numéro CNDP et la copie des sauvegardes dans le
+   stockage objet Oracle.
+4. Recette par Hicham, puis un cycle complet avec plusieurs commandes réelles
+   avant l'exploitation quotidienne (§15 du CDC).
+5. Faire valider les comptes CGNC du pack par le comptable, et formaliser la
+   propriété du code et la maintenance (§17).
 
 ---
 

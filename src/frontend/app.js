@@ -3489,6 +3489,12 @@ async function sendWhatsApp({ to, message, recipient = "", kind = "autre" }) {
       showToast(body.error ?? "Le message n'est pas parti.", "warn");
       return { ok: false, code: body.details?.code ?? null };
     }
+    // Outside the 24-hour window the approved template went instead: the
+    // message leaves as soon as the person answers it.
+    if (body.message?.status === "waiting") {
+      showToast(`${recipient || "La personne"} n'a pas écrit depuis plus de 24 h : un message WhatsApp l'invite à répondre, et le vôtre partira dès sa réponse.`);
+      return { ok: true, waiting: true };
+    }
     showToast(`Message envoyé${recipient ? ` à ${recipient}` : ""} depuis le numéro H-KIDS.`);
     return { ok: true };
   } catch (error) {
@@ -3536,7 +3542,7 @@ function whatsAppThread(number, messages) {
         ${messages.slice(0, 8).reverse().map((message) => `
           <li class="wa-msg ${message.direction === "in" ? "is-in" : "is-out"} ${message.status === "failed" ? "is-failed" : ""}">
             <p>${message.text ? escapeHtml(message.text) : `<em>(${escapeHtml(WHATSAPP_TYPES[message.type] ?? "message")} sans texte)</em>`}</p>
-            <small>${escapeHtml(formatStamp(message.at))}${message.transcribed ? " · vocal transcrit" : ""}${message.direction === "out" ? ` · ${escapeHtml(message.by === "director" ? "Director" : message.by ?? "")}` : ""}${message.status === "failed" ? ` · non parti : ${escapeHtml(message.error ?? "")}` : ""}</small>
+            <small>${escapeHtml(formatStamp(message.at))}${message.transcribed ? " · vocal transcrit" : ""}${message.direction === "out" ? ` · ${escapeHtml(message.by === "director" ? "Director" : message.by ?? "")}` : ""}${message.status === "failed" ? ` · non parti : ${escapeHtml(message.error ?? "")}` : ""}${message.status === "waiting" ? " · en attente : part dès sa réponse au modèle WhatsApp" : ""}</small>
           </li>`).join("")}
       </ol>
       ${whatsAppView.configured ? `
@@ -4600,8 +4606,8 @@ async function sendDraftFromNumber(button) {
   button.disabled = true;
   const sent = await sendWhatsApp({ to: number, message: card.querySelector(".msg-text").value, recipient: card.dataset.recipient ?? "", kind: card.dataset.kind ?? "autre" });
   if (sent.ok) {
-    status.className = "tag ok msg-status";
-    status.textContent = "Envoyé";
+    status.className = sent.waiting ? "tag warning msg-status" : "tag ok msg-status";
+    status.textContent = sent.waiting ? "En attente de sa réponse" : "Envoyé";
     return;
   }
   button.disabled = false;

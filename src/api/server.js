@@ -65,6 +65,7 @@ import { SALE_CHANNELS, SalesBookError, createMemoryFollowUpBook, dueReminders, 
 import { REPORT_AXES, commercialReport } from "../agent/commercial-report.js";
 import { assignTask, recordFollowUp, updateTask } from "../agent/company-tools.js";
 import { createOpenAiTranscriberFromEnv } from "../agent/transcriber.js";
+import { createOpenAiEmbedderFromEnv } from "../agent/semantic-search.js";
 import { WhatsAppCloudError, createWhatsAppCloudClient, loadWhatsAppCloudConfig, verifyWebhookSignature } from "../integrations/whatsapp-cloud.js";
 import { timingSafeEqual } from "node:crypto";
 import { AuthenticationError, authenticatePrincipal, extractBearerToken } from "../security/authentication.js";
@@ -185,6 +186,9 @@ export function buildApi({
   whatsAppFetch = null,
   // Turns voice notes into text; from OPENAI_API_KEY when not given, null for none.
   whatsAppTranscriber = undefined,
+  // The search by meaning in the agents' documents: from the OpenAI key by
+  // default, null to keep the search by words alone.
+  documentEmbedder = undefined,
   // The company's Facebook Page and Instagram account, the same way: settings
   // (from .env when not given), the inbox of messages and prospects
   // (data/reseaux.json for the server process) and the fetch Meta is called with.
@@ -620,6 +624,19 @@ export function buildApi({
     }
   });
   const agentSettings = agentConfigStore ?? createMemoryAgentConfig({ clock, agents: SPECIALIST_IDS, templateId: teamTemplate, plan: subscription });
+  // Its cost goes in the AI ledger like the agents' own, under « recherche ».
+  let semanticFailures = 0;
+  agentSettings.useEmbedder?.(
+    documentEmbedder === undefined ? createOpenAiEmbedderFromEnv({ onUsage: ({ model, usage: used }) => usage.record({ agent: "recherche_documents", model, usage: used }) }) : documentEmbedder,
+    {
+      onError: (error) => {
+        semanticFailures += 1;
+        if (semanticFailures === 1 || semanticFailures % 50 === 0) {
+          console.warn(`Recherche par le sens indisponible, recherche par mots seule : ${error?.message ?? error}`);
+        }
+      }
+    }
+  );
   const agent = directorAgent ?? createDirectorAgentFromEnv({
     documentService: hkidsDocuments,
     runDirectorRequest,
@@ -3331,7 +3348,8 @@ const WHATSAPP_STATUS = Object.freeze({
   WHATSAPP_NUMBER_INVALID: 400,
   WHATSAPP_MESSAGE_EMPTY: 400,
   WHATSAPP_WINDOW_CLOSED: 409,
-  WHATSAPP_RECIPIENT_REFUSED: 409
+  WHATSAPP_RECIPIENT_REFUSED: 409,
+  WHATSAPP_TEMPLATE_REFUSED: 409
 });
 
 function sameSecret(given, expected) {

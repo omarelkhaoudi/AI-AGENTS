@@ -9,9 +9,11 @@ import { normalizeWhatsAppNumber } from "../agent/whatsapp.js";
 //   export) sent as documents.
 //
 // Meta lets a business write freely only within 24 hours of the person's last
-// message. Outside that window it requires a template approved by Meta; this
-// module does not send templates, it says so, and the cockpit keeps the wa.me
-// button for that case.
+// message. Outside that window it requires a template approved by Meta. The
+// cockpit needs one only (WHATSAPP_TEMPLATE_NAME): it tells the person a
+// message waits for them and asks them to answer; their answer reopens the
+// window and the message leaves (see whatsapp-gateway.js). Without it, the
+// cockpit says the window is closed and keeps the wa.me button.
 
 const GRAPH = "https://graph.facebook.com";
 const DEFAULT_API_VERSION = "v21.0";
@@ -50,6 +52,11 @@ export function loadWhatsAppCloudConfig(env = process.env) {
     verifyToken: value("WHATSAPP_VERIFY_TOKEN"),
     appSecret: value("WHATSAPP_APP_SECRET"),
     apiVersion: value("WHATSAPP_API_VERSION") || DEFAULT_API_VERSION,
+    // The template approved by Meta that reopens the 24-hour window, with two
+    // variables: {{1}} the person's name, {{2}} what the message is about.
+    template: value("WHATSAPP_TEMPLATE_NAME")
+      ? Object.freeze({ name: value("WHATSAPP_TEMPLATE_NAME"), language: value("WHATSAPP_TEMPLATE_LANGUAGE") || "fr" })
+      : null,
     // The direction's own numbers: a message from one of them is an order
     // given to the Director, like a message typed in the cockpit.
     ownerNumbers: value("WHATSAPP_OWNER_NUMBERS")
@@ -96,6 +103,47 @@ export function createWhatsAppCloudClient({ config, fetchImpl = globalThis.fetch
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw metaError(payload?.error, response.status);
+      }
+      return Object.freeze({ id: payload?.messages?.[0]?.id ?? null, to: number });
+    },
+
+    // The template that reopens the window: its two variables filled, never
+    // empty, on one line (Meta refuses a variable with a line break).
+    async sendTemplate(to, { parameters = [] } = {}) {
+      const number = normalizeWhatsAppNumber(to);
+      if (!number) {
+        throw new WhatsAppCloudError("Numéro WhatsApp illisible.", "WHATSAPP_NUMBER_INVALID");
+      }
+      if (!config.template) {
+        throw new WhatsAppCloudError("Aucun modèle de message WhatsApp n'est réglé (WHATSAPP_TEMPLATE_NAME).", "WHATSAPP_TEMPLATE_MISSING");
+      }
+      const filled = parameters.map((value) => String(value ?? "").replace(/\s+/g, " ").trim().slice(0, 60) || "-");
+      let response;
+      try {
+        response = await fetchImpl(`${GRAPH}/${config.apiVersion}/${encodeURIComponent(config.phoneNumberId)}/messages`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${config.accessToken}`, "content-type": "application/json" },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: number,
+            type: "template",
+            template: {
+              name: config.template.name,
+              language: { code: config.template.language },
+              components: [{ type: "body", parameters: filled.map((text) => ({ type: "text", text })) }]
+            }
+          })
+        });
+      } catch (error) {
+        throw new WhatsAppCloudError("WhatsApp est injoignable : vérifiez la connexion internet.", "WHATSAPP_UNREACHABLE", { cause: error.message });
+      }
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const refused = metaError(payload?.error, response.status);
+        throw refused.code === "WHATSAPP_SEND_FAILED"
+          ? new WhatsAppCloudError(`Le modèle « ${config.template.name} » a été refusé par WhatsApp (non approuvé, ou variables différentes de {{1}} et {{2}})${payload?.error?.message ? ` : ${payload.error.message}` : ""}.`, "WHATSAPP_TEMPLATE_REFUSED", refused.details)
+          : refused;
       }
       return Object.freeze({ id: payload?.messages?.[0]?.id ?? null, to: number });
     },

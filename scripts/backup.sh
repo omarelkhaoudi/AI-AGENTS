@@ -7,8 +7,12 @@
 #   0 3 * * * cd /opt/hkids/deploy && mkdir -p backups && sh ../scripts/backup.sh >> backups/backup.log 2>&1
 #
 # Each run writes one dated folder under deploy/backups/ and keeps the last 30.
-# Copy that folder off the server as well (to a computer or cloud storage): a
-# backup on the same disk does not survive the loss of the disk.
+#
+# A backup on the same disk does not survive the loss of the server: with
+# deploy/backup-offsite.env (see scripts/backup-offsite.env.example), each
+# backup is also encrypted (AES-256, the passphrase stays on the server and with
+# the direction) and sent to a bucket of Oracle Object Storage, outside the
+# machine. scripts/restore-test.sh proves, each month, that it restores.
 set -eu
 
 # The backups hold client data: readable by this account only.
@@ -47,6 +51,17 @@ for env_file in tenants/*/.env; do
 done
 
 mv "$partial" "backups/$stamp"
+
+# The copy outside the server. A failed upload is said in the log and does not
+# undo the local backup; the next night sends its own.
+if [ -f backup-offsite.env ]; then
+  . ./backup-offsite.env
+  if sh ../scripts/backup-offsite.sh send "backups/$stamp"; then
+    echo "$stamp copie hors serveur envoyée"
+  else
+    echo "$stamp ÉCHEC de la copie hors serveur"
+  fi
+fi
 
 # Oldest first; everything past the 30 most recent is removed.
 ls -1d backups/20* | head -n -30 | xargs -r rm -rf

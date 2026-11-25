@@ -22,7 +22,10 @@ export const MODEL_PRICES = Object.freeze({
   "gpt-4.1": Object.freeze([2, 0.5, 8]),
   "gpt-4.1-mini": Object.freeze([0.4, 0.1, 1.6]),
   "gpt-4o": Object.freeze([2.5, 1.25, 10]),
-  "gpt-4o-mini": Object.freeze([0.15, 0.075, 0.6])
+  "gpt-4o-mini": Object.freeze([0.15, 0.075, 0.6]),
+  // The search by meaning in the agents' documents.
+  "text-embedding-3-small": Object.freeze([0.02, 0.02, 0]),
+  "text-embedding-3-large": Object.freeze([0.13, 0.13, 0])
 });
 // Voice notes: text and audio heard, text written, per million tokens; or per
 // minute for a model billed by duration.

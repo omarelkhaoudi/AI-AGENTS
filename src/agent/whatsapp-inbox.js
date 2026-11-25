@@ -20,7 +20,12 @@ const MAX_SEEN = 2000;
 const MAX_PENDING = 8;
 const PENDING_HOURS = 48;
 
-const EMPTY = Object.freeze({ messages: [], conversations: {}, seen: [], pending: {} });
+const EMPTY = Object.freeze({ messages: [], conversations: {}, seen: [], pending: {}, held: {} });
+
+// Messages held for a number outside WhatsApp's 24-hour window, until the
+// person answers the template: 30 days, 20 per number at most.
+const HELD_DAYS = 30;
+const MAX_HELD = 20;
 
 export function createMemoryWhatsAppInbox({ clock = () => new Date() } = {}) {
   return createInbox({ book: createMemoryJsonBook(EMPTY), clock });
@@ -51,6 +56,39 @@ function createInbox({ book, clock }) {
     // status: sent (Meta took it) or failed (with the reason).
     async sent({ number, name = "", text, by, kind = "autre", status = "sent", metaId = null, error = null }) {
       return book.change((state) => push(state, { direction: "out", metaId, number, name, text, by, kind, status, error, at: clock().toISOString() }));
+    },
+
+    // A message that could not leave (the 24-hour window is closed) and waits
+    // for the person to answer the template. It shows as « en attente ».
+    async hold({ number, name = "", text, by, kind = "autre" }) {
+      return book.change((state) => {
+        const line = push(state, { direction: "out", metaId: null, number, name, text, by, kind, status: "waiting", error: null, at: clock().toISOString() });
+        state.held ??= {};
+        const kept = heldFresh(state.held[number], clock());
+        state.held[number] = [...kept, { id: line.id, name, text, by, kind, at: line.at }].slice(-MAX_HELD);
+        return line;
+      });
+    },
+
+    async heldFor(number) {
+      return heldFresh((await book.load()).held?.[number], clock());
+    },
+
+    // The held message left (sent) or could not (failed): its line says so.
+    async release(number, id, { status, metaId = null, error = null }) {
+      return book.change((state) => {
+        state.held ??= {};
+        const left = heldFresh(state.held[number], clock()).filter((item) => item.id !== id);
+        if (left.length > 0) {
+          state.held[number] = left;
+        } else {
+          delete state.held[number];
+        }
+        const index = state.messages.findIndex((message) => message.id === id);
+        if (index >= 0) {
+          state.messages[index] = { ...state.messages[index], status, metaId, error, deliveredAt: clock().toISOString() };
+        }
+      });
     },
 
     // What a voice note said, once transcribed, kept on the received message.
@@ -103,6 +141,11 @@ function createInbox({ book, clock }) {
       });
     }
   });
+}
+
+function heldFresh(items, now) {
+  const limit = now.getTime() - HELD_DAYS * 24 * 60 * 60 * 1000;
+  return (Array.isArray(items) ? items : []).filter((item) => new Date(item.at).getTime() >= limit);
 }
 
 function fresh(items, now) {

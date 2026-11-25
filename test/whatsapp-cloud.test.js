@@ -181,6 +181,61 @@ test("outside the 24-hour window Meta refuses a free message, and the cockpit is
   assert.equal((await inbox.messages())[0].status, "failed", "the failure is kept");
 });
 
+// Outside the 24-hour window, the one template approved by Meta tells the
+// person a message waits for them; their answer reopens the window and the
+// held message leaves. Meta here keeps a number's window closed until that
+// number writes. The client is invented.
+test("outside the 24-hour window the approved template goes, and the message leaves when the person answers", async (t) => {
+  const open = new Set();
+  const sent = [];
+  const fetchImpl = async (url, init = {}) => {
+    const body = JSON.parse(init.body);
+    if (body.type === "text" && !open.has(body.to)) {
+      return { ok: false, status: 400, json: async () => ({ error: { code: 131047, message: "Re-engagement message" } }) };
+    }
+    sent.push(body);
+    return { ok: true, status: 200, json: async () => ({ messages: [{ id: `wamid.out.${sent.length}` }] }) };
+  };
+  const config = loadWhatsAppCloudConfig({ ...ENV, WHATSAPP_TEMPLATE_NAME: "hkids_message_en_attente" });
+  const { app, inject, inbox } = await whatsAppApi(t, { config, meta: { fetchImpl, sent } });
+
+  const answer = await inject({ method: "POST", url: "/api/whatsapp/send", payload: { to: "0677000000", message: "Bonjour Madame, le solde de 900 DH reste à régler.", recipient: "Mme Alami", kind: "relance_paiement" } });
+  assert.equal(answer.statusCode, 201, answer.body);
+  assert.equal(JSON.parse(answer.body).message.status, "waiting");
+  assert.deepEqual(sent[0].template, { name: "hkids_message_en_attente", language: { code: "fr" }, components: [{ type: "body", parameters: [{ type: "text", text: "Mme Alami" }, { type: "text", text: "votre règlement" }] }] });
+  assert.equal(sent.length, 1, "only the template went");
+  assert.equal((await inbox.heldFor("212677000000")).length, 1);
+
+  open.add("212677000000");
+  await app.inject({ method: "POST", url: "/webhooks/whatsapp", ...signed(webhook("212677000000", "Oui ?", "wamid.alami")) });
+  await app.whatsApp.idle();
+  assert.deepEqual([sent[1].type, sent[1].to, sent[1].text.body], ["text", "212677000000", "Bonjour Madame, le solde de 900 DH reste à régler."]);
+  assert.equal((await inbox.heldFor("212677000000")).length, 0, "sent once");
+  const line = (await inbox.messages()).find((message) => message.text.startsWith("Bonjour Madame, le solde"));
+  assert.equal(line.status, "sent");
+
+  await app.inject({ method: "POST", url: "/webhooks/whatsapp", ...signed(webhook("212677000000", "Merci", "wamid.alami2")) });
+  await app.whatsApp.idle();
+  assert.equal(sent.length, 2, "nothing is sent twice");
+});
+
+test("a template Meta refuses is said, and without one the closed window is said as before", async (t) => {
+  const fetchImpl = async (url, init = {}) => {
+    const body = JSON.parse(init.body);
+    return body.type === "template"
+      ? { ok: false, status: 404, json: async () => ({ error: { code: 132001, message: "Template name does not exist in the translation" } }) }
+      : { ok: false, status: 400, json: async () => ({ error: { code: 131047 } }) };
+  };
+  const config = loadWhatsAppCloudConfig({ ...ENV, WHATSAPP_TEMPLATE_NAME: "modele_absent" });
+  const { inject, inbox } = await whatsAppApi(t, { config, meta: { fetchImpl, sent: [] } });
+  const refused = await inject({ method: "POST", url: "/api/whatsapp/send", payload: { to: "0677000000", message: "Relance", recipient: "Mme Alami" } });
+  assert.equal(refused.statusCode, 409);
+  assert.equal(JSON.parse(refused.body).details.code, "WHATSAPP_TEMPLATE_REFUSED");
+  assert.match(JSON.parse(refused.body).error, /modele_absent/);
+  assert.equal((await inbox.messages())[0].status, "failed");
+  assert.equal((await inbox.heldFor("212677000000")).length, 0, "nothing waits behind a template that did not go");
+});
+
 test("without the WHATSAPP_* keys the webhook stays closed and nothing is sent", async (t) => {
   const meta = fakeMeta();
   const { app, inject } = await whatsAppApi(t, { config: loadWhatsAppCloudConfig({}), meta });

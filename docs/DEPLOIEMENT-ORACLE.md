@@ -136,8 +136,11 @@ de vive voix ; elle choisit le sien à sa première connexion.
 
 ### Double authentification
 
-Chaque personne l'active elle-même, une fois connectée : bouton bouclier à côté
-de son nom → **Activer** → scanner le QR code avec Google Authenticator ou
+Elle est **obligatoire pour la direction** (`DIRECTION_TWO_FACTOR`, actif par
+défaut en production) : à sa première connexion, un compte de la direction ne
+voit que la fenêtre d'activation, et ne peut pas la désactiver ensuite. Les
+autres comptes l'activent s'ils le souhaitent, une fois connectés : bouton
+bouclier à côté de son nom → **Activer** → scanner le QR code avec Google Authenticator ou
 Microsoft Authenticator → taper le code affiché. Dix **codes de secours** sont
 montrés une seule fois : à garder sur papier. Ensuite, la connexion demande le
 mot de passe puis le code à 6 chiffres de l'application (ou un code de secours,
@@ -203,6 +206,42 @@ chaque jour à midi, ou dès que le PC est allumé, les sauvegardes qu'il n'a pa
 encore dans `Documents\Sauvegardes H-KIDS`, et y garde les 90 dernières. Chaque
 copie écrit une ligne dans `copie.log`, « OK » ou « ERREUR ». Si votre serveur a
 une autre adresse, ajoutez `-Serveur ubuntu@votre-adresse`.
+
+**Une seconde copie, sans dépendre d'un PC allumé** : chaque sauvegarde est
+aussi chiffrée (AES-256) et envoyée dans un compartiment (« bucket ») du
+stockage objet Oracle, inclus dans l'offre gratuite. Une seule fois :
+
+1. Console Oracle → **Stockage** → **Object Storage** → **Créer un
+   compartiment** (nom : `hkids-sauvegardes`, niveau Standard).
+2. Dans ce compartiment → **Demandes pré-authentifiées** → **Créer** : cible
+   « Compartiment », accès « Autoriser la lecture et l'écriture des objets »,
+   expiration lointaine (par exemple dans 5 ans). Copiez l'adresse affichée
+   (elle n'est montrée qu'une fois).
+3. Sur le serveur, dans `/opt/hkids/deploy` :
+
+```bash
+openssl rand -base64 32 > backup-passphrase && chmod 600 backup-passphrase
+cp ../scripts/backup-offsite.env.example backup-offsite.env && chmod 600 backup-offsite.env
+nano backup-offsite.env   # collez l'adresse dans BACKUP_OFFSITE_URL
+cat backup-passphrase     # recopiez cette phrase et gardez-la hors du serveur
+```
+
+Sans la phrase, les copies du compartiment sont illisibles : gardez-la avec les
+codes de secours, pas seulement sur le serveur. Le journal `backup.log` dit
+chaque nuit « copie hors serveur envoyée » ou « ÉCHEC ».
+
+**Tester la restauration chaque mois** (le cahier des charges le demande) : le
+script remonte la dernière sauvegarde (celle du compartiment quand il est
+réglé, téléchargée et déchiffrée) dans une base temporaire, compare chaque
+table avec la base en service et lit les archives, sans rien toucher au
+cockpit :
+
+```
+0 4 1 * * cd /opt/hkids/deploy && sh ../scripts/restore-test.sh >> backups/restore-test.log 2>&1
+```
+
+À la main : `sh ../scripts/restore-test.sh`. Il finit par « restauration
+réussie » ou par « ÉCHEC » et la raison.
 
 **Restaurer** une sauvegarde, sur le serveur, depuis `/opt/hkids/deploy` (cela
 remplace les données actuelles : faites d'abord une sauvegarde de l'état

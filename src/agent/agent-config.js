@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { DATA_DIR, createFileJsonBook, createMemoryJsonBook } from "./json-book.js";
 import { queryTerms, rankPassages } from "./passage-search.js";
+import { fuseRankings, passageVectors, rankByMeaning } from "./semantic-search.js";
 import { DEFAULT_TEMPLATE_ID, TeamTemplateError, allowedAgents, changeTeam, defaultTeam } from "./team-templates.js";
 
 // Each agent as the direction configures it, without programming (CDC V2,
@@ -25,7 +26,9 @@ import { DEFAULT_TEMPLATE_ID, TeamTemplateError, allowedAgents, changeTeam, defa
 // disagree are a question for the direction, never a guess.
 //
 // The book (data/agents.json) keeps the settings and the documents' records;
-// the documents' text sits beside it, one file each (data/agents-documents/).
+// the documents' text sits beside it, one file each (data/agents-documents/),
+// with the embeddings of its passages for the search by meaning
+// (semantic-search.js) once an embedder is given (useEmbedder).
 
 export const DEFAULT_AGENT_CONFIG_PATH = join(DATA_DIR, "agents.json");
 export const DEFAULT_AGENT_DOCUMENTS_DIR = join(DATA_DIR, "agents-documents");
@@ -59,9 +62,11 @@ const EMPTY = Object.freeze({ agents: {}, documents: [], memory: [], held: [] })
 
 export function createMemoryAgentConfig({ clock = () => new Date(), agents = [], templateId = DEFAULT_TEMPLATE_ID, plan = null } = {}) {
   const texts = new Map();
+  const vectors = new Map();
   return createAgentConfig({
     book: createMemoryJsonBook(EMPTY),
     texts: { read: async (id) => texts.get(id) ?? "", write: async (id, text) => void texts.set(id, text) },
+    vectors: { read: async (id) => vectors.get(id) ?? null, write: async (id, value) => void vectors.set(id, value) },
     clock,
     agents,
     templateId,
@@ -71,6 +76,7 @@ export function createMemoryAgentConfig({ clock = () => new Date(), agents = [],
 
 export function createFileAgentConfig({ path = DEFAULT_AGENT_CONFIG_PATH, dir = DEFAULT_AGENT_DOCUMENTS_DIR, clock = () => new Date(), agents = [], templateId = DEFAULT_TEMPLATE_ID, plan = null } = {}) {
   const file = (id) => join(dir, `${id.replace(/[^\w-]/g, "")}.txt`);
+  const vectorFile = (id) => join(dir, `${id.replace(/[^\w-]/g, "")}.vectors.json`);
   return createAgentConfig({
     book: createFileJsonBook(path, EMPTY),
     texts: {
@@ -88,6 +94,20 @@ export function createFileAgentConfig({ path = DEFAULT_AGENT_CONFIG_PATH, dir = 
         await rename(`${file(id)}.tmp`, file(id));
       }
     },
+    vectors: {
+      async read(id) {
+        try {
+          return JSON.parse(await readFile(vectorFile(id), "utf8"));
+        } catch {
+          return null;
+        }
+      },
+      async write(id, value) {
+        await mkdir(dir, { recursive: true });
+        await writeFile(`${vectorFile(id)}.tmp`, JSON.stringify(value));
+        await rename(`${vectorFile(id)}.tmp`, vectorFile(id));
+      }
+    },
     clock,
     agents,
     templateId,
@@ -95,7 +115,11 @@ export function createFileAgentConfig({ path = DEFAULT_AGENT_CONFIG_PATH, dir = 
   });
 }
 
-function createAgentConfig({ book, texts, clock, agents, templateId = DEFAULT_TEMPLATE_ID, plan = null }) {
+function createAgentConfig({ book, texts, vectors = null, clock, agents, templateId = DEFAULT_TEMPLATE_ID, plan = null }) {
+  // The search by meaning, once the server gives an embedder; its failures
+  // are told to onSemanticError and the search by words answers alone.
+  let embedder = null;
+  let onSemanticError = () => {};
   const known = (agent) => {
     if (agents.length > 0 && !agents.includes(agent)) {
       throw new AgentConfigError(`Agent inconnu : ${agent}.`, "AGENT_CONFIG_UNKNOWN_AGENT");
@@ -363,18 +387,41 @@ function createAgentConfig({ book, texts, clock, agents, templateId = DEFAULT_TE
     // their source. Current versions only, unless history is asked for.
     async search(agent, query, { includeRetired = false, limit = 5 } = {}) {
       const documents = (await book.load()).documents.filter((entry) => entry.agent === agent && (includeRetired || entry.status === "en_vigueur"));
-      if (queryTerms(query).length === 0 || documents.length === 0) {
+      const semantic = Boolean(embedder && vectors) && String(query ?? "").trim().length >= 3;
+      if ((queryTerms(query).length === 0 && !semantic) || documents.length === 0) {
         return [];
       }
       const candidates = [];
+      const byDocument = [];
       for (const document of documents) {
-        const text = await texts.read(document.id);
-        for (const passage of passagesOf(text)) {
+        const passages = passagesOf(await texts.read(document.id));
+        byDocument.push({ document, passages });
+        for (const passage of passages) {
           candidates.push({ document, title: document.title, passage });
         }
       }
-      return rankPassages(query, candidates, { limit })
-        .map(({ document, passage }) => ({ document: { ...document }, passage }));
+      const byWords = rankPassages(query, candidates, { limit: candidates.length });
+      let found = byWords.slice(0, limit);
+      if (semantic) {
+        try {
+          const passageVectorsAll = [];
+          for (const { document, passages } of byDocument) {
+            passageVectorsAll.push(...await passageVectors({ embedder, store: vectors, documentId: document.id, passages }));
+          }
+          const [queryVector] = await embedder.embed([String(query).trim()]);
+          const byMeaning = rankByMeaning(queryVector, candidates, passageVectorsAll).slice(0, 20);
+          found = fuseRankings([byWords.slice(0, 20), byMeaning], { limit, key: (candidate) => `${candidate.document.id}\u0000${candidate.passage}` });
+        } catch (error) {
+          onSemanticError(error);
+        }
+      }
+      return found.map(({ document, passage }) => ({ document: { ...document }, passage }));
+    },
+
+    // The server gives the embedder (OpenAI, the agents' key) once it has it.
+    useEmbedder(given, { onError = () => {} } = {}) {
+      embedder = given ?? null;
+      onSemanticError = onError;
     },
 
     // A note the agent keeps for its next missions; the oldest go first.

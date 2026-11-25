@@ -137,5 +137,8 @@ deliberate edit of the model.
   `docs/DEPLOIEMENT-ORACLE.md`, section 8.
 - **No off-site copy on a local install.** A dump beside the database is lost
   with the machine. The hosted cockpit's nightly backups are copied to a
-  Windows PC every day by `scripts/copier-sauvegardes.ps1`.
+  Windows PC every day by `scripts/copier-sauvegardes.ps1`, and, encrypted, to
+  an Oracle Object Storage bucket by `scripts/backup-offsite.sh`; each month
+  `scripts/restore-test.sh` restores the latest one into a scratch database and
+  compares it table by table (`docs/DEPLOIEMENT-ORACLE.md`, section 8).
 - **No point-in-time recovery.** That needs WAL archiving, which is not set up.

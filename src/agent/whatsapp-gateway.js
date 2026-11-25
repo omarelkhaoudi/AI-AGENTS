@@ -82,6 +82,25 @@ const MAX_FOUND_SENT = 3;
 // documents: what the gateway needs to hand files over and to generate what
 // the direction validates: previewPdf(prepared), generate(item, { by }),
 // issuedPdf(found). Without it, documents wait in the cockpit as before.
+// What a held message is about, in the template's {{2}}: « H-KIDS a un
+// message pour vous concernant {{2}} ».
+const TEMPLATE_SUBJECTS = Object.freeze({
+  relance_devis: "votre devis",
+  relance_paiement: "votre règlement",
+  retard: "votre commande",
+  commande_fournisseur: "notre commande",
+  sav: "votre demande de service après-vente",
+  tache_equipe: "une tâche",
+  tache: "une tâche",
+  alerte: "une alerte du cockpit",
+  reponse: "votre message",
+  autre: "votre demande"
+});
+
+function firstName(name) {
+  return String(name ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
+}
+
 export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, workshop = null, recordFollowUp = null, tasks = null, transcriber = null, documents = null, log = () => {} }) {
   // One number's messages are handled in the order they came.
   const lanes = new Map();
@@ -126,10 +145,40 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
       const result = await client.sendText(to, text);
       return await inbox.sent({ number: result.to, name, text: text.slice(0, MAX_TEXT_LENGTH), by, kind, metaId: result.id });
     } catch (error) {
+      // Outside the 24-hour window: the approved template tells the person a
+      // message waits for them, and the message leaves when they answer.
+      if (error?.code === "WHATSAPP_WINDOW_CLOSED" && config.template && typeof client.sendTemplate === "function") {
+        return holdBehindTemplate({ to, text, name, by, kind });
+      }
       if (error instanceof WhatsAppCloudError) {
         await inbox.sent({ number: String(to), name, text, by, kind, status: "failed", error: error.message });
       }
       throw error;
+    }
+  }
+
+  async function holdBehindTemplate({ to, text, name, by, kind }) {
+    try {
+      const result = await client.sendTemplate(to, { parameters: [firstName(name) || "Madame, Monsieur", TEMPLATE_SUBJECTS[kind] ?? "votre demande"] });
+      return await inbox.hold({ number: result.to, name, text: text.slice(0, MAX_TEXT_LENGTH), by, kind });
+    } catch (error) {
+      if (error instanceof WhatsAppCloudError) {
+        await inbox.sent({ number: String(to), name, text, by, kind, status: "failed", error: error.message });
+      }
+      throw error;
+    }
+  }
+
+  // The person answered: what was held for them leaves now, oldest first.
+  async function deliverHeld(number) {
+    for (const item of await inbox.heldFor(number)) {
+      try {
+        const result = await client.sendText(number, item.text);
+        await inbox.release(number, item.id, { status: "sent", metaId: result.id });
+      } catch (error) {
+        await inbox.release(number, item.id, { status: "failed", error: error.message });
+        log(error);
+      }
     }
   }
 
@@ -499,6 +548,7 @@ export function createWhatsAppGateway({ config, client, inbox, teamBook, agent, 
     if (!recorded) {
       return;
     }
+    await deliverHeld(message.from).catch(log);
     if (workshop && message.type === "document" && isCncFileName(message.media?.filename) && (owner || team || drafter?.orders.length > 0)) {
       await fromDrafting(message, { name: owner ? "La direction" : team?.member.name ?? drafter.name, orders: drafter?.orders ?? null });
     } else if (owner) {

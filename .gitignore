@@ -35,3 +35,7 @@ __pycache__/
 
 # Database dumps and document archives made by scripts/backup.sh.
 backups/
+# The backups and their off-site settings hold client data and secrets.
+deploy/backups/
+deploy/backup-offsite.env
+deploy/backup-passphrase

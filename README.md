@@ -711,6 +711,27 @@ vue **Abonnements**, visible de la direction seule :
 Rien n'est émis, envoyé ou suspendu seul. Le paiement est noté à réception du
 virement (« Virement reçu »). Tout est gardé dans `data/abonnements.json`.
 
+### Pack du comptable
+
+Chaque mois, la direction télécharge pour le comptable un seul fichier ZIP :
+**Caisse → Pack du comptable**, mois au choix (le mois précédent par défaut),
+route `GET /api/accounting/pack?month=AAAA-MM`. Direction seule : le pack
+contient les dépenses confidentielles et les absences de l'équipe.
+
+| Fichier | Contenu |
+| --- | --- |
+| `ecritures.xlsx` | Les écritures proposées sur les comptes du CGNC (voir `export_comptable`) |
+| `ventes.xlsx` | Factures et avoirs du mois : HT, TVA facturée, TTC, avoirs déduits |
+| `caisse-banque.xlsx` | Encaissements et dépenses, avec le nom de leur justificatif ou « manquant » |
+| `variables-paie.xlsx` | Jours, absences, congés, retards et heures supplémentaires, sans montant (s'il y a des salariés) |
+| `pieces/` | PDF des factures, avoirs et reçus de paiement du mois |
+| `justificatifs/` | Reçus et factures fournisseurs joints aux dépenses |
+| `LISEZ-MOI.txt` | Les totaux du mois et ce qui reste à compléter : facture sans contenu gardé, PDF absent, dépense sans justificatif (hors salaires) |
+
+Rien n'est inventé : les comptes sont une proposition, la TVA est celle des
+factures ; la TVA due et la TVA récupérable sur les achats se calculent par le
+comptable sur les pièces. Le téléchargement est noté au journal d'audit.
+
 ### Données de l'entreprise : export et suppression
 
 - **Export.** La direction télécharge toutes les données de son entreprise dans

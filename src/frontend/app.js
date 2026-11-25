@@ -1086,6 +1086,39 @@ cashForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   await submitCashMovement(false);
 });
+
+// The month's pack for the accountant: last month by default, the month the
+// accountant usually asks for.
+const accountingPack = document.querySelector("#accounting-pack");
+const accountingPackMonth = document.querySelector("#accounting-pack-month");
+accountingPack?.addEventListener?.("submit", async (event) => {
+  event.preventDefault();
+  const error = accountingPack.querySelector("#accounting-pack-error");
+  const button = accountingPack.querySelector("#accounting-pack-submit");
+  error.hidden = true;
+  button.disabled = true;
+  try {
+    const month = accountingPackMonth.value || previousMonth();
+    const response = await fetch(`/api/accounting/pack?month=${encodeURIComponent(month)}`, { headers: await authHeaders() });
+    if (!response.ok) {
+      throw new Error((await response.json().catch(() => ({}))).error ?? "Le pack n'a pas pu être préparé.");
+    }
+    const name = /filename="([^"]+)"/.exec(response.headers.get("content-disposition") ?? "")?.[1] ?? `pack-comptable-${month}.zip`;
+    saveBlob(await response.blob(), name);
+    const toComplete = Number(response.headers.get("x-pack-to-complete") ?? 0);
+    showToast(toComplete > 0 ? `Pack prêt : ${toComplete} point${toComplete > 1 ? "s" : ""} à compléter, listé${toComplete > 1 ? "s" : ""} dans LISEZ-MOI.txt.` : "Pack prêt pour le comptable.");
+  } catch (failure) {
+    error.textContent = failure.message;
+    error.hidden = false;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+function previousMonth(today = new Date()) {
+  const first = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
+  return first.toISOString().slice(0, 7);
+}
 const cashPending = document.querySelector("#cash-pending");
 const cashPendingGroups = document.querySelector("#cash-pending-groups");
 const EXPENSE_TONES = Object.freeze({ declaree: "warning", justifiee: "info", approuvee: "ok", rapprochee: "ok" });
@@ -1245,6 +1278,10 @@ function renderCash(data) {
   cashDate.value ||= today;
   cashDate.max = today;
   cashDay.max = today;
+  if (accountingPackMonth) {
+    accountingPackMonth.value ||= previousMonth(new Date(`${today}T12:00:00Z`));
+    accountingPackMonth.max = today.slice(0, 7);
+  }
   fillCashChoices();
   const isToday = day.day === today;
   const when = isToday ? "aujourd'hui" : `le ${formatIsoDay(day.day)}`;

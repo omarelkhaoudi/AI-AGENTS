@@ -34,6 +34,7 @@ export const AUDIT_EVENT_TYPES = Object.freeze([
   "rate_limit_exceeded",
   // The direction took all the company's data away (GET /api/company/export).
   "data_exported",
+  "accounting_pack_exported",
   // A message left the company's e-mail address (POST /api/email/send).
   "email_sent"
 ]);

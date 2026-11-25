@@ -36,7 +36,7 @@ export function parseDate(value) {
 }
 
 // Numbers that are names, not quantities: never summed, kept as written.
-const IDENTIFIER = /^(n°|no|num(é|e)ro|r(é|e)f(\.|(é|e)rence)?|t(é|e)l(\.|(é|e)phone)?|ice|code|ann(é|e)e)(?![a-zà-ÿ])/i;
+const IDENTIFIER = /^(n°|no|num(é|e)ro|r(é|e)f(\.|(é|e)rence)?|t(é|e)l(\.|(é|e)phone)?|ice|code|compte|ann(é|e)e)(?![a-zà-ÿ])/i;
 
 export async function renderXlsx({ title = "", columns, rows, total = false, sheetName = "Tableau" }) {
   if (!Array.isArray(columns) || columns.length === 0) {

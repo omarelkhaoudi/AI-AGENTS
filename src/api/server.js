@@ -44,7 +44,7 @@ import { HrBookError, LEAVE_STATUSES as HR_LEAVE_STATUSES, createMemoryHrBook } 
 import { AdminBookError, createMemoryAdminBook } from "../agent/admin-book.js";
 import { letterhead } from "../agent/admin-tools.js";
 import { SubscriptionError, createMemorySubscriptionBook } from "../agent/subscription-book.js";
-import { CASH_CATEGORIES, CASH_METHODS, CONFIDENTIAL_CATEGORIES, CashBookError, EXPENSE_STATUSES, OPENING_CATEGORY, createMemoryCashBook } from "../agent/cash-book.js";
+import { CASH_CATEGORIES, CASH_METHODS, CONFIDENTIAL_CATEGORIES, CashBookError, EXPENSE_STATUSES, OPENING_CATEGORY, createMemoryCashBook, describeEntry } from "../agent/cash-book.js";
 
 export const DEFAULT_COMPANY_ID = "hkids";
 import { ANOMALY_STATUSES, ImprovementError, RULE_STATUSES, SEVERITIES, TASK_STATUSES, createMemoryImprovementBook, taskBoard } from "../agent/improvement-book.js";
@@ -87,6 +87,7 @@ import { HkidsDocumentService, normalizeDocumentError } from "../documents/docum
 import { renderPreviewPdf } from "../documents/preview-pdf.js";
 import { createAiUsageFromEnv, createMemoryAiUsageBook } from "../agent/ai-usage.js";
 import { JOURNAL_COLUMNS, accountsFromEnv, buildJournal, journalRows } from "../agent/accounting-export.js";
+import { AccountingPackError, buildAccountingPack, packFileName } from "../agent/accounting-pack.js";
 import { createCommercialFileService, normalizeCommercialFileError } from "../documents/commercial-file-service.js";
 
 // The one outbound tool. It is never routed by a planner, so the only way to
@@ -1202,6 +1203,44 @@ export function buildApi({
         .header("Content-Disposition", `attachment; filename="${xlsxFileName("ecritures comptables", clock())}"`)
         .header("X-Journal-Balanced", String(journal.totals.balanced))
         .send(bytes);
+    });
+
+    // The month's pack for the accountant, in one ZIP: the entries, the sales
+    // register, cash and bank with their proofs, the payroll variables and the
+    // PDF of each invoice, credit note and receipt. ?month=AAAA-MM. Direction
+    // only: it holds the confidential expenses and the team's absences.
+    app.get("/api/accounting/pack", readRouteOptions(), async (request, reply) => {
+      if (!seesConfidential(request)) {
+        return reply.code(403).send({ error: "Seule la direction prépare le pack du comptable.", details: { code: "ACCOUNTING_DIRECTION_ONLY" } });
+      }
+      const month = typeof request.query?.month === "string" && request.query.month !== "" ? request.query.month : clock().toISOString().slice(0, 7);
+      try {
+        const { stream, files, summary } = await buildAccountingPack({
+          month,
+          issued: await hkidsDocuments.listIssued(),
+          readIssued: (type, number) => hkidsDocuments.readIssued(type, number),
+          readPdf: (stem) => readFile(join(hkidsDocuments.outputDir, `${stem}.pdf`)).catch(() => null),
+          cashEntries: (await cash.entries()).map(describeEntry),
+          readReceipt: (number, id) => cash.receipt(number, id),
+          payroll: await hr.payroll(month).catch(() => null),
+          accounts: accountsFromEnv(),
+          company: COMPANY.name,
+          at: clock().toISOString()
+        });
+        await auditSecurityEvent(repository, { type: "accounting_pack_exported", actorUserId: request.principal.userId ?? null, resourceType: "company", resourceId: companyId, metadata: { month, files: files.length } });
+        return reply
+          .type("application/zip")
+          .header("Content-Disposition", `attachment; filename="${packFileName(month)}"`)
+          .header("Cache-Control", "no-store")
+          .header("X-Pack-Files", String(files.length))
+          .header("X-Pack-To-Complete", String(summary.toComplete.length))
+          .send(stream);
+      } catch (error) {
+        if (error instanceof AccountingPackError) {
+          return reply.code(400).send({ error: error.message, details: { code: error.code } });
+        }
+        return sendDomainError(reply, "Accounting pack failed.", error);
+      }
     });
 
     // What the AI cost this month (or the month asked): an estimate, by agent

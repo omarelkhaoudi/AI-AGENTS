@@ -204,5 +204,8 @@ export function brandPage(text, company = COMPANY) {
   }
   return text
     .replaceAll("H-KIDS · Marrakech", company.city ? `${company.shortName} · ${company.city}` : company.shortName)
+    // Written with a non-breaking hyphen where the name must not be cut.
+    .replaceAll("H&#8209;KIDS", company.shortName)
+    .replaceAll("H‑KIDS", company.shortName)
     .replaceAll("H-KIDS", company.shortName);
 }

@@ -1055,8 +1055,8 @@ export function buildApi({
       start_url: "/app/",
       scope: "/",
       display: "standalone",
-      background_color: "#0f1a15",
-      theme_color: "#18281f",
+      background_color: "#f2eee6",
+      theme_color: "#f2eee6",
       icons: [
         { src: "/app/icons/icone-192.png", sizes: "192x192", type: "image/png" },
         { src: "/app/icons/icone-512.png", sizes: "512x512", type: "image/png" },

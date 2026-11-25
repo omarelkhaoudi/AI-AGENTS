@@ -45,6 +45,8 @@ test("another company keeps nothing of H-KIDS: not its address, legal numbers or
   const payload = brandPayload({ instructions: "Équipe H KIDS", tools: [{ name: "x", description: "Catalogue H-KIDS" }] }, OTHER);
   assert.deepEqual([payload.instructions, payload.tools[0].description], ["Équipe Atelier Exemple", "Catalogue Atelier-Ex"]);
   assert.equal(brandPage("<span>H-KIDS · Marrakech</span><title>H-KIDS</title>", OTHER), "<span>Atelier-Ex · Fès</span><title>Atelier-Ex</title>");
+  // The sign-in writes the name with a non-breaking hyphen, as an entity or as the character.
+  assert.equal(brandPage("ouvrir le cockpit H&#8209;KIDS. H‑KIDS", OTHER), "ouvrir le cockpit Atelier-Ex. Atelier-Ex");
   assert.notEqual(BLANK_LOGO_PATH, HKIDS_LOGO_PATH);
 });
 

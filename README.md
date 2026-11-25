@@ -135,8 +135,9 @@ et ne commande jamais rien lui-même.
 **Parler au lieu d'écrire.** Le micro du Briefing enregistre : un toucher pour
 commencer, un autre pour arrêter (3 minutes au plus). Le serveur transcrit avec
 le même modèle que les notes vocales WhatsApp (`OPENAI_TRANSCRIBE_MODEL`, même
-clé OpenAI), en français, en arabe ou en darija ; le texte arrive dans la zone
-de saisie, à relire avant d'envoyer. L'enregistrement n'est gardé nulle part.
+clé OpenAI), en français, en arabe ou en darija, et le message part aussitôt,
+comme un vocal WhatsApp : ce qui a été compris s'affiche dans la conversation.
+L'enregistrement n'est gardé nulle part.
 Le navigateur demande l'autorisation du micro la première fois (le site doit
 être en HTTPS, ce qu'il est).
 

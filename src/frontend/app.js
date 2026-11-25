@@ -108,8 +108,8 @@ voicePlaceholder.dataset.externalConnectionsEnabled = String(VOICE_INTERFACE.ext
 
 // --- The voice: speak instead of typing --------------------------------------
 // A first touch starts recording, a second stops it (or three minutes). What
-// was said lands in the message box, after what was already typed, to read
-// over and send. The recording itself is not kept anywhere.
+// was said is sent at once, as a voice note on WhatsApp, after anything
+// already typed. The recording itself is not kept anywhere.
 const voice = { available: false, recorder: null, chunks: [], timer: null, started: 0 };
 
 voicePlaceholder.addEventListener("click", () => (voice.recorder ? stopVoice() : startVoice()));
@@ -191,10 +191,18 @@ async function transcribeVoice(blob) {
       uiState.textContent = payload.error ?? "La voix n'a pas pu être transcrite.";
       return;
     }
+    // Sent at once, as a voice note on WhatsApp: what was heard shows in the
+    // conversation as the message, after anything already typed.
     const typed = messageInput.value.trim();
-    messageInput.value = typed ? `${typed} ${payload.text}` : payload.text;
-    messageInput.focus();
-    uiState.textContent = "Voilà ce que j'ai compris : relisez, corrigez si besoin, puis envoyez.";
+    const said = typed ? `${typed} ${payload.text}` : payload.text;
+    voicePlaceholder.className = "icon-button";
+    if (agentState.busy) {
+      // An answer is still on its way: the words wait in the box, not lost.
+      messageInput.value = said;
+      uiState.textContent = "Vocal transcrit : il partira quand la réponse en cours sera arrivée (bouton Envoyer).";
+      return;
+    }
+    await askDirector(said);
   } catch {
     uiState.textContent = "Le serveur ne répond pas. Vérifiez la connexion internet.";
   } finally {

@@ -1322,8 +1322,8 @@ export function buildApi({
       voice: Boolean(voiceTranscriber)
     }));
 
-    // The Briefing's microphone: what was said comes back as text, put in the
-    // message box to read over before it is sent. Nothing is kept: the
+    // The Briefing's microphone: what was said comes back as text, which the
+    // cockpit sends at once, as a WhatsApp voice note. Nothing is kept: the
     // recording is passed to the transcriber and dropped.
     app.post("/api/agent/transcribe", { ...writeRouteOptions(), bodyLimit: Math.max(securityConfig.bodyLimitBytes, VOICE_BODY_LIMIT_BYTES) }, async (request, reply) => {
       if (!voiceTranscriber) {

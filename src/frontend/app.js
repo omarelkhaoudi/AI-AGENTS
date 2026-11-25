@@ -1119,7 +1119,7 @@ function updateOverview(part) {
     }
   ];
   overviewGrid.innerHTML = tiles.map((tile) => `
-    <button type="button" class="overview-tile" data-tone="${tile.tone}" data-goto="${tile.view}" ${tile.filter ? `data-filter="${tile.filter}"` : ""}>
+    <button type="button" class="overview-tile" data-tone="${tile.tone}" data-goto="${tile.view}" ${tile.filter ? `data-filter="${tile.filter}"` : ""} ${tile.value === null || tile.value === undefined ? `data-loading="true" aria-busy="true"` : ""}>
       <span class="overview-icon">${icon(tile.icon)}</span>
       <span class="overview-label">${escapeHtml(tile.label)}</span>
       <strong class="overview-value ${tile.money ? "is-money" : ""}">${tile.value ?? "–"}</strong>

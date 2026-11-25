@@ -209,8 +209,8 @@
               <textarea id="director-message" name="message" rows="2" class="min-h-16 resize-none border-0 bg-transparent px-2.5 py-2 text-[16px] leading-normal shadow-none focus:shadow-none" placeholder="Que souhaitez-vous faire ?">Fais-moi le point sur mon entreprise aujourd'hui.</textarea>
               <ul id="photo-tray" class="photo-tray" aria-label="Photos jointes" hidden></ul>
               <div class="composer-bar flex items-center justify-between gap-3 pr-1 pb-0.5 pl-2.5">
-                <span class="flex items-center gap-2"><span id="director-agent-field" class="flex items-center gap-2" hidden><label for="director-agent" class="text-[13px] text-muted">À</label><select id="director-agent" class="max-w-44 py-1 text-[13px]" title="Écrire au Director ou directement à un agent"><option value="">Director</option></select></span><span class="kbd-hint max-md:hidden"><kbd>Ctrl</kbd> + <kbd>Entrée</kbd> pour envoyer</span></span>
-                <div class="composer-actions flex shrink-0 gap-2 max-md:flex-1">
+                <span class="flex min-w-0 items-center gap-2"><span id="director-agent-field" class="flex items-center gap-2" hidden><label for="director-agent" class="text-[13px] text-muted max-sm:sr-only">À</label><select id="director-agent" class="w-auto max-w-44 min-w-[7.5rem] py-1 text-[13px] max-sm:min-w-0 max-sm:max-w-[8.5rem]" title="Écrire au Director ou directement à un agent"><option value="">Director</option></select></span><span class="kbd-hint whitespace-nowrap max-lg:hidden"><kbd>Ctrl</kbd> + <kbd>Entrée</kbd> pour envoyer</span></span>
+                <div class="composer-actions flex shrink-0 gap-2">
                   <input type="file" id="photo-input" accept="image/*,.pdf,.docx,.xlsx,.txt,.csv,.md" multiple hidden>
                   <button type="button" class="icon-button" id="photo-button" title="Joindre des photos ou des documents : PDF, Word, Excel (ou glissez-les, ou collez-les)" hidden>
                     <svg class="i" aria-hidden="true"><use href="#i-paperclip"/></svg><span class="visually-hidden">Joindre des photos ou des documents</span>
@@ -218,7 +218,7 @@
                   <button type="button" class="icon-button" id="voice-placeholder" disabled title="Parler au lieu d'écrire (la clé OpenAI du serveur est nécessaire)" aria-pressed="false">
                     <svg class="i" aria-hidden="true"><use href="#i-mic"/></svg><span class="visually-hidden" id="voice-label">Parler au lieu d'écrire</span>
                   </button>
-                  <button type="submit" class="primary send-button max-md:flex-1"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg><span class="sm:hidden">Envoyer</span><span class="max-sm:hidden">Envoyer au Director</span></button>
+                  <button type="submit" class="primary send-button max-sm:w-11 max-sm:rounded-full max-sm:px-0" title="Envoyer"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg><span class="sr-only sm:hidden">Envoyer</span><span class="max-sm:hidden">Envoyer au Director</span></button>
                 </div>
               </div>
             </form>

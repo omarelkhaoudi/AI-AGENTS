@@ -23,6 +23,8 @@
     "archive:shortcut": "node scripts/create-desktop-shortcut.mjs",
     "data:ingest": "node scripts/ingest-business-data.mjs",
     "data:import-hkids": "node scripts/import-hkids-workbook.mjs",
+    "platform:start": "node src/platform-server.js",
+    "platform:emails": "node scripts/platform-emails.mjs",
     "css:build": "tailwindcss -i src/frontend/tailwind.css -o src/frontend/styles.css --minify"
   },
   "engines": {

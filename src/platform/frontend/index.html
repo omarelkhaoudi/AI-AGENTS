@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f2eee6" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#121110" media="(prefers-color-scheme: dark)">
+    <title>Portail</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=DM+Sans:opsz,wght@9..40,400..700&display=swap">
+    <link rel="stylesheet" href="/portail.css">
+    <script src="/portail.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="brand">
+        <span class="brand-mark" aria-hidden="true">E</span>
+        <span class="brand-name" data-platform-name>ERP intelligent</span>
+      </header>
+
+      <section class="card" data-view="connexion" hidden>
+        <h1>Connexion</h1>
+        <p class="lead">Un seul compte pour toutes vos entreprises.</p>
+        <form data-form="login" novalidate>
+          <label for="login-email">E-mail</label>
+          <input id="login-email" name="email" type="email" autocomplete="username" required>
+          <label for="login-password">Mot de passe</label>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+          <p class="message" role="alert" data-message></p>
+          <button type="submit">Se connecter</button>
+          <button type="button" class="link" data-resend hidden>Renvoyer le lien de confirmation</button>
+        </form>
+        <nav class="links">
+          <a href="#/oubli">Mot de passe oublié ?</a>
+          <a href="#/inscription">Créer un compte</a>
+        </nav>
+      </section>
+
+      <section class="card" data-view="inscription" hidden>
+        <h1>Créer un compte</h1>
+        <p class="lead">Votre compte personnel. Vous créerez ou rejoindrez une entreprise ensuite.</p>
+        <form data-form="signup" novalidate>
+          <label for="signup-name">Nom et prénom</label>
+          <input id="signup-name" name="name" autocomplete="name" maxlength="120" required>
+          <label for="signup-email">E-mail</label>
+          <input id="signup-email" name="email" type="email" autocomplete="email" required>
+          <label for="signup-password">Mot de passe</label>
+          <input id="signup-password" name="password" type="password" autocomplete="new-password" required>
+          <p class="hint" data-password-hint>Au moins 10 caractères.</p>
+          <p class="message" role="alert" data-message></p>
+          <button type="submit">Créer mon compte</button>
+        </form>
+        <nav class="links"><a href="#/connexion">J'ai déjà un compte</a></nav>
+      </section>
+
+      <section class="card" data-view="envoye" hidden>
+        <h1>Vérifiez votre boîte e-mail</h1>
+        <p class="lead" data-sent-text>Si l'adresse est correcte, un lien vient de vous être envoyé.</p>
+        <nav class="links"><a href="#/connexion">Retour à la connexion</a></nav>
+      </section>
+
+      <section class="card" data-view="verifier" hidden>
+        <h1>Confirmation de l'adresse</h1>
+        <p class="lead" role="status" data-verify-text>Vérification en cours…</p>
+        <nav class="links"><a href="#/connexion">Se connecter</a></nav>
+      </section>
+
+      <section class="card" data-view="oubli" hidden>
+        <h1>Mot de passe oublié</h1>
+        <p class="lead">Indiquez votre e-mail : vous recevrez un lien pour en choisir un nouveau.</p>
+        <form data-form="forgot" novalidate>
+          <label for="forgot-email">E-mail</label>
+          <input id="forgot-email" name="email" type="email" autocomplete="email" required>
+          <p class="message" role="alert" data-message></p>
+          <button type="submit">Recevoir le lien</button>
+        </form>
+        <nav class="links"><a href="#/connexion">Retour à la connexion</a></nav>
+      </section>
+
+      <section class="card" data-view="nouveau-mot-de-passe" hidden>
+        <h1>Nouveau mot de passe</h1>
+        <p class="lead">Toutes vos sessions ouvertes seront fermées.</p>
+        <form data-form="reset" novalidate>
+          <label for="reset-password">Nouveau mot de passe</label>
+          <input id="reset-password" name="password" type="password" autocomplete="new-password" required>
+          <label for="reset-confirm">Confirmez-le</label>
+          <input id="reset-confirm" name="confirm" type="password" autocomplete="new-password" required>
+          <p class="hint" data-password-hint>Au moins 10 caractères.</p>
+          <p class="message" role="alert" data-message></p>
+          <button type="submit">Enregistrer</button>
+        </form>
+      </section>
+
+      <section class="card" data-view="accueil" hidden>
+        <h1 data-hello>Bonjour</h1>
+        <p class="lead" data-account-email></p>
+        <div class="empty">
+          <h2>Mes entreprises</h2>
+          <p>Bientôt ici : les entreprises dont vous êtes membre, et la création d'une nouvelle entreprise.</p>
+        </div>
+        <button type="button" class="secondary" data-logout>Se déconnecter</button>
+      </section>
+    </main>
+  </body>
+</html>

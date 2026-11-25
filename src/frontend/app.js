@@ -827,6 +827,7 @@ agentPicker?.addEventListener("change", () => {
   agentState.conversationId = null;
   const label = agentPicker.selectedOptions[0]?.textContent ?? "Director";
   sendButton.querySelector(".max-sm\\:hidden").textContent = `Envoyer ${agentPicker.value ? "à" : "au"} ${label}`;
+  renderConversationHead();
 });
 
 // Writing to an agent directly takes the AI model: without it, only the
@@ -856,6 +857,53 @@ function fillAgentPicker(agents) {
   const chosen = agentPicker.value;
   agentPicker.innerHTML = `<option value="">Director</option>${agents.map((agent) => `<option value="${escapeHtml(agent.id)}">${escapeHtml(agent.label)}</option>`).join("")}`;
   agentPicker.value = agents.some((agent) => agent.id === chosen) ? chosen : "";
+  renderAgentContacts(agents);
+  renderConversationHead();
+}
+
+// The agents one can write to, as a row of contacts above the conversation:
+// touching one writes to it, as the menu does.
+const agentContacts = document.querySelector("#agent-contacts");
+
+function renderAgentContacts(agents) {
+  if (!agentContacts) {
+    return;
+  }
+  const contacts = [{ id: "", label: "Director" }, ...agents.map((agent) => ({ id: agent.id, label: agent.label }))];
+  agentContacts.innerHTML = contacts.map((contact) => `
+    <button type="button" class="agent-contact" data-agent="${escapeHtml(contact.id)}" aria-pressed="${contact.id === agentPicker.value}">${avatar(contact.id || "director")}<span>${escapeHtml(contact.label)}</span></button>
+  `).join("");
+  agentContacts.hidden = contacts.length < 2;
+  agentContacts.querySelectorAll("[data-agent]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (agentPicker.value === button.dataset.agent) {
+        return;
+      }
+      agentPicker.value = button.dataset.agent;
+      agentPicker.dispatchEvent(new Event("change"));
+    });
+  });
+}
+
+// The head of the conversation names who is written to, and what it does.
+function renderConversationHead() {
+  const id = agentPicker?.value || "director";
+  const agent = AGENT_ROSTER.find((entry) => entry.id === id);
+  const head = document.querySelector("#conversation-avatar");
+  if (head) {
+    head.innerHTML = avatar(id, "lg");
+  }
+  const name = document.querySelector("#conversation-name");
+  if (name) {
+    name.textContent = agentPicker?.selectedOptions?.[0]?.textContent ?? "Director";
+  }
+  const role = document.querySelector("#conversation-role");
+  if (role) {
+    role.textContent = agent?.role ?? "";
+  }
+  agentContacts?.querySelectorAll("[data-agent]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.agent === (agentPicker?.value ?? "")));
+  });
 }
 const agentPanel = document.querySelector("#agent-panel");
 const agentThread = document.querySelector("#agent-thread");

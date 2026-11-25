@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light dark">
     <title>Director IA - AI Agents</title>
-    <meta name="theme-color" content="#18281f">
+    <meta name="theme-color" content="#f2eee6" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#121110" media="(prefers-color-scheme: dark)">
     <link rel="manifest" href="/manifest.webmanifest">
     <link rel="icon" type="image/png" sizes="32x32" href="/app/icons/favicon-32.png">
     <link rel="apple-touch-icon" href="/app/icons/apple-touch-icon.png">
@@ -15,7 +16,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=DM+Sans:opsz,wght@9..40,400..700&display=swap">
     <link rel="stylesheet" href="/app/styles.css">
   </head>
   <body class="min-h-dvh">
@@ -67,17 +68,17 @@
 
     <div class="app min-h-dvh md:grid md:grid-cols-[272px_minmax(0,1fr)]">
       <aside class="sidebar fixed inset-x-3 bottom-[calc(10px+env(safe-area-inset-bottom))] z-30 md:sticky md:inset-x-auto md:top-0 md:bottom-auto md:h-dvh md:p-3" aria-label="Navigation">
-        <div class="flex h-full flex-col gap-6 rounded-[24px] border border-white/10 bg-linear-to-b from-sidebar-2 to-sidebar px-1.5 py-1.5 text-sidebar-ink shadow-float md:overflow-y-auto md:rounded-[28px] md:border-white/6 md:px-3.5 md:pt-6 md:pb-4 md:[scrollbar-width:none]">
+        <div class="flex h-full flex-col gap-6 rounded-[24px] border border-line bg-surface-2 px-1.5 py-1.5 text-ink shadow-float md:overflow-y-auto md:rounded-[26px] md:shadow-none md:px-3.5 md:pt-6 md:pb-4 md:[scrollbar-width:none]">
           <div class="brand flex items-center gap-3 px-2 max-md:hidden">
-            <span class="brand-mark grid size-10 place-items-center rounded-xl bg-linear-140 from-[#9cc1b2] via-sage to-sand font-display text-[21px] font-semibold text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.35),0_8px_20px_-8px_rgb(128_166_151/0.8)]" aria-hidden="true">H</span>
+            <span class="brand-mark grid size-10 place-items-center rounded-xl bg-brand font-display text-[21px] font-bold text-brand-ink" aria-hidden="true">H</span>
             <div class="brand-text leading-tight">
               <strong class="block font-display text-[19px] font-semibold tracking-[-0.01em]">Director IA</strong>
-              <span class="text-[12px] text-sidebar-muted">H-KIDS · Équipe d'agents</span>
+              <span class="text-[12px] text-muted">H-KIDS · Équipe d'agents</span>
             </div>
           </div>
 
           <nav class="nav flex gap-0.5 overflow-x-auto [scrollbar-width:none] max-md:justify-between md:flex-col md:overflow-visible" aria-label="Vues du cockpit">
-            <p class="nav-caption mx-3 mb-1.5 text-[10.5px] font-semibold tracking-[0.14em] text-sidebar-muted/80 uppercase max-md:hidden">Pilotage</p>
+            <p class="nav-caption mx-3 mb-1.5 text-[10.5px] font-semibold tracking-[0.14em] text-muted uppercase max-md:hidden">Pilotage</p>
             <button type="button" class="nav-item" data-view="director" aria-current="page">
               <svg class="i" aria-hidden="true"><use href="#i-layout"/></svg><span class="nav-label">Briefing</span>
             </button>
@@ -100,7 +101,7 @@
               <svg class="i" aria-hidden="true"><use href="#i-chat"/></svg><span class="nav-label">WhatsApp</span>
               <span class="nav-badge" id="whatsapp-count" hidden>0</span>
             </button>
-            <p class="nav-caption mx-3 mt-5 mb-1.5 text-[10.5px] font-semibold tracking-[0.14em] text-sidebar-muted/80 uppercase max-md:hidden">Atelier</p>
+            <p class="nav-caption mx-3 mt-5 mb-1.5 text-[10.5px] font-semibold tracking-[0.14em] text-muted uppercase max-md:hidden">Atelier</p>
             <button type="button" class="nav-item" data-view="orders">
               <svg class="i" aria-hidden="true"><use href="#i-wrench"/></svg><span class="nav-label">Commandes</span>
               <span class="nav-badge" id="orders-count" hidden>0</span>
@@ -124,7 +125,7 @@
             <button type="button" class="nav-item max-md:hidden" data-view="team">
               <svg class="i" aria-hidden="true"><use href="#i-users"/></svg><span class="nav-label">Équipe IA</span>
             </button>
-            <p class="nav-caption mx-3 mt-5 mb-1.5 text-[10.5px] font-semibold tracking-[0.14em] text-sidebar-muted/80 uppercase max-md:hidden">Saisie manuelle</p>
+            <p class="nav-caption mx-3 mt-5 mb-1.5 text-[10.5px] font-semibold tracking-[0.14em] text-muted uppercase max-md:hidden">Saisie manuelle</p>
             <button type="button" class="nav-item max-md:hidden" data-view="documents">
               <svg class="i" aria-hidden="true"><use href="#i-file"/></svg><span class="nav-label">Documents</span>
             </button>
@@ -156,9 +157,9 @@
           </div>
 
           <div class="sidebar-foot mt-auto flex flex-col gap-2.5 max-md:hidden">
-            <div class="source-card flex gap-3 rounded-2xl border border-white/8 bg-white/4 px-3 py-2.5 text-[12px] leading-snug text-sidebar-muted">
+            <div class="source-card flex gap-3 rounded-2xl border border-line bg-surface px-3 py-2.5 text-[12px] leading-snug text-muted">
               <span class="status-dot mt-[5px]" aria-hidden="true"></span>
-              <p><span class="font-semibold text-sidebar-ink" id="api-status">Connecté</span><br>Aucune action sensible sans votre accord.</p>
+              <p><span class="font-semibold text-ink" id="api-status">Connecté</span><br>Aucune action sensible sans votre accord.</p>
             </div>
             <button type="button" class="theme-toggle" id="theme-toggle" title="Changer de thème">
               <svg class="i" aria-hidden="true"><use href="#i-monitor" id="theme-icon"/></svg>
@@ -192,61 +193,69 @@
           <strong>Cockpit en lecture seule.</strong> L'abonnement est suspendu : vous consultez et exportez tout, mais rien ne peut être modifié. Contactez votre fournisseur pour le réactiver.
         </p>
 
-        <!-- Briefing -->
-        <section class="view flex animate-rise flex-col gap-6 [&>*]:min-w-0" data-view-panel="director" aria-labelledby="request-title">
-          <section class="composer relative isolate overflow-hidden rounded-[28px] border border-line bg-surface px-4 pt-5 pb-4 shadow-card md:px-7 md:pt-7 md:pb-5 [&>*]:min-w-0" aria-labelledby="request-title">
-            <div class="pointer-events-none absolute -top-24 -right-20 -z-10 size-72 rounded-full bg-sand/35 blur-3xl" aria-hidden="true"></div>
-            <div class="pointer-events-none absolute -top-28 -left-24 -z-10 size-80 rounded-full bg-sage/30 blur-3xl" aria-hidden="true"></div>
-            <div class="composer-head mb-5 flex items-center gap-4">
-              <span class="composer-orb grid size-12 shrink-0 place-items-center rounded-2xl bg-linear-140 from-brand-2 to-brand text-brand-ink shadow-[var(--shadow-brand)]" aria-hidden="true"><svg class="i size-[22px]!"><use href="#i-sparkles"/></svg></span>
-              <div class="min-w-0">
-                <p class="eyebrow" id="request-title">Demande dirigeant</p>
-                <h2 class="composer-question font-display text-[22px] leading-tight font-semibold tracking-[-0.015em] md:text-[28px]" id="greeting">Que souhaitez-vous faire ?</h2>
-              </div>
-            </div>
-            <form id="director-form" class="composer-form flex flex-col gap-1.5 rounded-2xl border border-line-strong bg-surface p-2 shadow-sm transition focus-within:border-brand-2 focus-within:shadow-[0_0_0_4px_var(--ring)]">
-              <label for="director-message" class="visually-hidden">Votre demande</label>
-              <textarea id="director-message" name="message" rows="2" class="min-h-16 resize-none border-0 bg-transparent px-2.5 py-2 text-[16px] leading-normal shadow-none focus:shadow-none" placeholder="Que souhaitez-vous faire ?">Fais-moi le point sur mon entreprise aujourd'hui.</textarea>
-              <ul id="photo-tray" class="photo-tray" aria-label="Photos jointes" hidden></ul>
-              <div class="composer-bar flex items-center justify-between gap-3 pr-1 pb-0.5 pl-2.5">
-                <span class="flex min-w-0 items-center gap-2"><span id="director-agent-field" class="flex items-center gap-2" hidden><label for="director-agent" class="text-[13px] text-muted max-sm:sr-only">À</label><select id="director-agent" class="w-auto max-w-44 min-w-[7.5rem] py-1 text-[13px] max-sm:min-w-0 max-sm:max-w-[8.5rem]" title="Écrire au Director ou directement à un agent"><option value="">Director</option></select></span><span class="kbd-hint whitespace-nowrap max-lg:hidden"><kbd>Ctrl</kbd> + <kbd>Entrée</kbd> pour envoyer</span></span>
-                <div class="composer-actions flex shrink-0 gap-2">
-                  <input type="file" id="photo-input" accept="image/*,.pdf,.docx,.xlsx,.txt,.csv,.md" multiple hidden>
-                  <button type="button" class="icon-button" id="photo-button" title="Joindre des photos ou des documents : PDF, Word, Excel (ou glissez-les, ou collez-les)" hidden>
-                    <svg class="i" aria-hidden="true"><use href="#i-paperclip"/></svg><span class="visually-hidden">Joindre des photos ou des documents</span>
-                  </button>
-                  <button type="button" class="icon-button" id="voice-placeholder" disabled title="Parler au lieu d'écrire (la clé OpenAI du serveur est nécessaire)" aria-pressed="false">
-                    <svg class="i" aria-hidden="true"><use href="#i-mic"/></svg><span class="visually-hidden" id="voice-label">Parler au lieu d'écrire</span>
-                  </button>
-                  <button type="submit" class="primary send-button max-sm:w-11 max-sm:rounded-full max-sm:px-0" title="Envoyer"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg><span class="sr-only sm:hidden">Envoyer</span><span class="max-sm:hidden">Envoyer au Director</span></button>
+        <!-- Briefing: a conversation with the Director (or an agent), the day at a glance beside it. -->
+        <section class="view flex animate-rise flex-col gap-6 [&>*]:min-w-0" data-view-panel="director" aria-label="Briefing">
+          <div class="briefing-grid grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_356px] [&>*]:min-w-0">
+            <section class="conversation flex min-w-0 flex-col overflow-hidden rounded-[28px] border border-line bg-surface shadow-card" aria-labelledby="conversation-name">
+              <header class="flex items-center gap-3 border-b border-line px-4 py-3.5 md:px-6">
+                <span id="conversation-avatar" class="contents"><span class="avatar lg" style="--c:#24584a" title="Director">Di</span></span>
+                <div class="min-w-0 flex-1">
+                  <h2 id="conversation-name" class="font-display text-[19px] leading-tight font-bold tracking-[-0.01em]">Director</h2>
+                  <p id="conversation-role" class="truncate text-[13px] text-muted">Orchestre l'équipe et consolide le point du jour.</p>
                 </div>
+              </header>
+              <div id="agent-contacts" class="agent-contacts" role="group" aria-label="Écrire à" hidden></div>
+              <div class="conversation-body flex flex-col gap-4 bg-surface-2 px-4 py-5 md:px-6">
+                <div class="conversation-hello flex flex-col items-center gap-2 px-2 py-3 text-center md:py-10">
+                  <p id="greeting" class="font-display text-[23px] leading-tight font-bold tracking-[-0.02em] text-ink md:text-[28px]">Que souhaitez-vous faire ?</p>
+                  <p class="max-w-[46ch] text-[14px] text-muted">Donnez un objectif ou demandez le point : le Director confie le travail aux bons agents et vous rend l'essentiel.</p>
+                </div>
+                <section class="chat-panel" id="agent-panel" hidden aria-label="Conversation avec le Director">
+                  <div id="agent-thread" class="chat-thread"></div>
+                </section>
               </div>
-            </form>
-            <div class="chips mt-4 max-md:flex-nowrap max-md:overflow-x-auto max-md:[scrollbar-width:none] max-md:[&>*]:shrink-0" role="group" aria-label="Demandes fréquentes">
-              <button type="button" class="chip" data-scenario="Je veux qu'on fasse 100 000 DH de chiffre d'affaires ce mois. Quelle stratégie ?"><svg class="i" aria-hidden="true"><use href="#i-trend"/></svg>Objectif du mois</button>
-              <button type="button" class="chip" data-scenario="Fais-moi le point sur mon entreprise aujourd'hui."><svg class="i" aria-hidden="true"><use href="#i-layout"/></svg>Point entreprise</button>
-              <button type="button" class="chip" data-scenario="Qu'est-ce qui est urgent ?"><svg class="i" aria-hidden="true"><use href="#i-alert"/></svg>Urgences</button>
-              <button type="button" class="chip" data-scenario="Combien dois-je encaisser cette semaine ?"><svg class="i" aria-hidden="true"><use href="#i-wallet"/></svg>Encaissements</button>
-              <button type="button" class="chip" data-scenario="Quelles commandes risquent d'etre en retard ?"><svg class="i" aria-hidden="true"><use href="#i-clock"/></svg>Retards</button>
-              <button type="button" class="chip" data-scenario="Qu'est-ce que je dois commander ?"><svg class="i" aria-hidden="true"><use href="#i-cart"/></svg>Achats</button>
-              <button type="button" class="chip" data-scenario="Quels clients dois-je relancer ?"><svg class="i" aria-hidden="true"><use href="#i-megaphone"/></svg>Relances</button>
-              <button type="button" class="chip chip-sensitive" data-scenario="Effectue le paiement de cette facture."><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg>Paiement sensible</button>
-            </div>
-            <p id="ui-state" class="state-line mt-3" role="status">Prêt.</p>
-          </section>
+              <div class="flex flex-col gap-3 bg-surface-2 px-3 pb-3 md:px-5 md:pb-5 [&>*]:min-w-0">
+                <div class="chips max-md:-mx-3 max-md:scroll-px-3 max-md:px-3 max-md:flex-nowrap max-md:overflow-x-auto max-md:[scrollbar-width:none] max-md:[&>*]:shrink-0" role="group" aria-label="Demandes fréquentes">
+                  <button type="button" class="chip" data-scenario="Je veux qu'on fasse 100 000 DH de chiffre d'affaires ce mois. Quelle stratégie ?"><svg class="i" aria-hidden="true"><use href="#i-trend"/></svg>Objectif du mois</button>
+                  <button type="button" class="chip" data-scenario="Fais-moi le point sur mon entreprise aujourd'hui."><svg class="i" aria-hidden="true"><use href="#i-layout"/></svg>Point entreprise</button>
+                  <button type="button" class="chip" data-scenario="Qu'est-ce qui est urgent ?"><svg class="i" aria-hidden="true"><use href="#i-alert"/></svg>Urgences</button>
+                  <button type="button" class="chip" data-scenario="Combien dois-je encaisser cette semaine ?"><svg class="i" aria-hidden="true"><use href="#i-wallet"/></svg>Encaissements</button>
+                  <button type="button" class="chip" data-scenario="Quelles commandes risquent d'etre en retard ?"><svg class="i" aria-hidden="true"><use href="#i-clock"/></svg>Retards</button>
+                  <button type="button" class="chip" data-scenario="Qu'est-ce que je dois commander ?"><svg class="i" aria-hidden="true"><use href="#i-cart"/></svg>Achats</button>
+                  <button type="button" class="chip" data-scenario="Quels clients dois-je relancer ?"><svg class="i" aria-hidden="true"><use href="#i-megaphone"/></svg>Relances</button>
+                  <button type="button" class="chip chip-sensitive" data-scenario="Effectue le paiement de cette facture."><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg>Paiement sensible</button>
+                </div>
+                <form id="director-form" class="composer-form flex flex-col gap-1 rounded-[22px] border border-line-strong bg-surface p-1.5 shadow-card transition focus-within:border-brand-2 focus-within:shadow-[0_0_0_4px_var(--ring)]">
+                  <label for="director-message" class="visually-hidden">Demande dirigeant</label>
+                  <textarea id="director-message" name="message" rows="2" class="min-h-16 resize-none border-0 bg-transparent px-2.5 py-2 text-[16px] leading-normal shadow-none focus:shadow-none" placeholder="Que souhaitez-vous faire ?">Fais-moi le point sur mon entreprise aujourd'hui.</textarea>
+                  <ul id="photo-tray" class="photo-tray" aria-label="Photos jointes" hidden></ul>
+                  <div class="composer-bar flex items-center justify-between gap-3 pb-0.5 pl-2.5">
+                    <span class="flex min-w-0 items-center gap-2"><span id="director-agent-field" class="flex items-center gap-2" hidden><label for="director-agent" class="text-[13px] text-muted max-sm:sr-only">À</label><select id="director-agent" class="w-auto max-w-44 min-w-[7.5rem] py-1 text-[13px] max-sm:min-w-0 max-sm:max-w-[8.5rem]" title="Écrire au Director ou directement à un agent"><option value="">Director</option></select></span><span class="kbd-hint whitespace-nowrap max-lg:hidden"><kbd>Ctrl</kbd> + <kbd>Entrée</kbd> pour envoyer</span></span>
+                    <div class="composer-actions flex shrink-0 gap-2">
+                      <input type="file" id="photo-input" accept="image/*,.pdf,.docx,.xlsx,.txt,.csv,.md" multiple hidden>
+                      <button type="button" class="icon-button" id="photo-button" title="Joindre des photos ou des documents : PDF, Word, Excel (ou glissez-les, ou collez-les)" hidden>
+                        <svg class="i" aria-hidden="true"><use href="#i-paperclip"/></svg><span class="visually-hidden">Joindre des photos ou des documents</span>
+                      </button>
+                      <button type="button" class="icon-button" id="voice-placeholder" disabled title="Parler au lieu d'écrire (la clé OpenAI du serveur est nécessaire)" aria-pressed="false">
+                        <svg class="i" aria-hidden="true"><use href="#i-mic"/></svg><span class="visually-hidden" id="voice-label">Parler au lieu d'écrire</span>
+                      </button>
+                      <button type="submit" class="primary send-button min-h-10 max-sm:w-10 max-sm:px-0" title="Envoyer"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg><span class="sr-only sm:hidden">Envoyer</span><span class="max-sm:hidden">Envoyer au Director</span></button>
+                    </div>
+                  </div>
+                </form>
+                <p id="ui-state" class="state-line px-2" role="status">Prêt.</p>
+              </div>
+            </section>
 
-          <section class="panel chat-panel px-4 py-5 md:px-6" id="agent-panel" hidden aria-label="Conversation avec le Director">
-            <div id="agent-thread" class="chat-thread"></div>
-          </section>
-
-          <!-- The day at a glance, from the cockpit's own data; each tile opens its view. -->
-          <section aria-labelledby="overview-title">
-            <div class="mb-3 flex items-baseline justify-between gap-3 px-1">
-              <h2 id="overview-title" class="font-display text-[19px] font-semibold tracking-[-0.01em]">Aujourd'hui</h2>
-              <span class="text-[12.5px] text-muted">Chaque carte ouvre sa vue</span>
-            </div>
-            <div id="overview" class="overview-grid"></div>
-          </section>
+            <!-- The day at a glance, from the cockpit's own data; each tile opens its view. -->
+            <section aria-labelledby="overview-title">
+              <div class="mb-3 flex items-baseline justify-between gap-3 px-1">
+                <h2 id="overview-title" class="font-display text-[20px] font-bold tracking-[-0.01em]">Aujourd'hui</h2>
+                <span class="text-[12.5px] text-muted">Chaque carte ouvre sa vue</span>
+              </div>
+              <div id="overview" class="overview-grid"></div>
+            </section>
+          </div>
 
           <!-- The direction's scheduled reports: the direction alone sees them. -->
           <section id="reports-panel" class="panel reports-panel" aria-labelledby="reports-title" hidden>
@@ -912,10 +921,10 @@
     <div id="login-screen" class="login-screen fixed inset-0 z-[60] grid overflow-y-auto bg-bg md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]" hidden>
       <aside class="login-hero max-md:hidden" aria-hidden="true">
         <div class="flex items-center gap-3">
-          <span class="brand-mark grid size-11 place-items-center rounded-xl bg-linear-140 from-[#9cc1b2] via-sage to-sand font-display text-[22px] font-semibold text-white">H</span>
+          <span class="brand-mark grid size-11 place-items-center rounded-xl bg-white/12 font-display text-[22px] font-bold text-white">H</span>
           <div class="leading-tight">
             <strong class="block font-display text-[19px] font-semibold">Director IA</strong>
-            <span class="text-[12.5px] text-sidebar-muted">H-KIDS · Marrakech</span>
+            <span class="text-[12.5px] text-white/70">H-KIDS · Marrakech</span>
           </div>
         </div>
         <div>
@@ -926,11 +935,11 @@
             <li><svg class="i"><use href="#i-shield"/></svg>Aucune action sensible sans votre accord</li>
           </ul>
         </div>
-        <p class="text-[12px] text-sidebar-muted">Connexion chiffrée · une session par appareil</p>
+        <p class="text-[12px] text-white/70">Connexion chiffrée · une session par appareil</p>
       </aside>
       <div class="grid place-items-center px-4 py-10">
       <form id="login-form" class="w-full max-w-[400px] rounded-[28px] border border-line bg-surface p-6 shadow-card md:border-0 md:bg-transparent md:p-8 md:shadow-none">
-        <span class="mb-5 grid size-12 place-items-center rounded-2xl bg-linear-140 from-brand-2 to-brand text-brand-ink shadow-[var(--shadow-brand)]" aria-hidden="true"><svg class="i size-[22px]!"><use href="#i-sparkles"/></svg></span>
+        <span class="mb-5 grid size-12 place-items-center rounded-2xl bg-brand text-brand-ink" aria-hidden="true"><svg class="i size-[22px]!"><use href="#i-sparkles"/></svg></span>
         <h1 class="text-[28px]">Bon retour</h1>
         <p class="mt-1.5 mb-7 text-[14.5px] text-muted">Connectez-vous pour ouvrir le cockpit H&#8209;KIDS.</p>
         <div class="field">
@@ -951,7 +960,7 @@
         <p class="mt-6 text-center text-[12.5px] text-muted">Mot de passe oublié ? Demandez à Omar de le réinitialiser.</p>
       </form>
       <form id="password-form" class="w-full max-w-[400px] rounded-[28px] border border-line bg-surface p-6 shadow-card md:border-0 md:bg-transparent md:p-8 md:shadow-none" hidden>
-        <span class="mb-5 grid size-12 place-items-center rounded-2xl bg-linear-140 from-brand-2 to-brand text-brand-ink shadow-[var(--shadow-brand)]" aria-hidden="true"><svg class="i size-[22px]!"><use href="#i-shield"/></svg></span>
+        <span class="mb-5 grid size-12 place-items-center rounded-2xl bg-brand text-brand-ink" aria-hidden="true"><svg class="i size-[22px]!"><use href="#i-shield"/></svg></span>
         <h1 class="text-[28px]">Votre mot de passe</h1>
         <p class="mt-1.5 mb-7 text-[14.5px] text-muted">Le mot de passe reçu est provisoire. Choisissez le vôtre : au moins 10 caractères. Personne d'autre ne le connaîtra.</p>
         <div class="field" id="password-current-field">

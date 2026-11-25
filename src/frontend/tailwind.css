@@ -32,17 +32,17 @@
 
 :root {
   color-scheme: light;
-  --bg: #f4f2ec;
+  --bg: #f2eee6;
   --bg-glow: rgba(201, 183, 156, 0.30);
   --bg-glow-2: rgba(128, 166, 151, 0.22);
   --surface: #ffffff;
-  --surface-2: #faf8f4;
-  --surface-3: #f0ede6;
-  --ink: #16201b;
-  --ink-2: #34403a;
-  --muted: #5f6a64;
-  --line: #e6e1d7;
-  --line-strong: #d3ccbf;
+  --surface-2: #fbf9f5;
+  --surface-3: #f0ece3;
+  --ink: #1d1b18;
+  --ink-2: #33312c;
+  --muted: #5e5c55;
+  --line: #ece6da;
+  --line-strong: #ddd5c6;
   --brand: #22564a;
   --brand-2: #2e6e5d;
   --brand-soft: #e4eee9;
@@ -58,27 +58,27 @@
   --danger-soft: #fbe7e1;
   --info: #285f8f;
   --info-soft: #e3edf7;
-  --sidebar: #0f1a15;
-  --sidebar-2: #18281f;
-  --sidebar-ink: #eef3f0;
-  --sidebar-muted: #8fa198;
+  --sidebar: #fbf9f5;
+  --sidebar-2: #fbf9f5;
+  --sidebar-ink: #1d1b18;
+  --sidebar-muted: #5e5c55;
   --ring: rgba(46, 110, 93, 0.22);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --bg: #0c120f;
+    --bg: #121110;
     --bg-glow: rgba(201, 183, 156, 0.07);
     --bg-glow-2: rgba(128, 166, 151, 0.10);
-    --surface: #131b17;
-    --surface-2: #17211c;
-    --surface-3: #1e2a24;
-    --ink: #e8eeea;
-    --ink-2: #c2cbc6;
-    --muted: #8d9a93;
-    --line: #232e28;
-    --line-strong: #324039;
+    --surface: #1b1a17;
+    --surface-2: #211f1c;
+    --surface-3: #2a2723;
+    --ink: #f1ede6;
+    --ink-2: #d3cdc2;
+    --muted: #a7a196;
+    --line: #2e2b27;
+    --line-strong: #3d3933;
     --brand: #7cc0a7;
     --brand-2: #98d3bd;
     --brand-soft: #1a2c25;
@@ -91,25 +91,27 @@
     --danger-soft: #301a15;
     --info: #8bbbe4;
     --info-soft: #16232e;
-    --sidebar: #080d0b;
-    --sidebar-2: #101914;
+    --sidebar: #181714;
+    --sidebar-2: #181714;
+    --sidebar-ink: #f1ede6;
+    --sidebar-muted: #a7a196;
     --ring: rgba(124, 192, 167, 0.22);
   }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #0c120f;
+  --bg: #121110;
   --bg-glow: rgba(201, 183, 156, 0.07);
   --bg-glow-2: rgba(128, 166, 151, 0.10);
-  --surface: #131b17;
-  --surface-2: #17211c;
-  --surface-3: #1e2a24;
-  --ink: #e8eeea;
-  --ink-2: #c2cbc6;
-  --muted: #8d9a93;
-  --line: #232e28;
-  --line-strong: #324039;
+  --surface: #1b1a17;
+  --surface-2: #211f1c;
+  --surface-3: #2a2723;
+  --ink: #f1ede6;
+  --ink-2: #d3cdc2;
+  --muted: #a7a196;
+  --line: #2e2b27;
+  --line-strong: #3d3933;
   --brand: #7cc0a7;
   --brand-2: #98d3bd;
   --brand-soft: #1a2c25;
@@ -122,8 +124,10 @@
   --danger-soft: #301a15;
   --info: #8bbbe4;
   --info-soft: #16232e;
-  --sidebar: #080d0b;
-  --sidebar-2: #101914;
+  --sidebar: #181714;
+  --sidebar-2: #181714;
+  --sidebar-ink: #f1ede6;
+  --sidebar-muted: #a7a196;
   --ring: rgba(124, 192, 167, 0.22);
 }
 
@@ -160,11 +164,11 @@
 }
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
-  --shadow-card: 0 1px 2px rgb(22 32 27 / 0.04), 0 10px 30px -14px rgb(22 32 27 / 0.16);
-  --shadow-float: 0 30px 60px -28px rgb(22 32 27 / 0.35);
+  --shadow-card: 0 1px 2px rgb(29 27 24 / 0.04), 0 8px 24px -16px rgb(29 27 24 / 0.2);
+  --shadow-float: 0 24px 50px -26px rgb(29 27 24 / 0.38);
   --shadow-brand: 0 12px 26px -12px var(--brand);
   --ease-out-soft: cubic-bezier(0.2, 0.7, 0.2, 1);
   --animate-rise: rise 0.35s var(--ease-out-soft) both;
@@ -201,16 +205,11 @@
 @layer base {
   body {
     @apply bg-bg font-sans text-[15px] leading-normal text-ink antialiased md:text-[14.5px];
-    background-image:
-      radial-gradient(1100px 560px at 90% -12%, var(--bg-glow), transparent 60%),
-      radial-gradient(900px 520px at -10% 10%, var(--bg-glow-2), transparent 60%);
-    background-attachment: fixed;
-    font-feature-settings: "cv11", "ss01";
     -webkit-tap-highlight-color: transparent;
   }
 
   /* Figures of the same width where amounts and counts are read in columns
-     (only there: Inter would widen the hyphens of the text too). */
+     (only there: the text keeps its own figures). */
   .num,
   td.num,
   th.num,
@@ -232,7 +231,7 @@
   }
 
   h1 {
-    @apply font-display text-[30px] leading-[1.1] font-semibold tracking-[-0.015em];
+    @apply font-display text-[30px] leading-[1.1] font-bold tracking-[-0.02em];
   }
 
   h2 {
@@ -279,7 +278,7 @@
   /* Buttons: brand by default; .secondary, .danger, .link-button and
      .icon-button change the look. */
   button {
-    @apply inline-flex min-h-[38px] cursor-pointer items-center justify-center gap-2 rounded-xl border border-brand bg-brand px-4 text-[14px] font-semibold text-brand-ink transition duration-150 ease-out hover:border-brand-2 hover:bg-brand-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-55;
+    @apply inline-flex min-h-[38px] cursor-pointer items-center justify-center gap-2 rounded-[14px] border border-brand bg-brand px-4 text-[14px] font-semibold text-brand-ink transition duration-150 ease-out hover:border-brand-2 hover:bg-brand-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-55;
   }
 
   button:focus-visible,
@@ -348,23 +347,23 @@
 
   /* Sidebar navigation */
   .nav-item {
-    @apply relative min-h-10 w-full justify-start gap-3 rounded-xl border-0 bg-transparent px-3 text-left text-[14px] font-medium text-sidebar-muted shadow-none hover:bg-white/6 hover:text-sidebar-ink;
+    @apply relative min-h-10 w-full justify-start gap-3 rounded-[14px] border-0 bg-transparent px-3 text-left text-[14px] font-medium text-ink-2 shadow-none hover:bg-surface-3 hover:text-ink;
   }
 
-  .nav-item[aria-current="page"] {
-    @apply bg-white/10 text-white;
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.06);
+  .nav-item .i {
+    @apply text-muted;
   }
 
-  .nav-item[aria-current="page"] .i {
-    @apply text-sage;
+  /* The current view, and « Plus » while one of its views is shown. */
+  .nav-item[aria-current="page"],
+  .nav-item[data-active="true"] {
+    @apply bg-surface font-semibold text-ink hover:bg-surface dark:bg-surface-3;
+    box-shadow: 0 1px 2px rgb(29 27 24 / 0.06), 0 6px 16px -10px rgb(29 27 24 / 0.24);
   }
 
-  @media (width >= 48rem) {
-    .nav-item[aria-current="page"]::before {
-      content: "";
-      @apply absolute top-1/2 -left-1.5 h-5 w-[3px] -translate-y-1/2 rounded-full bg-sage;
-    }
+  .nav-item[aria-current="page"] .i,
+  .nav-item[data-active="true"] .i {
+    @apply text-brand;
   }
 
   .nav-label {
@@ -388,8 +387,7 @@
   }
 
   .topbar-mark {
-    @apply grid size-9 shrink-0 place-items-center rounded-xl bg-linear-140 from-[#9cc1b2] via-sage to-sand font-display text-[18px] font-semibold text-white;
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.35);
+    @apply grid size-9 shrink-0 place-items-center rounded-xl bg-brand font-display text-[18px] font-bold text-brand-ink;
   }
 
   .session-box {
@@ -431,21 +429,7 @@
 
   /* Sign-in: the H-KIDS promise on the left, the form on the right. */
   .login-hero {
-    @apply relative isolate m-3 flex flex-col justify-between overflow-hidden rounded-[32px] bg-linear-to-br from-sidebar-2 to-sidebar p-10 text-sidebar-ink lg:p-14;
-  }
-
-  .login-hero::before,
-  .login-hero::after {
-    content: "";
-    @apply pointer-events-none absolute -z-10 rounded-full blur-3xl;
-  }
-
-  .login-hero::before {
-    @apply -top-32 -right-24 size-96 bg-sage/30;
-  }
-
-  .login-hero::after {
-    @apply -bottom-40 -left-24 size-[420px] bg-sand/20;
+    @apply relative isolate m-3 flex flex-col justify-between overflow-hidden rounded-[32px] bg-[#1f4b40] p-10 text-white lg:p-14;
   }
 
   .login-hero-title {
@@ -453,7 +437,7 @@
   }
 
   .login-hero-points {
-    @apply mt-8 flex flex-col gap-3.5 text-[14.5px] text-sidebar-ink/85;
+    @apply mt-8 flex flex-col gap-3.5 text-[14.5px] text-white/85;
   }
 
   .login-hero-points li {
@@ -461,42 +445,33 @@
   }
 
   .login-hero-points .i {
-    @apply size-9 rounded-xl bg-white/8 p-2 text-sage;
-  }
-
-  /* « Plus » stays lit while one of the views it opens is shown. */
-  .nav-item[data-active="true"] {
-    @apply bg-white/10 text-white;
-  }
-
-  .nav-item[data-active="true"] .i {
-    @apply text-sage;
+    @apply size-9 rounded-xl bg-white/10 p-2 text-[#bfe0d2];
   }
 
   /* The views a phone's tab bar has no room for, in a sheet above it. */
   .more-sheet {
-    @apply fixed inset-x-3 bottom-[calc(84px+env(safe-area-inset-bottom))] z-40 flex flex-col gap-0.5 rounded-3xl border border-white/10 bg-sidebar-2 p-2 shadow-float;
+    @apply fixed inset-x-3 bottom-[calc(84px+env(safe-area-inset-bottom))] z-40 flex flex-col gap-0.5 rounded-3xl border border-line bg-surface p-2 shadow-float;
     animation: toast-in 0.2s var(--ease-out-soft) both;
   }
 
   .more-sheet-title {
-    @apply px-3 pt-2 pb-1 text-[10.5px] font-semibold tracking-[0.14em] text-sidebar-muted uppercase;
+    @apply px-3 pt-2 pb-1 text-[10.5px] font-semibold tracking-[0.14em] text-muted uppercase;
   }
 
   .sheet-item {
-    @apply min-h-12 justify-start gap-3 rounded-2xl border-0 bg-transparent px-3 text-[15px] font-medium text-sidebar-ink shadow-none hover:bg-white/8;
+    @apply min-h-12 justify-start gap-3 rounded-2xl border-0 bg-transparent px-3 text-[15px] font-medium text-ink shadow-none hover:bg-surface-3;
   }
 
   .sheet-item .i {
-    @apply text-sidebar-muted;
+    @apply text-muted;
   }
 
   .sheet-item[aria-current="page"] {
-    @apply bg-white/10;
+    @apply bg-brand-soft font-semibold;
   }
 
   .sheet-item[aria-current="page"] .i {
-    @apply text-sage;
+    @apply text-brand;
   }
 
   .nav-badge {
@@ -512,7 +487,8 @@
 
     .nav-item[aria-current="page"],
     .nav-item[data-active="true"] {
-      @apply bg-white/12;
+      @apply bg-brand-soft text-brand dark:bg-brand-soft;
+      box-shadow: none;
     }
   }
 
@@ -539,12 +515,12 @@
   }
 
   .theme-toggle {
-    @apply min-h-[38px] justify-start gap-2.5 rounded-xl border border-white/10 bg-transparent px-3 text-[13px] font-medium text-sidebar-muted shadow-none hover:border-white/15 hover:bg-white/6 hover:text-sidebar-ink;
+    @apply min-h-[38px] justify-start gap-2.5 rounded-xl border border-line bg-transparent px-3 text-[13px] font-medium text-muted shadow-none hover:border-line-strong hover:bg-surface-3 hover:text-sidebar-ink;
   }
 
   /* Buttons */
   button.primary {
-    box-shadow: var(--shadow-brand);
+    box-shadow: 0 1px 2px rgb(29 27 24 / 0.1);
   }
 
   button.secondary {
@@ -560,7 +536,7 @@
   }
 
   .icon-button {
-    @apply w-10 border-line-strong bg-surface p-0 text-ink-2 hover:border-line-strong hover:bg-surface-3;
+    @apply size-10 rounded-[14px] border-transparent bg-surface-3 p-0 text-ink-2 hover:border-transparent hover:bg-line-strong/60;
   }
 
   .send-button.is-loading {
@@ -605,7 +581,7 @@
   }
 
   .chip {
-    @apply min-h-8 rounded-full border border-line bg-surface/80 py-0 pr-3 pl-2.5 text-[13px] font-medium text-ink-2 shadow-none backdrop-blur hover:border-brand/40 hover:bg-brand-soft hover:text-brand;
+    @apply min-h-8 rounded-full border-0 bg-surface-3 py-0 pr-3.5 pl-3 text-[13px] font-medium text-ink-2 shadow-none hover:bg-brand-soft hover:text-brand;
   }
 
   .chip .i {
@@ -622,7 +598,7 @@
   }
 
   .chip-sensitive {
-    @apply border-dashed border-danger/45;
+    @apply border border-dashed border-danger/45 bg-transparent;
   }
 
   /* Surfaces */
@@ -695,7 +671,28 @@
   /* ---------- The day at a glance ---------- */
 
   .overview-grid {
-    @apply grid grid-cols-2 gap-2.5 md:gap-3 lg:grid-cols-3 2xl:grid-cols-6;
+    @apply grid grid-cols-2 gap-2.5 md:grid-cols-3 md:gap-3 xl:grid-cols-2;
+  }
+
+  /* Two columns (a phone, the column of a wide screen): the cash of the day
+     and the last tile take the full width, so no tile is left alone. */
+  @media (width < 48rem), (width >= 80rem) {
+    .overview-grid > [data-goto="cash"],
+    .overview-grid > :last-child {
+      @apply col-span-2;
+    }
+  }
+
+  /* In the column of a wide screen, a tile is narrow: tighter, and its name
+     may take a second line rather than be cut. */
+  @media (width >= 80rem) {
+    .overview-grid .overview-tile {
+      @apply p-4;
+    }
+
+    .overview-grid .overview-label {
+      @apply pr-0 whitespace-normal;
+    }
   }
 
   /* An amount is longer than a count: smaller, so it fits a phone's tile. */
@@ -709,16 +706,34 @@
     --tone: var(--brand);
     --tone-soft: var(--brand-soft);
     @apply relative grid min-h-0 grid-cols-[auto_minmax(0,1fr)] content-start items-center gap-x-2.5 overflow-hidden rounded-[20px] border border-line bg-surface p-3.5 text-left font-normal text-ink shadow-card transition duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface md:rounded-3xl md:p-5;
+    box-shadow: none;
   }
 
-  .overview-tile:is([data-tone="warn"], [data-tone="danger"])::before {
-    content: "";
-    @apply absolute inset-y-0 left-0 w-[3px];
-    background: var(--tone);
+  /* A tile that needs attention is tinted with its colour. */
+  .overview-tile:is([data-tone="warn"], [data-tone="danger"]) {
+    border-color: transparent;
+    background: var(--tone-soft);
   }
 
   .overview-tile:hover {
-    box-shadow: var(--shadow-float);
+    box-shadow: var(--shadow-card);
+  }
+
+  .overview-tile[data-goto="cash"] {
+    @apply border-transparent bg-brand text-brand-ink hover:bg-brand;
+  }
+
+  .overview-tile[data-goto="cash"] :is(.overview-label, .overview-value, small, .overview-go) {
+    color: inherit;
+  }
+
+  .overview-tile[data-goto="cash"] :is(.overview-label, small) {
+    opacity: 0.85;
+  }
+
+  .overview-tile[data-goto="cash"] .overview-icon {
+    background: rgb(255 255 255 / 0.14);
+    color: inherit;
   }
 
   .overview-tile[data-tone="good"] { --tone: var(--good); --tone-soft: var(--good-soft); }
@@ -1592,8 +1607,30 @@
   /* ---------- Conversation with the Director ---------- */
 
   .chat-thread {
-    @apply flex max-h-[620px] flex-col gap-4 overflow-y-auto pr-1;
+    @apply flex flex-col gap-4 md:max-h-[min(62vh,640px)] md:overflow-y-auto md:pr-1;
     scrollbar-width: thin;
+  }
+
+  /* The agents one can write to, side by side like a messaging app's
+     contacts; the one written to is lit. */
+  .agent-contacts {
+    @apply flex gap-1 overflow-x-auto border-b border-line px-3 py-2 [scrollbar-width:none] md:px-5;
+  }
+
+  .agent-contact {
+    @apply min-h-0 w-[74px] shrink-0 flex-col gap-1 rounded-2xl border-0 bg-transparent px-1 py-1.5 text-[11.5px] font-medium text-muted shadow-none hover:bg-surface-3 hover:text-ink;
+  }
+
+  .agent-contact > span:last-child {
+    @apply w-full truncate text-center;
+  }
+
+  .agent-contact .avatar {
+    @apply size-10 rounded-[13px] text-[13px];
+  }
+
+  .agent-contact[aria-pressed="true"] {
+    @apply bg-brand-soft font-semibold text-ink hover:bg-brand-soft;
   }
 
   .bubble {
@@ -1609,7 +1646,7 @@
   }
 
   .bubble-text {
-    @apply rounded-2xl border border-line bg-surface-2 px-4 py-3 text-[14.5px] leading-[1.6] text-ink;
+    @apply rounded-[20px] border border-line bg-surface px-4 py-3 text-[14.5px] leading-[1.6] text-ink;
   }
 
   .answer-text > * + * {
@@ -1645,8 +1682,7 @@
   }
 
   .bubble.user .bubble-text {
-    @apply rounded-br-md border-transparent bg-linear-140 from-brand-2 to-brand text-brand-ink;
-    box-shadow: var(--shadow-brand);
+    @apply rounded-br-md border-transparent bg-brand text-brand-ink;
   }
 
   .bubble.agent .bubble-text {
@@ -3293,4 +3329,14 @@
   .sidebar > div {
     row-gap: 0.75rem;
   }
+}
+
+/* ================= Conversation ================= */
+
+/* Outside the layers, so they win over the display utilities of the shell:
+   the greeting holds the empty conversation until the first message, and
+   with the row of contacts the recipient menu would say the same twice. */
+.conversation-body:has(#agent-panel:not([hidden])) .conversation-hello,
+.conversation:has(#agent-contacts:not([hidden])) #director-agent-field {
+  display: none;
 }

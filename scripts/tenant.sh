@@ -78,7 +78,9 @@ write_site() {
     echo "# $(env_value "$env_file" COMPANY_NAME)"
     echo "$(env_value "$env_file" DOMAIN) {"
     echo "	import cockpit"
-    echo "	reverse_proxy $1-app:3000"
+    echo "	reverse_proxy $1-app:3000 {"
+    echo "		lb_try_duration 30s"
+    echo "	}"
     echo "}"
   } > "$CADDY_SITES/$1.caddy"
 }
@@ -160,11 +162,17 @@ upgrade() {
     slug=$(env_value "$env_file" TENANT)
     if [ -f "$CADDY_SITES/$slug.caddy" ]; then
       compose "$slug" up -d
+      # Its address rewritten too, so it follows the proxy's settings.
+      write_site "$slug"
+      reloaded=yes
       echo "$slug : à jour."
     else
       echo "$slug : arrêtée, laissée telle quelle."
     fi
   done
+  if [ "${reloaded:-}" = yes ]; then
+    reload_caddy >/dev/null 2>&1 || echo "Caddy non rechargé : lancez « docker compose restart caddy » dans deploy/."
+  fi
 }
 
 start() {

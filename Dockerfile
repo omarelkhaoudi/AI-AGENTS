@@ -39,4 +39,7 @@ EXPOSE 3000
 
 # Migrations are additive and idempotent: applying them at every start keeps the
 # database in step with the code that is about to run.
-CMD ["sh", "-c", "npx prisma migrate deploy && node src/server.js"]
+# exec: node replaces the shell, so it receives the stop signal itself and
+# finishes the answers on their way before it exits (a shell would not pass the
+# signal on, and Docker would cut them after its grace period).
+CMD ["sh", "-c", "npx prisma migrate deploy && exec node src/server.js"]

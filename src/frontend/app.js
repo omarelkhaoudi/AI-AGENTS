@@ -4918,13 +4918,27 @@ function decisionResultLabel(response, decision) {
     : "Action rejetee.";
 }
 
+// What the person reads when the cockpit could not be reached, instead of the
+// browser's own « Failed to fetch ».
+const CONNECTION_LOST = "La connexion au cockpit a été coupée avant la réponse (mise à jour du cockpit ou réseau). Votre message est resté dans la zone de saisie : renvoyez-le dans un instant.";
+const COCKPIT_UNAVAILABLE = "Le cockpit ne répond pas pour le moment (mise à jour en cours ?). Votre message est resté dans la zone de saisie : renvoyez-le dans un instant.";
+
 async function postJson(url, body) {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json", ...(await authHeaders()) },
-    body: JSON.stringify(body)
-  });
-  const payload = await response.json();
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify(body)
+    });
+  } catch {
+    throw new Error(CONNECTION_LOST);
+  }
+  // A proxy's error page is not JSON: it says the cockpit was unreachable.
+  const payload = await response.json().catch(() => null);
+  if (payload === null) {
+    throw new Error(response.ok ? CONNECTION_LOST : COCKPIT_UNAVAILABLE);
+  }
   if (!response.ok) {
     const error = new Error(payload.error ?? "La requete a echoue.");
     error.details = payload.details ?? null;

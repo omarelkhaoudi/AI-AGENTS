@@ -128,10 +128,13 @@ const sweep = setInterval(() => {
 }, 30 * 60 * 1000);
 sweep.unref();
 
+// On a stop (a new version deployed), the server stops taking requests, lets
+// those on their way finish (an agent's answer takes a while), and only then
+// lets go of the database they still need.
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.once(signal, async () => {
-    await repository.disconnect();
     await app.close();
+    await repository.disconnect();
     process.exit(0);
   });
 }

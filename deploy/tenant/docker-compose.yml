@@ -37,6 +37,9 @@ services:
     # deploy/): every company runs the same version.
     image: deploy-app:latest
     restart: unless-stopped
+    # Time for the answers on their way to finish when a new version replaces
+    # this one (Docker's default, 10 s, cut the agents mid-answer).
+    stop_grace_period: 2m
     depends_on:
       company-db:
         condition: service_healthy

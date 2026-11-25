@@ -25,5 +25,8 @@ import /etc/caddy/tenants/*.caddy
 
 {$DOMAIN} {
 	import cockpit
-	reverse_proxy app:3000
+	reverse_proxy app:3000 {
+		# While a new version starts, a request waits for it instead of failing.
+		lb_try_duration 30s
+	}
 }

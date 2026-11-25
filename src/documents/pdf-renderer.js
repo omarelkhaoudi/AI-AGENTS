@@ -190,7 +190,7 @@ const TABLE_LAYOUTS = Object.freeze({
   })
 });
 
-const TAGLINE = "H-KIDS – Mobilier et aménagement sur mesure pour enfants.";
+const TAGLINE = HKIDS_FIXED_IDENTITY.tagline;
 
 export async function renderHkidsPdf(document, {
   fontPath = process.env.HKIDS_DOCUMENT_FONT_PATH ?? null,
@@ -227,8 +227,8 @@ export async function renderHkidsPdf(document, {
 async function drawDocument(document, files, { compact }) {
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
-  pdf.setTitle(`H-KIDS — ${titleCase(documentTitleFor(document.documentType))} n° ${document.documentNumber} — ${document.client.name}`);
-  pdf.setAuthor("H-KIDS");
+  pdf.setTitle(`${HKIDS_FIXED_IDENTITY.shortName} — ${titleCase(documentTitleFor(document.documentType))} n° ${document.documentNumber} — ${document.client.name}`);
+  pdf.setAuthor(HKIDS_FIXED_IDENTITY.shortName);
   const font = await pdf.embedFont(files.font, { subset: true });
   const bold = await pdf.embedFont(files.bold, { subset: true });
   const logo = await pdf.embedJpg(files.logo);
@@ -314,7 +314,7 @@ function createWriter(pdf, document, { font, bold, logo, compact = false }) {
 function drawFirstPageHeader(w, document) {
   drawLogo(w);
   w.text(HKIDS_FIXED_IDENTITY.companyName, 170, 48, { size: 11, isBold: true });
-  [...HKIDS_FIXED_IDENTITY.addressLines, `E-mail : ${HKIDS_FIXED_IDENTITY.email}`, `Tél : ${HKIDS_FIXED_IDENTITY.phone}`]
+  [...HKIDS_FIXED_IDENTITY.addressLines, ...HKIDS_FIXED_IDENTITY.contactLines]
     .forEach((line, index) => w.text(line, 170, 63 + index * 10, { size: 8, color: COLORS.gray }));
 
   // The number is part of the title, at the top of the page, where Hiba looks
@@ -563,15 +563,17 @@ function quoteInstalments(document) {
 // order, receives a delivery, and settles an invoice, which needs no signature.
 function drawClosing(w, document) {
   const block = {
-    [HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER]: { title: "BON POUR ACCORD", left: "Pour H KIDS", right: "Le client", leftSign: "Signature / Cachet :", rightSign: "Signature :" },
-    [HKIDS_DOCUMENT_TYPES.QUOTE]: { title: "BON POUR ACCORD", left: "Pour H KIDS", right: "Le client", leftSign: "Signature / Cachet :", rightSign: "Date et signature :" },
-    [HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE]: { title: "RÉCEPTION DE LA LIVRAISON", left: "Livré par H KIDS", right: "Reçu par le client", leftSign: "Signature / Cachet :", rightSign: "Date et signature :" },
-    [HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT]: { title: "POUR ACQUIT", left: "Reçu par H KIDS", right: "Versé par le client", leftSign: "Signature / Cachet :", rightSign: "Signature :" }
+    [HKIDS_DOCUMENT_TYPES.PURCHASE_ORDER]: { title: "BON POUR ACCORD", left: `Pour ${HKIDS_FIXED_IDENTITY.signatureName}`, right: "Le client", leftSign: "Signature / Cachet :", rightSign: "Signature :" },
+    [HKIDS_DOCUMENT_TYPES.QUOTE]: { title: "BON POUR ACCORD", left: `Pour ${HKIDS_FIXED_IDENTITY.signatureName}`, right: "Le client", leftSign: "Signature / Cachet :", rightSign: "Date et signature :" },
+    [HKIDS_DOCUMENT_TYPES.DELIVERY_NOTE]: { title: "RÉCEPTION DE LA LIVRAISON", left: `Livré par ${HKIDS_FIXED_IDENTITY.signatureName}`, right: "Reçu par le client", leftSign: "Signature / Cachet :", rightSign: "Date et signature :" },
+    [HKIDS_DOCUMENT_TYPES.PAYMENT_RECEIPT]: { title: "POUR ACQUIT", left: `Reçu par ${HKIDS_FIXED_IDENTITY.signatureName}`, right: "Versé par le client", leftSign: "Signature / Cachet :", rightSign: "Signature :" }
   }[document.documentType];
 
   w.ensure(block ? 110 : 20);
-  w.text(TAGLINE, L, w.y + 4, { size: 8, color: COLORS.gray });
-  w.y += 16;
+  if (TAGLINE) {
+    w.text(TAGLINE, L, w.y + 4, { size: 8, color: COLORS.gray });
+    w.y += 16;
+  }
   if (!block) {
     return;
   }

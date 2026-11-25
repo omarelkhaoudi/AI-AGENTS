@@ -1,11 +1,12 @@
-import { COMPANY } from "../company/company-profile.js";
+import { COMPANY, isPilotCompany } from "../company/company-profile.js";
 import { roundMoney } from "./document-calculations.js";
 
 // Purchase orders carry their own number series, independent of quotes,
 // delivery notes and invoices. These were issued by hand before the generator
 // existed; they are listed so the generator can never hand one of them out
 // again. Orders generated afterwards are found on disk by the service.
-export const HKIDS_ISSUED_PURCHASE_ORDER_NUMBERS = Object.freeze(["160", "161", "162", "163"]);
+// Another company's series owes nothing to H-KIDS' register.
+export const HKIDS_ISSUED_PURCHASE_ORDER_NUMBERS = Object.freeze(isPilotCompany() ? ["160", "161", "162", "163"] : []);
 
 // The plans a purchase order may state. The free-text 50/50 refusal that guards
 // delivery notes and invoices exists so old terms are not copied by accident;

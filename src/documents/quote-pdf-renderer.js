@@ -115,9 +115,11 @@ export async function renderQuotePdf(quote, {
     page.drawText(addressLine, { x: identityX, y: identityY, size: 7.4, font, color: MUTED });
     identityY -= 10;
   }
-  page.drawText(`E-mail : ${view.issuer.email}`, { x: identityX, y: identityY, size: 7.4, font, color: MUTED });
-  identityY -= 10;
-  page.drawText(`Tél : ${view.issuer.phone}`, { x: identityX, y: identityY, size: 7.4, font, color: MUTED });
+  for (const contactLine of view.issuer.contactLines) {
+    page.drawText(contactLine, { x: identityX, y: identityY, size: 7.4, font, color: MUTED });
+    identityY -= 10;
+  }
+  identityY += 10;
 
   y = Math.min(y - 72, identityY - 18);
 

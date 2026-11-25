@@ -25,8 +25,8 @@ export function pdfFileName(title, today = new Date()) {
 export async function renderNotePdf({ title, content, date = new Date(), fontPath = process.env.HKIDS_DOCUMENT_FONT_PATH ?? null, boldFontPath = process.env.HKIDS_DOCUMENT_BOLD_FONT_PATH ?? null } = {}) {
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
-  pdf.setTitle(`H-KIDS — ${title}`);
-  pdf.setAuthor("H-KIDS");
+  pdf.setTitle(`${HKIDS_FIXED_IDENTITY.shortName} — ${title}`);
+  pdf.setAuthor(HKIDS_FIXED_IDENTITY.shortName);
   const font = await pdf.embedFont(await readFile(await resolveDocumentFontPath("regular", fontPath)), { subset: true });
   const bold = await pdf.embedFont(await readFile(await resolveDocumentFontPath("bold", boldFontPath)), { subset: true });
   const logo = await pdf.embedJpg(await readFile(logoPath()));

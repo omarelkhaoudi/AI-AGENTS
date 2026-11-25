@@ -16,6 +16,8 @@ export const PILOT_COMPANY = Object.freeze({
   footerMention: "Les produits H KIDS deviennent la propriété du client uniquement après le règlement intégral de la facture.",
   activity: "fabricant marocain de mobilier et d'aménagement sur mesure pour enfants",
   city: "Marrakech",
+  // The line above the signatures of a quote, an order, a delivery note.
+  tagline: "H-KIDS – Mobilier et aménagement sur mesure pour enfants.",
   leaders: Object.freeze(["Hiba", "Omar"]),
   // What every commercial proposal must respect. The payment schedules here
   // are also the ones the documents accept.
@@ -90,6 +92,7 @@ export function loadCompanyProfile(env = process.env) {
     legalLine: read(env, "COMPANY_LEGAL"),
     footerMention: read(env, "COMPANY_FOOTER") || `Les produits ${name} deviennent la propriété du client uniquement après le règlement intégral de la facture.`,
     activity: read(env, "COMPANY_ACTIVITY") || "entreprise marocaine",
+    tagline: read(env, "COMPANY_TAGLINE") || tagline(read(env, "COMPANY_SHORT_NAME") || name, read(env, "COMPANY_ACTIVITY")),
     city: read(env, "COMPANY_CITY"),
     leaders: Object.freeze(list(read(env, "COMPANY_LEADERS"))),
     // Null: the pilot's plans (60/20/20 and its exceptions).
@@ -98,7 +101,17 @@ export function loadCompanyProfile(env = process.env) {
   });
 }
 
+function tagline(shortName, activity) {
+  return activity ? `${shortName} – ${activity.charAt(0).toUpperCase()}${activity.slice(1)}.` : "";
+}
+
 export const COMPANY = loadCompanyProfile();
+
+// H-KIDS, the pilot, carries what it did before the cockpit (the numbers it
+// issued by hand); another company starts with nothing of it.
+export function isPilotCompany(company = COMPANY) {
+  return company === PILOT_COMPANY;
+}
 
 // The notice the law 09-08 asks for wherever personal data is collected: who
 // processes it, what for, and where to exercise one's rights. The CNDP number

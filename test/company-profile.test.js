@@ -117,3 +117,41 @@ test("the 09-08 notice names the company and its address, and the CNDP number on
   const other = loadCompanyProfile({ COMPANY_NAME: "Atelier Exemple" });
   assert.match(privacyMention(other, {}), /^Loi 09-08 : Atelier Exemple traite .* d'opposition auprès de Atelier Exemple\.$/, "no e-mail: the company itself");
 });
+
+// The documents of another company, in a process of its own: the profile is
+// read once, at start, from its settings.
+test("another company's documents carry its own name and start their own number series", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const outputDir = mkdtempSync(join(tmpdir(), "autre-societe-"));
+  try {
+    const script = `
+      const { HKIDS_FIXED_IDENTITY } = await import("./src/documents/hkids-template.js");
+      const { HKIDS_ISSUED_PURCHASE_ORDER_NUMBERS } = await import("./src/documents/purchase-order.js");
+      const { HkidsDocumentService } = await import("./src/documents/document-service.js");
+      const documents = new HkidsDocumentService({ repository: null, outputDir: ${JSON.stringify(outputDir)} });
+      console.log(JSON.stringify({
+        contactLines: HKIDS_FIXED_IDENTITY.contactLines,
+        signatureName: HKIDS_FIXED_IDENTITY.signatureName,
+        tagline: HKIDS_FIXED_IDENTITY.tagline,
+        orders: HKIDS_ISSUED_PURCHASE_ORDER_NUMBERS,
+        quote: await documents.nextDocumentNumber("quote"),
+        order: await documents.nextDocumentNumber("purchase_order")
+      }));`;
+    const env = { ...process.env, COMPANY_NAME: "Atelier Exemple", COMPANY_SHORT_NAME: "Atelier-Ex", COMPANY_ACTIVITY: "menuiserie sur mesure", COMPANY_PHONE: "0500000000", COMPANY_EMAIL: "" };
+    const seen = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", script], { env, encoding: "utf8" }).trim().split("\n").pop());
+    assert.deepEqual(seen.contactLines, ["Tél : 0500000000"], "no empty « E-mail : » line");
+    assert.equal(seen.signatureName, "Atelier Exemple");
+    assert.equal(seen.tagline, "Atelier-Ex – Menuiserie sur mesure.");
+    assert.deepEqual(seen.orders, [], "H-KIDS' hand-written orders are not another company's");
+    assert.equal(seen.quote, null, "the first quote number is the one the direction gives");
+    assert.equal(seen.order, "1");
+  } finally {
+    rmSync(outputDir, { recursive: true, force: true });
+  }
+  assert.deepEqual(HKIDS_FIXED_IDENTITY.contactLines, ["E-mail : hkidsmaroc@gmail.com", "Tél : 0524018420"]);
+  assert.equal(HKIDS_FIXED_IDENTITY.signatureName, "H KIDS");
+  assert.equal(HKIDS_FIXED_IDENTITY.tagline, "H-KIDS – Mobilier et aménagement sur mesure pour enfants.");
+});

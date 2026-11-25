@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { FILE_TAG } from "../company/company-profile.js";
+import { FILE_TAG, isPilotCompany } from "../company/company-profile.js";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { PDFDocument, PDFName, PDFRawStream } from "pdf-lib";
@@ -509,11 +509,11 @@ const TYPE_BY_PREFIX = Object.freeze(Object.fromEntries(Object.entries(FILE_PREF
 // subfolder and never match.
 const ISSUED_FILE = new RegExp(`^(devis|facture|bon_livraison|bon_commande|avoir|recu)_${FILE_TAG}_(\\d+)_(.+)\\.(pdf|docx|json)$`);
 
-// The highest number issued by hand before the generator, per series. Quotes
-// 160 to 163 were written by hand; the purchase orders have their own register.
-const ISSUED_BY_HAND = Object.freeze({
-  [HKIDS_DOCUMENT_TYPES.QUOTE]: 163
-});
+// The highest number issued by hand before the generator, per series. H-KIDS
+// wrote quotes 160 to 163 by hand; the purchase orders have their own register.
+// Another company starts with none: its first number is the one its direction
+// gives.
+const ISSUED_BY_HAND = Object.freeze(isPilotCompany() ? { [HKIDS_DOCUMENT_TYPES.QUOTE]: 163 } : {});
 
 function safeFileStem(document) {
   const prefix = FILE_PREFIXES[document.documentType] ?? "document";

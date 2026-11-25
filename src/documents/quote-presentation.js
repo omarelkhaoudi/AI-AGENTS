@@ -140,6 +140,7 @@ export function createQuotePresentation(quote) {
       addressLines: HKIDS_FIXED_IDENTITY.addressLines,
       email: HKIDS_FIXED_IDENTITY.email,
       phone: HKIDS_FIXED_IDENTITY.phone,
+      contactLines: HKIDS_FIXED_IDENTITY.contactLines,
       legalLine: HKIDS_FIXED_IDENTITY.legalLine
     }),
 

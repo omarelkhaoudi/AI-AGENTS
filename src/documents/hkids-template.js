@@ -36,6 +36,13 @@ export const HKIDS_FIXED_IDENTITY = Object.freeze({
   legalLine: COMPANY.legalLine,
   footerMention: COMPANY.footerMention,
   privacyMention: PRIVACY_MENTION,
+  // The e-mail and phone lines, only those the company gave: never an empty
+  // « Tél : ».
+  contactLines: Object.freeze([COMPANY.email ? `E-mail : ${COMPANY.email}` : "", COMPANY.phone ? `Tél : ${COMPANY.phone}` : ""].filter(Boolean)),
+  // « Pour H KIDS », « Livré par H KIDS » above the company's signature.
+  signatureName: COMPANY.name,
+  shortName: COMPANY.shortName,
+  tagline: COMPANY.tagline,
   deliveryNoteColumns: Object.freeze(["Désignation", "Qté", "Prix unitaire HT", "Montant HT"]),
   invoiceColumns: Object.freeze(["Désignation", "Qté", "Unité", "PU HT", "TVA", "PU TTC", "Total HT", "Total TTC"]),
   columns: Object.freeze(["Désignation", "Qté", "Prix unitaire HT", "Montant HT"])

@@ -55,7 +55,7 @@ mv "$partial" "backups/$stamp"
 # The copy outside the server. A failed upload is said in the log and does not
 # undo the local backup; the next night sends its own.
 if [ -f backup-offsite.env ]; then
-  . ./backup-offsite.env
+  set -a; . ./backup-offsite.env; set +a
   if sh ../scripts/backup-offsite.sh send "backups/$stamp"; then
     echo "$stamp copie hors serveur envoyée"
   else

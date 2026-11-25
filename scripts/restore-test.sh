@@ -31,7 +31,7 @@ trap cleanup EXIT
 source="locale"
 folder="$latest"
 if [ -f backup-offsite.env ]; then
-  . ./backup-offsite.env
+  set -a; . ./backup-offsite.env; set +a
   sh ../scripts/backup-offsite.sh fetch "$stamp" "$work"
   folder="$work/$stamp"
   source="hors serveur (téléchargée et déchiffrée)"

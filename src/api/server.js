@@ -657,6 +657,9 @@ export function buildApi({
   const emailSettings = emailSettingsFromEnv(process.env, { companyEmail: COMPANY.email ?? "", companyName: COMPANY.name });
   const mailer = emailMailer ?? createSmtpMailer(emailSettings, { clock });
   const emails = emailOutbox ?? createMemoryEmailOutbox({ clock });
+  // Voice into text: WhatsApp's voice notes and the cockpit's microphone use
+  // the same transcriber, and the same OpenAI key as the agents.
+  const voiceTranscriber = whatsAppTranscriber === undefined ? createOpenAiTranscriberFromEnv({ onUsage: (heard) => usage.recordTranscription(heard) }) : whatsAppTranscriber;
   const whatsApp = createWhatsAppGateway({
     config: whatsAppSettings,
     client: createWhatsAppCloudClient({ config: whatsAppSettings, ...(whatsAppFetch ? { fetchImpl: whatsAppFetch } : {}) }),
@@ -674,7 +677,7 @@ export function buildApi({
       }
     },
     recordFollowUp: (number, { note, by }) => recordFollowUp({ devis: number, canal: "autre", date: "", note, perdu: false, motif: "" }, { books: { followUps, team: teamFeed }, documentService: hkidsDocuments, clock }, by),
-    transcriber: whatsAppTranscriber === undefined ? createOpenAiTranscriberFromEnv({ onUsage: (heard) => usage.recordTranscription(heard) }) : whatsAppTranscriber,
+    transcriber: voiceTranscriber,
     // The files of the Director's answers, and the generation of a document
     // the direction validated by its word on WhatsApp: the same confirmed
     // step as « Valider et générer » in the cockpit.
@@ -1315,8 +1318,33 @@ export function buildApi({
 
     app.get("/api/agent/status", readRouteOptions(), async () => ({
       configured: agent.isConfigured(),
-      model: agent.model
+      model: agent.model,
+      voice: Boolean(voiceTranscriber)
     }));
+
+    // The Briefing's microphone: what was said comes back as text, put in the
+    // message box to read over before it is sent. Nothing is kept: the
+    // recording is passed to the transcriber and dropped.
+    app.post("/api/agent/transcribe", { ...writeRouteOptions(), bodyLimit: Math.max(securityConfig.bodyLimitBytes, VOICE_BODY_LIMIT_BYTES) }, async (request, reply) => {
+      if (!voiceTranscriber) {
+        return reply.code(503).send({ error: "La voix n'est pas disponible : la clé OpenAI manque sur le serveur.", details: { code: "VOICE_NOT_CONFIGURED" } });
+      }
+      const mimeType = String(request.body?.mimeType ?? "").split(";")[0].trim().toLowerCase();
+      const audio = typeof request.body?.audio === "string" ? request.body.audio.replace(/^data:[^,]*,/, "") : "";
+      const bytes = /^[A-Za-z0-9+/=\s]+$/.test(audio) ? Buffer.from(audio, "base64") : Buffer.alloc(0);
+      if (!VOICE_MIME_TYPES.includes(mimeType) || bytes.length < 200 || bytes.length > VOICE_MAX_BYTES) {
+        return reply.code(400).send({ error: bytes.length > VOICE_MAX_BYTES ? "Enregistrement trop long : 3 minutes au plus." : "Enregistrement illisible : réessayez.", details: { code: "VOICE_AUDIO_INVALID" } });
+      }
+      try {
+        const text = await voiceTranscriber.transcribe({ bytes, mimeType });
+        if (!text) {
+          return reply.code(422).send({ error: "Rien n'a été entendu : parlez plus près du micro et réessayez.", details: { code: "VOICE_NOTHING_HEARD" } });
+        }
+        return { text };
+      } catch (error) {
+        return reply.code(502).send({ error: error.message || "La voix n'a pas pu être transcrite.", details: { code: error.code ?? "TRANSCRIPTION_FAILED" } });
+      }
+    });
 
     app.get("/api/plans", readRouteOptions(), async (request) => {
       const status = ["active", "done", "abandoned"].includes(request.query?.status) ? request.query.status : null;
@@ -3472,6 +3500,11 @@ const SIGNATURE_BODY_LIMIT_BYTES = 700 * 1024;
 // A CNC file of 8 MB, sent as base64.
 const CNC_BODY_LIMIT_BYTES = 12 * 1024 * 1024;
 const CHAT_BODY_LIMIT_BYTES = 40 * 1024 * 1024;
+// About three minutes of speech in the browsers' compressed formats.
+const VOICE_MAX_BYTES = 6 * 1024 * 1024;
+const VOICE_BODY_LIMIT_BYTES = Math.ceil(VOICE_MAX_BYTES * 1.4) + 4096;
+// What the browsers record (Chrome and Firefox webm or ogg, Safari mp4).
+const VOICE_MIME_TYPES = Object.freeze(["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav", "audio/aac"]);
 
 function documentRouteOptions(securityConfig) {
   return {

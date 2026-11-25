@@ -73,9 +73,12 @@ const AGENT_ROSTER = Object.freeze([
   { id: "after_sales", initials: "SA", color: "#2f8a87", role: "Réclamations, garanties et qualité après livraison." }
 ]);
 
+// The microphone records in the browser; the server turns it into text with
+// the transcriber of WhatsApp's voice notes. Enabled once the server says it
+// can transcribe.
 const VOICE_INTERFACE = Object.freeze({
-  status: "prepared_offline",
-  enabled: false,
+  status: "server_transcription",
+  maxSeconds: 180,
   externalConnectionsEnabled: false
 });
 
@@ -102,6 +105,102 @@ const photoTray = document.querySelector("#photo-tray");
 
 voicePlaceholder.dataset.voiceStatus = VOICE_INTERFACE.status;
 voicePlaceholder.dataset.externalConnectionsEnabled = String(VOICE_INTERFACE.externalConnectionsEnabled);
+
+// --- The voice: speak instead of typing --------------------------------------
+// A first touch starts recording, a second stops it (or three minutes). What
+// was said lands in the message box, after what was already typed, to read
+// over and send. The recording itself is not kept anywhere.
+const voice = { available: false, recorder: null, chunks: [], timer: null, started: 0 };
+
+voicePlaceholder.addEventListener("click", () => (voice.recorder ? stopVoice() : startVoice()));
+
+async function startVoice() {
+  if (!voice.available || agentState.busy) {
+    return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    uiState.textContent = "Le micro est refusé : autorisez-le dans le navigateur (icône du cadenas), puis réessayez.";
+    return;
+  }
+  const mimeType = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4"].find((type) => MediaRecorder.isTypeSupported?.(type)) ?? "";
+  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+  voice.recorder = recorder;
+  voice.chunks = [];
+  voice.started = Date.now();
+  recorder.addEventListener("dataavailable", (event) => {
+    if (event.data?.size > 0) {
+      voice.chunks.push(event.data);
+    }
+  });
+  recorder.addEventListener("stop", () => {
+    stream.getTracks().forEach((track) => track.stop());
+    transcribeVoice(new Blob(voice.chunks, { type: recorder.mimeType || mimeType || "audio/webm" }));
+  });
+  recorder.start();
+  voicePlaceholder.className = "icon-button is-recording";
+  voicePlaceholder.setAttribute("aria-pressed", "true");
+  document.querySelector("#voice-label").textContent = "Arrêter l'enregistrement";
+  const tick = () => {
+    const seconds = Math.floor((Date.now() - voice.started) / 1000);
+    uiState.textContent = `Je vous écoute… ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")} — touchez le micro pour terminer.`;
+    if (seconds >= VOICE_INTERFACE.maxSeconds) {
+      stopVoice();
+    }
+  };
+  tick();
+  voice.timer = setInterval(tick, 500);
+}
+
+function stopVoice() {
+  clearInterval(voice.timer);
+  const recorder = voice.recorder;
+  voice.recorder = null;
+  voicePlaceholder.setAttribute("aria-pressed", "false");
+  document.querySelector("#voice-label").textContent = "Parler au lieu d'écrire";
+  if (recorder && recorder.state !== "inactive") {
+    voicePlaceholder.className = "icon-button is-transcribing";
+    uiState.textContent = "Transcription…";
+    recorder.stop();
+  } else {
+    voicePlaceholder.className = "icon-button";
+  }
+}
+
+async function transcribeVoice(blob) {
+  try {
+    if (blob.size < 200) {
+      uiState.textContent = "Enregistrement trop court : touchez le micro, parlez, puis touchez-le encore.";
+      return;
+    }
+    const audio = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+    const response = await fetch("/api/agent/transcribe", {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({ audio, mimeType: blob.type })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      uiState.textContent = payload.error ?? "La voix n'a pas pu être transcrite.";
+      return;
+    }
+    const typed = messageInput.value.trim();
+    messageInput.value = typed ? `${typed} ${payload.text}` : payload.text;
+    messageInput.focus();
+    uiState.textContent = "Voilà ce que j'ai compris : relisez, corrigez si besoin, puis envoyez.";
+  } catch {
+    uiState.textContent = "Le serveur ne répond pas. Vérifiez la connexion internet.";
+  } finally {
+    voicePlaceholder.className = "icon-button";
+  }
+}
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -773,10 +872,15 @@ async function askDirector(message) {
 async function checkAgentStatus() {
   try {
     const response = await fetch("/api/agent/status", { headers: await authHeaders() });
-    agentState.enabled = response.ok && (await response.json()).configured === true;
+    const status = response.ok ? await response.json() : {};
+    agentState.enabled = status.configured === true;
+    voice.available = status.voice === true && Boolean(globalThis.navigator?.mediaDevices?.getUserMedia) && typeof globalThis.MediaRecorder === "function";
   } catch {
     agentState.enabled = false;
+    voice.available = false;
   }
+  voicePlaceholder.disabled = !voice.available;
+  voicePlaceholder.title = voice.available ? "Parler : touchez pour commencer, touchez encore pour arrêter" : "La voix n'est pas disponible sur ce serveur ou ce navigateur.";
   photoButton.hidden = !agentState.enabled;
   if (agentState.enabled) {
     messageInput.value = "";

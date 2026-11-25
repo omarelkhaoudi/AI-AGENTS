@@ -30,7 +30,7 @@ test("Director frontend is served by the existing API server", async (t) => {
   assert.match(response.body, /Qu'est-ce que je dois commander/);
   assert.match(response.body, /Quels clients dois-je relancer/);
   assert.match(response.body, /Effectue le paiement de cette facture/);
-  assert.match(response.body, /Voix indisponible en Phase 0/);
+  assert.match(response.body, /Parler au lieu d'écrire/);
 });
 
 test("Director frontend assets connect only to existing Director and approval endpoints", async (t) => {
@@ -49,7 +49,8 @@ test("Director frontend assets connect only to existing Director and approval en
   assert.match(scriptResponse.body, /sourceProvider/);
   assert.match(scriptResponse.body, /sourceId/);
   assert.match(scriptResponse.body, /Community Manager/);
-  assert.match(scriptResponse.body, /prepared_offline/);
+  assert.match(scriptResponse.body, /server_transcription/);
+  assert.match(scriptResponse.body, /\/api\/agent\/transcribe/);
   assert.doesNotMatch(scriptResponse.body.replace(/^\s*\/\/.*$/gm, ""), /openai|webhook|n8n/i);
 
   assert.equal(styleResponse.statusCode, 200);

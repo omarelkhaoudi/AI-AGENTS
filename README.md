@@ -132,6 +132,14 @@ Manager (le périmètre validé par Hiba), plus RH, SAV et Juridique. Chaque age
 lit que ses propres données (§22 du CDC), rédige et propose ; il n'envoie, ne paie
 et ne commande jamais rien lui-même.
 
+**Parler au lieu d'écrire.** Le micro du Briefing enregistre : un toucher pour
+commencer, un autre pour arrêter (3 minutes au plus). Le serveur transcrit avec
+le même modèle que les notes vocales WhatsApp (`OPENAI_TRANSCRIBE_MODEL`, même
+clé OpenAI), en français, en arabe ou en darija ; le texte arrive dans la zone
+de saisie, à relire avant d'envoyer. L'enregistrement n'est gardé nulle part.
+Le navigateur demande l'autorisation du micro la première fois (le site doit
+être en HTTPS, ce qu'il est).
+
 **Écrire directement à un agent (§2 du CDC).** Le menu **À** du Briefing choisit
 le destinataire : Director par défaut, ou un agent de l'équipe. L'agent répond
 lui-même, avec ses outils et ses règles, sans passer par le Director ; chaque

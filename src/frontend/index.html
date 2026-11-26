@@ -180,6 +180,9 @@
           <div class="session-box" id="session-box" hidden>
             <span class="session-avatar" id="session-avatar" aria-hidden="true"></span>
             <span id="session-name" class="session-name max-md:hidden"></span>
+            <a class="session-switch" id="portal-link" href="#" title="Changer d'entreprise" hidden>
+              <svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg><span class="visually-hidden">Changer d'entreprise</span>
+            </a>
             <button type="button" class="session-security" id="security-button" title="Sécurité du compte">
               <svg class="i" aria-hidden="true"><use href="#i-shield"/></svg><span class="visually-hidden">Sécurité du compte</span>
             </button>
@@ -958,6 +961,18 @@
         <p id="login-error" class="mt-4 text-[14px] text-danger" role="alert" hidden></p>
         <button type="submit" class="primary mt-7 min-h-12 w-full justify-center text-[15px]" id="login-submit">Se connecter<svg class="i" aria-hidden="true"><use href="#i-arrow"/></svg></button>
         <p class="mt-6 text-center text-[12.5px] text-muted">Mot de passe oublié ? Demandez à Omar de le réinitialiser.</p>
+      </form>
+      <form id="portal-code-form" class="w-full max-w-[400px] rounded-[28px] border border-line bg-surface p-6 shadow-card md:border-0 md:bg-transparent md:p-8 md:shadow-none" hidden>
+        <span class="mb-5 grid size-12 place-items-center rounded-2xl bg-brand text-brand-ink" aria-hidden="true"><svg class="i size-[22px]!"><use href="#i-shield"/></svg></span>
+        <h1 class="text-[28px]">Code de vérification</h1>
+        <p class="mt-1.5 mb-7 text-[14.5px] text-muted">Vous arrivez du portail. Ce compte demande aussi le code de votre application d'authentification.</p>
+        <div class="field">
+          <label for="portal-code">Code</label>
+          <input id="portal-code" name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" required>
+          <p class="mt-1.5 text-[12.5px] text-muted">Le code à 6 chiffres affiché maintenant. Téléphone perdu : tapez un de vos codes de secours.</p>
+        </div>
+        <p id="portal-code-error" class="mt-4 text-[14px] text-danger" role="alert" hidden></p>
+        <button type="submit" class="primary mt-7 min-h-12 w-full justify-center text-[15px]" id="portal-code-submit">Entrer<svg class="i" aria-hidden="true"><use href="#i-arrow"/></svg></button>
       </form>
       <form id="password-form" class="w-full max-w-[400px] rounded-[28px] border border-line bg-surface p-6 shadow-card md:border-0 md:bg-transparent md:p-8 md:shadow-none" hidden>
         <span class="mb-5 grid size-12 place-items-center rounded-2xl bg-brand text-brand-ink" aria-hidden="true"><svg class="i size-[22px]!"><use href="#i-shield"/></svg></span>

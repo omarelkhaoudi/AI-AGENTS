@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import { AccountError, createAccountService } from "./accounts.js";
-import { createCompanyService } from "./companies.js";
+import { createCompanyService, publicMembership } from "./companies.js";
+import { signPortalTicket } from "../security/portal-token.js";
 
 // The portal: the one place where a person signs up, signs in and, later,
 // chooses the company to enter. It never serves a company's data; each company
@@ -55,6 +56,7 @@ export function buildPlatform({
   store,
   mailer,
   baseUrl,
+  signingKey = null,
   clock = () => new Date(),
   secureCookies = baseUrl.startsWith("https://"),
   trustProxy = false,
@@ -158,6 +160,23 @@ export function buildPlatform({
     app.post("/api/companies", async (request, reply) => {
       const company = await companies.create(await signedIn(request), body(request));
       return reply.code(201).send({ company });
+    });
+
+    // The way into one company: a ticket of 60 seconds for that company alone,
+    // handed in the address after the # so that no server log keeps it.
+    app.post("/api/companies/:slug/enter", async (request) => {
+      const account = await signedIn(request);
+      const entry = (await store.listMemberships(account.id)).find((membership) => membership.company.slug === request.params.slug);
+      const company = entry ? publicMembership(entry) : null;
+      if (!company?.cockpitUrl) {
+        throw new AccountError(entry ? "Cette entreprise n'est pas ouverte pour le moment." : "Vous n'êtes pas membre de cette entreprise.", entry ? "COMPANY_CLOSED" : "NOT_A_MEMBER", entry ? 409 : 404);
+      }
+      if (!signingKey) {
+        throw new AccountError("L'entrée par le portail n'est pas encore configurée.", "PORTAL_KEY_MISSING", 503);
+      }
+      const ticket = signPortalTicket({ account, company: company.slug, role: entry.role, now: clock() }, signingKey);
+      await store.record({ type: "company_entered", accountId: account.id, metadata: { slug: company.slug } });
+      return { url: `${company.cockpitUrl}/#portail=${ticket}` };
     });
 
     app.get("/api/config", async () => ({ minPasswordLength: accounts.minPasswordLength, mail: mailer.mode, ...companies.choices() }));

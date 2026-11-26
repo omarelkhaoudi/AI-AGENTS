@@ -187,6 +187,9 @@ a { color: var(--accent); }
 .company-action {
   grid-column: 2;
   grid-row: 1;
+  margin: 0;
+  border: 0;
+  cursor: pointer;
   padding: 8px 12px;
   border-radius: 9px;
   background: var(--accent);

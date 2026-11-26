@@ -360,6 +360,20 @@ const loginError = document.querySelector("#login-error");
 const loginCodeField = document.querySelector("#login-code-field");
 let apiToken = null;
 let pendingLogin = null;
+// What the portal refused, shown on the sign-in screen or as a toast.
+let portalRefusal = null;
+
+// Entry from the platform's portal: its ticket arrives after the # and leaves
+// the address bar at once, before the views read it, so that a shared screen,
+// the history or a copied link never carries it further.
+const portalTicket = (() => {
+  const hash = globalThis.location?.hash ?? "";
+  if (!hash.startsWith("#portail=")) {
+    return null;
+  }
+  globalThis.history?.replaceState?.(null, "", `${globalThis.location.pathname}${globalThis.location.search}`);
+  return hash.slice("#portail=".length);
+})();
 
 function readStoredToken() {
   try {
@@ -387,11 +401,17 @@ function forgetSession() {
   }
 }
 
-function showSession({ user, demo }) {
+function showSession({ user, demo, portalUrl }) {
   const name = user?.name ?? "";
   document.querySelector("#session-name").textContent = name;
   document.querySelector("#session-avatar").textContent = initials(name);
   document.querySelector("#session-box").hidden = demo === true;
+  // « Changer d'entreprise » goes back to the portal, where the person's other
+  // companies are listed. Only an https address (or a local one) is followed.
+  const link = document.querySelector("#portal-link");
+  const safe = typeof portalUrl === "string" && /^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)[:/])/.test(`${portalUrl}/`);
+  link.hidden = !safe;
+  link.href = safe ? `${portalUrl}/#/accueil` : "#";
 }
 
 // "Hiba Benali" → "HB", "Omar" → "O": the avatar of the person signed in.
@@ -403,7 +423,9 @@ function initials(name) {
 function askLogin() {
   pendingLogin ??= new Promise((resolve) => {
     loginScreen.hidden = false;
-    loginError.hidden = true;
+    loginError.textContent = portalRefusal ?? "";
+    loginError.hidden = !portalRefusal;
+    portalRefusal = null;
     document.querySelector("#login-email").focus();
     loginForm.onsubmit = async (event) => {
       event.preventDefault();
@@ -449,7 +471,7 @@ function askLogin() {
           await requireTwoFactor();
         }
         pendingLogin = null;
-        resolve({ user: payload.user, demo: false });
+        resolve({ user: payload.user, demo: false, portalUrl: payload.portalUrl });
       } catch {
         loginError.textContent = "Le serveur ne répond pas. Vérifiez la connexion internet.";
         loginError.hidden = false;
@@ -516,9 +538,84 @@ async function changePassword(current, next) {
   return { ok: response.ok, payload: await response.json().catch(() => ({})) };
 }
 
+// The ticket of the portal exchanged for a session, with the code of the
+// authenticator app when the account asks for one. The session, or null when
+// the portal's way in is refused (the reason is kept in portalRefusal).
+const portalCodeForm = document.querySelector("#portal-code-form");
+const portalCodeError = document.querySelector("#portal-code-error");
+
+async function enterFromPortal(token) {
+  const send = async (code) => {
+    const response = await nativeFetch("/api/auth/portal", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(code === undefined ? { token } : { token, code })
+    });
+    return { response, payload: await response.json().catch(() => ({})) };
+  };
+  let answer;
+  try {
+    answer = await send();
+  } catch {
+    portalRefusal = "Le serveur ne répond pas. Vérifiez la connexion internet.";
+    return null;
+  }
+  if (answer.response.status === 401 && answer.payload.details?.code === "TWO_FACTOR_REQUIRED") {
+    answer = await new Promise((resolve) => {
+      loginScreen.hidden = false;
+      loginForm.hidden = true;
+      portalCodeForm.hidden = false;
+      portalCodeError.hidden = true;
+      portalCodeForm.code.focus();
+      portalCodeForm.onsubmit = async (event) => {
+        event.preventDefault();
+        const submit = document.querySelector("#portal-code-submit");
+        submit.disabled = true;
+        try {
+          const next = await send(portalCodeForm.code.value.trim());
+          if (next.response.status === 401 && next.payload.details?.code === "INVALID_TWO_FACTOR") {
+            portalCodeError.textContent = next.payload.error;
+            portalCodeError.hidden = false;
+            portalCodeForm.code.select();
+            return;
+          }
+          resolve(next);
+        } catch {
+          portalCodeError.textContent = "Le serveur ne répond pas. Vérifiez la connexion internet.";
+          portalCodeError.hidden = false;
+        } finally {
+          submit.disabled = false;
+        }
+      };
+    });
+    portalCodeForm.reset();
+    portalCodeForm.hidden = true;
+    loginForm.hidden = false;
+    loginScreen.hidden = true;
+  }
+  if (!answer.response.ok) {
+    portalRefusal = answer.response.status === 429
+      ? "Trop d'essais. Patientez une minute avant de réessayer."
+      : answer.payload.error ?? "Entrée impossible. Repassez par le portail.";
+    return null;
+  }
+  keepSession(answer.payload.token);
+  if (answer.payload.mustEnableTwoFactor) {
+    await requireTwoFactor();
+  }
+  return { user: answer.payload.user, demo: false, portalUrl: answer.payload.portalUrl };
+}
+
 // True when a session is open: one kept from an earlier visit that the server
 // still accepts, or a demo token. False means the sign-in has to be shown.
 async function ensureSession() {
+  if (portalTicket) {
+    const entered = await enterFromPortal(portalTicket);
+    if (entered) {
+      showSession(entered);
+      return true;
+    }
+  }
   apiToken ??= readStoredToken();
   if (apiToken) {
     const me = await nativeFetch("/api/auth/me", { headers: { authorization: `Bearer ${apiToken}` } });
@@ -533,6 +630,10 @@ async function ensureSession() {
         await requireTwoFactor();
       }
       showSession(session);
+      if (portalRefusal) {
+        showToast(portalRefusal, "error");
+        portalRefusal = null;
+      }
       return true;
     }
     forgetSession();

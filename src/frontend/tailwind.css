@@ -406,6 +406,10 @@
     @apply min-h-8 w-8 rounded-full border-0 bg-transparent p-0 text-muted shadow-none hover:bg-surface-3 hover:text-danger;
   }
 
+  .session-switch {
+    @apply grid min-h-8 w-8 place-items-center rounded-full text-muted hover:bg-surface-3 hover:text-brand;
+  }
+
   .session-security {
     @apply min-h-8 w-8 rounded-full border-0 bg-transparent p-0 text-muted shadow-none hover:bg-surface-3 hover:text-brand;
   }

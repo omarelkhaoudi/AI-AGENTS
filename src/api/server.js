@@ -38,7 +38,7 @@ import { ORDER_ROLE_IDS, WORKSHOP_STEPS, WorkshopError, createMemoryWorkshopStor
 import { COMPANY, brandPage } from "../company/company-profile.js";
 import { EXPORT_README, buildDataExport, exportFileName } from "../company/data-export.js";
 import { DATA_DIR } from "../agent/json-book.js";
-import { planFromEnv } from "../company/plans.js";
+import { assertSeatAvailable, planFromEnv } from "../company/plans.js";
 import { AUTOMATION_ACTIONS, AUTOMATION_EVENTS, AutomationError, MAX_RUNS_PER_RULE_PER_DAY, createAutomation, createMemoryAutomationBook } from "../agent/automation.js";
 import { HrBookError, LEAVE_STATUSES as HR_LEAVE_STATUSES, createMemoryHrBook } from "../agent/hr-book.js";
 import { AdminBookError, createMemoryAdminBook } from "../agent/admin-book.js";
@@ -73,6 +73,7 @@ import { assertCapability, roleSatisfiesCapability } from "../security/authoriza
 import { DEFAULT_RATE_LIMITS, createSecurityConfig } from "../security/security-config.js";
 import { createApiTokenMaterial, hashApiTokenSecret } from "../security/api-token.js";
 import { burnPasswordCheck, hashPassword, verifyPassword } from "../security/password.js";
+import { COCKPIT_ROLE_OF, PortalTokenError, createUsedTicketBook, publicKeyFrom, verifyPortalTicket } from "../security/portal-token.js";
 import QRCode from "qrcode";
 import {
   createRecoveryCodes,
@@ -229,11 +230,18 @@ export function buildApi({
   // The folder of the company's books, for the export of its data. Null: the
   // project's data/ folder, as the books themselves use.
   dataDir = null,
+  // The platform's portal: the public key that checks its entry tickets
+  // (PORTAL_PUBLIC_KEY) and its address, for « Changer d'entreprise »
+  // (PORTAL_URL). Without the key nobody enters through the portal.
+  portalPublicKey = publicKeyFrom(process.env.PORTAL_PUBLIC_KEY),
+  portalUrl = String(process.env.PORTAL_URL ?? "").trim().replace(/\/+$/, "") || null,
+  usedPortalTickets = null,
   // A seam, not a feature: the derived idempotency key names a day, and a test
   // cannot cross a day boundary by waiting for one.
   clock = () => new Date()
 } = {}) {
   assertRepositoryContract(repository);
+  const portalTickets = usedPortalTickets ?? createUsedTicketBook({ clock });
   const foundationConfig = config ?? loadFoundationConfig();
   const selectedPlanner = planner ?? createPlannerFromConfig(foundationConfig.planner);
   // Same factory as the tools: BUSINESS_MEMORY_PROVIDER moves the reports and
@@ -983,7 +991,7 @@ export function buildApi({
       const found = typeof repository.findUserCredentialByEmail === "function"
         ? await repository.findUserCredentialByEmail(email)
         : null;
-      const valid = found ? await verifyPassword(password, found.passwordHash) : await burnPasswordCheck(password);
+      const valid = found && found.passwordHash !== PORTAL_ONLY_PASSWORD ? await verifyPassword(password, found.passwordHash) : await burnPasswordCheck(password);
       const otherCompany = valid && typeof found.user.metadata?.companyId === "string" && found.user.metadata.companyId.trim() !== "" && found.user.metadata.companyId.trim() !== companyId;
       if (!valid || otherCompany || (found.user.status ?? "active") !== "active") {
         await auditSecurityEvent(repository, {
@@ -1020,7 +1028,97 @@ export function buildApi({
       const material = createApiTokenMaterial({ userId: found.user.id, name: "session", expiresAt });
       await repository.createApiToken(material.record);
       await auditSecurityEvent(repository, { type: "login_succeeded", actorUserId: found.user.id, resourceType: "endpoint", resourceId: "/api/auth/login" });
-      return reply.code(200).send({ token: material.secret, expiresAt, user: { name: found.user.name, role: found.user.role }, mustChangePassword: found.user.metadata?.mustChangePassword === true, mustEnableTwoFactor: twoFactorRequiredFor(found.user.role) && !found.twoFactor?.secret });
+      return reply.code(200).send({ token: material.secret, expiresAt, user: { name: found.user.name, role: found.user.role }, mustChangePassword: found.user.metadata?.mustChangePassword === true, mustEnableTwoFactor: twoFactorRequiredFor(found.user.role) && !found.twoFactor?.secret, portalUrl });
+    });
+
+    // Entry through the platform's portal: a ticket it signed, for this
+    // company, a minute old at most and used once, opens a session as the
+    // sign-in does. The person is the portal's: met the first time with the
+    // role their company gave them there, and kept in step at each entry.
+    app.post("/api/auth/portal", { config: { login: true } }, async (request, reply) => {
+      const refuse = async (status, error, code, actorUserId) => {
+        await auditSecurityEvent(repository, {
+          type: "authentication_failed",
+          ...(actorUserId ? { actorUserId } : {}),
+          resourceType: "endpoint",
+          resourceId: "/api/auth/portal",
+          metadata: { method: "POST", code }
+        });
+        return reply.code(status).send({ error, details: { code } });
+      };
+      if (!portalPublicKey) {
+        return reply.code(404).send({ error: "Ce cockpit ne s'ouvre pas depuis le portail.", details: { code: "PORTAL_DISABLED" } });
+      }
+      let claims;
+      try {
+        claims = verifyPortalTicket(request.body?.token, { publicKey: portalPublicKey, audience: companyId, now: clock() });
+      } catch (error) {
+        if (error instanceof PortalTokenError) {
+          return refuse(401, error.message, error.code);
+        }
+        throw error;
+      }
+      const role = COCKPIT_ROLE_OF[claims.role];
+      if (!role) {
+        return refuse(401, "Ce lien d'entrée n'est pas valable. Repassez par le portail.", "PORTAL_TOKEN_INVALID");
+      }
+      const found = typeof repository.findUserCredentialByEmail === "function"
+        ? await repository.findUserCredentialByEmail(claims.email)
+        : null;
+      const otherCompany = Boolean(found) && typeof found.user.metadata?.companyId === "string" && found.user.metadata.companyId.trim() !== "" && found.user.metadata.companyId.trim() !== companyId;
+      if (otherCompany || (found && (found.user.status ?? "active") !== "active")) {
+        return refuse(403, "Ce compte n'a pas accès à ce cockpit. Voyez avec la direction.", otherCompany ? "OTHER_COMPANY" : "ACCOUNT_DISABLED", found.user.id);
+      }
+      // The second step stays the cockpit's: an account that turned it on
+      // gives its code here too, before the ticket is spent.
+      if (found?.twoFactor?.secret) {
+        const code = typeof request.body?.code === "string" ? request.body.code.trim() : "";
+        if (code === "") {
+          return reply.code(401).send({ error: "Entrez le code à 6 chiffres de votre application d'authentification.", details: { code: "TWO_FACTOR_REQUIRED" } });
+        }
+        const accepted = await acceptSecondFactor(repository, found.user.id, found.twoFactor, code, clock());
+        if (!accepted) {
+          return refuse(401, "Code incorrect ou déjà utilisé. Entrez le code affiché maintenant.", "INVALID_TWO_FACTOR", found.user.id);
+        }
+        if (accepted === "recovery") {
+          await auditSecurityEvent(repository, { type: "recovery_code_used", actorUserId: found.user.id, resourceType: "endpoint", resourceId: "/api/auth/portal" });
+        }
+      }
+      if (!portalTickets.consume(claims.jti, claims.exp)) {
+        return refuse(401, "Ce lien d'entrée a déjà servi. Repassez par le portail.", "PORTAL_TOKEN_USED", found?.user.id);
+      }
+      let user = found?.user ?? null;
+      try {
+        if (user) {
+          if (user.role !== role || user.metadata?.portalAccountId !== claims.sub) {
+            user = await repository.upsertUser({ ...user, role, metadata: { ...user.metadata, companyId, portalAccountId: claims.sub }, updatedAt: clock().toISOString() });
+          }
+        } else {
+          const userId = `portail-${claims.sub}`;
+          await assertSeatAvailable(repository, { userId, plan: subscription });
+          user = await repository.upsertUser({
+            id: userId,
+            email: claims.email,
+            name: typeof claims.name === "string" && claims.name.trim() !== "" ? claims.name.trim().slice(0, 120) : claims.email,
+            role,
+            status: "active",
+            metadata: { companyId, portalAccountId: claims.sub }
+          });
+          // No password of its own: this mark never matches one, so the person
+          // enters through the portal only, and is counted among the seats.
+          await repository.setUserPassword(userId, PORTAL_ONLY_PASSWORD);
+        }
+      } catch (error) {
+        if (error?.code === "PLAN_USERS_FULL") {
+          return refuse(409, error.message, "PLAN_USERS_FULL");
+        }
+        throw error;
+      }
+      const expiresAt = new Date(clock().getTime() + (securityConfig.sessionDays ?? 30) * 24 * 60 * 60 * 1000).toISOString();
+      const material = createApiTokenMaterial({ userId: user.id, name: "session", expiresAt });
+      await repository.createApiToken(material.record);
+      await auditSecurityEvent(repository, { type: "login_succeeded", actorUserId: user.id, resourceType: "endpoint", resourceId: "/api/auth/portal", metadata: { via: "portail" } });
+      return reply.code(200).send({ token: material.secret, expiresAt, user: { name: user.name, role: user.role }, mustChangePassword: false, mustEnableTwoFactor: twoFactorRequiredFor(user.role) && !found?.twoFactor?.secret, portalUrl });
     });
 
     // Routes are declared after the rate limiter has loaded, so its per-route
@@ -2914,7 +3012,8 @@ export function buildApi({
       user: { name: request.principal.name, role: request.principal.role },
       demo: securityConfig.demoModeEnabled,
       mustChangePassword: request.principal.mustChangePassword === true,
-      mustEnableTwoFactor: await mustEnableTwoFactor(request.principal)
+      mustEnableTwoFactor: await mustEnableTwoFactor(request.principal),
+      portalUrl
     }));
 
     // Two-step sign-in, turned on and off by each person for their own account.
@@ -3319,6 +3418,8 @@ export function buildApi({
 const PUBLIC_API_ROUTES = Object.freeze([
   "/api/auth/demo-session",
   "/api/auth/login",
+  // Entry from the platform's portal: the signed ticket is the credential.
+  "/api/auth/portal",
   // The client's follow-up: reached by an unguessable link, read-only.
   "/api/public/suivi/:token",
   "/api/public/suivi/:token/photos/:id",
@@ -3472,6 +3573,10 @@ function twoFactorRouteOptions() {
 
 // A code of the app (used once: its step is kept) or one of the recovery codes
 // (struck off). "totp", "recovery", or false.
+// The password mark of a person who enters through the portal only. Not a
+// scrypt hash, so no password ever matches it.
+const PORTAL_ONLY_PASSWORD = "portail$sans-mot-de-passe";
+
 async function acceptSecondFactor(repository, userId, twoFactor, code, now) {
   if (looksLikeRecoveryCode(code)) {
     const left = useRecoveryCode(twoFactor.recoveryCodeHashes, code);

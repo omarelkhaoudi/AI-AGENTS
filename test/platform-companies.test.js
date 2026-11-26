@@ -4,6 +4,7 @@ import { createMemoryPlatformStore } from "../src/platform/memory-store.js";
 import { createPlatformMailer, createTestInbox } from "../src/platform/mailer.js";
 import { buildPlatform, readCookie, SESSION_COOKIE } from "../src/platform/server.js";
 import { MAX_COMPANIES_CREATED, createCompanyService, slugFrom } from "../src/platform/companies.js";
+import { generatePortalKeys, verifyPortalTicket } from "../src/security/portal-token.js";
 
 const BASE_URL = "https://portail.exemple.ma";
 const PASSWORD = "example-atelier-26";
@@ -16,10 +17,10 @@ const COMPANY = Object.freeze({
   language: "fr"
 });
 
-async function setUp() {
+async function setUp({ signingKey = null } = {}) {
   const store = createMemoryPlatformStore();
   const inbox = createTestInbox();
-  const app = buildPlatform({ store, mailer: createPlatformMailer({ env: {}, inbox }), baseUrl: BASE_URL });
+  const app = buildPlatform({ store, mailer: createPlatformMailer({ env: {}, inbox }), baseUrl: BASE_URL, signingKey });
   const post = (url, payload, cookie = "") =>
     app.inject({ method: "POST", url, payload, headers: { "content-type": "application/json", origin: BASE_URL, ...(cookie ? { cookie } : {}) } });
   const get = (url, cookie = "") => app.inject({ method: "GET", url, headers: cookie ? { cookie } : {} });
@@ -165,4 +166,44 @@ test("the portal gives the choices of the creation form", async () => {
   assert.equal(config.countries.MA, "Maroc");
   assert.equal(config.sectors.fabrication, "Fabrication sur mesure");
   assert.equal(config.roles.owner, "Propriétaire");
+});
+
+test("a member enters an open company with a ticket signed for it alone; nobody else does", async () => {
+  const keys = generatePortalKeys();
+  const context = await setUp({ signingKey: keys.privateKey });
+  const hiba = await context.person("Hiba", "hiba@exemple.ma");
+  const karim = await context.person("Karim", "karim@exemple.ma");
+  const companies = createCompanyService({ store: context.store });
+  await companies.link({
+    slug: "hkids", legalName: "H KIDS", tradeName: "H-KIDS", country: "MA", sector: "fabrication",
+    contactEmail: "contact@exemple.ma", cockpitUrl: "https://hkids.exemple.ma", ownerEmail: "hiba@exemple.ma"
+  });
+  await companies.link({
+    slug: "atelier", legalName: "Atelier", country: "MA", sector: "fabrication", contactEmail: "contact@exemple.ma",
+    cockpitUrl: "https://atelier.exemple.ma", ownerEmail: "hiba@exemple.ma", status: "suspended"
+  });
+
+  const entered = await context.post("/api/companies/hkids/enter", {}, hiba);
+  assert.equal(entered.statusCode, 200);
+  const url = entered.json().url;
+  assert.ok(url.startsWith("https://hkids.exemple.ma/#portail="));
+  const claims = verifyPortalTicket(url.split("#portail=")[1], { publicKey: keys.publicKey, audience: "hkids" });
+  assert.equal(claims.email, "hiba@exemple.ma");
+  assert.equal(claims.role, "owner");
+
+  assert.equal((await context.post("/api/companies/hkids/enter", {}, karim)).json().details.code, "NOT_A_MEMBER");
+  assert.equal((await context.post("/api/companies/atelier/enter", {}, hiba)).json().details.code, "COMPANY_CLOSED");
+  assert.equal((await context.post("/api/companies/hkids/enter", {})).statusCode, 401);
+});
+
+test("without its signing key the portal opens no cockpit", async () => {
+  const context = await setUp();
+  const hiba = await context.person("Hiba", "hiba@exemple.ma");
+  await createCompanyService({ store: context.store }).link({
+    slug: "hkids", legalName: "H KIDS", country: "MA", sector: "fabrication",
+    contactEmail: "contact@exemple.ma", cockpitUrl: "https://hkids.exemple.ma", ownerEmail: "hiba@exemple.ma"
+  });
+  const refused = await context.post("/api/companies/hkids/enter", {}, hiba);
+  assert.equal(refused.statusCode, 503);
+  assert.equal(refused.json().details.code, "PORTAL_KEY_MISSING");
 });

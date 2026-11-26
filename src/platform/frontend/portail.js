@@ -152,11 +152,22 @@ async function loadCompanies() {
     meta.textContent = `${company.roleLabel} · ${company.statusLabel}`;
     let action;
     if (company.cockpitUrl) {
-      action = document.createElement("a");
+      // A fresh ticket at each click: it lasts a minute and opens once.
+      action = document.createElement("button");
+      action.type = "button";
       action.className = "company-action";
-      action.href = company.cockpitUrl;
       action.textContent = "Ouvrir";
       action.setAttribute("aria-label", `Ouvrir le cockpit de ${company.tradeName}`);
+      action.addEventListener("click", async () => {
+        action.disabled = true;
+        try {
+          const { url } = await call(`/api/companies/${encodeURIComponent(company.slug)}/enter`, {});
+          location.assign(url);
+        } catch (error) {
+          meta.textContent = error.message;
+          action.disabled = false;
+        }
+      });
     } else {
       action = document.createElement("span");
       action.className = "company-waiting";

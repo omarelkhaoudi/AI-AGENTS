@@ -135,6 +135,75 @@ document.querySelector("[data-logout]").addEventListener("click", async () => {
   location.hash = "#/connexion";
 });
 
+// The companies of the person, written with textContent only: a company name
+// is shown, never interpreted.
+async function loadCompanies() {
+  const list = document.querySelector("[data-companies]");
+  const empty = document.querySelector("[data-companies-empty]");
+  const { companies } = await call("/api/companies");
+  list.replaceChildren(...companies.map((company) => {
+    const item = document.createElement("li");
+    item.className = "company";
+    const name = document.createElement("span");
+    name.className = "company-name";
+    name.textContent = company.tradeName;
+    const meta = document.createElement("span");
+    meta.className = "company-meta";
+    meta.textContent = `${company.roleLabel} · ${company.statusLabel}`;
+    let action;
+    if (company.cockpitUrl) {
+      action = document.createElement("a");
+      action.className = "company-action";
+      action.href = company.cockpitUrl;
+      action.textContent = "Ouvrir";
+      action.setAttribute("aria-label", `Ouvrir le cockpit de ${company.tradeName}`);
+    } else {
+      action = document.createElement("span");
+      action.className = "company-waiting";
+      action.textContent = company.status === "provisioning" ? "En préparation" : "Accès fermé";
+    }
+    item.append(name, action, meta);
+    return item;
+  }));
+  empty.hidden = companies.length > 0;
+}
+
+const companyForm = document.querySelector("[data-form=company]");
+const newCompanyButton = document.querySelector("[data-new-company]");
+
+function showCompanyForm(open) {
+  companyForm.hidden = !open;
+  newCompanyButton.hidden = open;
+  if (open) {
+    companyForm.querySelector("input").focus();
+  } else {
+    companyForm.reset();
+    message(companyForm, "");
+  }
+}
+
+newCompanyButton.addEventListener("click", () => showCompanyForm(true));
+document.querySelector("[data-cancel-company]").addEventListener("click", () => showCompanyForm(false));
+
+companyForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await submit(companyForm, async (data) => {
+    await call("/api/companies", data);
+    showCompanyForm(false);
+    await loadCompanies();
+  });
+});
+
+function fillChoices(config) {
+  for (const select of document.querySelectorAll("[data-choices]")) {
+    const choices = config[select.dataset.choices] ?? {};
+    const kept = [...select.options].filter((option) => option.value === "");
+    select.replaceChildren(...kept, ...Object.entries(choices).map(([value, label]) => new Option(label, value)));
+  }
+  document.querySelector("#company-country").value = "MA";
+  document.querySelector("#company-language").value = "fr";
+}
+
 async function verify(token) {
   const text = document.querySelector("[data-verify-text]");
   text.textContent = "Vérification en cours…";
@@ -169,6 +238,10 @@ async function render() {
     document.querySelector("[data-hello]").textContent = `Bonjour ${account.name}`;
     document.querySelector("[data-account-email]").textContent = account.email;
     show("accueil");
+    await loadCompanies().catch(() => {
+      document.querySelector("[data-companies-empty]").textContent = "Impossible de charger vos entreprises. Rechargez la page.";
+      document.querySelector("[data-companies-empty]").hidden = false;
+    });
     return;
   }
   show(views.some((view) => view.dataset.view === path) ? path : "connexion");
@@ -176,6 +249,9 @@ async function render() {
 
 async function start() {
   const config = await call("/api/config").catch(() => null);
+  if (config) {
+    fillChoices(config);
+  }
   if (config?.minPasswordLength) {
     minPasswordLength = config.minPasswordLength;
     for (const hint of document.querySelectorAll("[data-password-hint]")) {

@@ -95,10 +95,33 @@
       <section class="card" data-view="accueil" hidden>
         <h1 data-hello>Bonjour</h1>
         <p class="lead" data-account-email></p>
-        <div class="empty">
-          <h2>Mes entreprises</h2>
-          <p>Bientôt ici : les entreprises dont vous êtes membre, et la création d'une nouvelle entreprise.</p>
-        </div>
+        <h2 class="section-title">Mes entreprises</h2>
+        <ul class="companies" data-companies aria-live="polite"></ul>
+        <p class="empty" data-companies-empty hidden>Vous n'êtes membre d'aucune entreprise pour l'instant. Créez la vôtre, ou demandez à son responsable de vous inviter.</p>
+        <button type="button" class="secondary" data-new-company>Créer une entreprise</button>
+
+        <form class="company-form" data-form="company" novalidate hidden>
+          <h2>Nouvelle entreprise</h2>
+          <p class="hint">Vous en serez le propriétaire. Le reste se complétera ensuite dans son espace.</p>
+          <label for="company-legal">Raison sociale</label>
+          <input id="company-legal" name="legalName" maxlength="160" required>
+          <label for="company-trade">Nom commercial <span class="optional">(si différent)</span></label>
+          <input id="company-trade" name="tradeName" maxlength="160">
+          <label for="company-country">Pays</label>
+          <select id="company-country" name="country" data-choices="countries" required></select>
+          <label for="company-sector">Secteur</label>
+          <select id="company-sector" name="sector" data-choices="sectors" required>
+            <option value="">Choisissez…</option>
+          </select>
+          <label for="company-email">E-mail de contact de l'entreprise</label>
+          <input id="company-email" name="contactEmail" type="email" autocomplete="email" required>
+          <label for="company-language">Langue de l'interface</label>
+          <select id="company-language" name="language" data-choices="languages"></select>
+          <p class="message" role="alert" data-message></p>
+          <button type="submit">Créer l'entreprise</button>
+          <button type="button" class="link" data-cancel-company>Annuler</button>
+        </form>
+
         <button type="button" class="secondary" data-logout>Se déconnecter</button>
       </section>
     </main>

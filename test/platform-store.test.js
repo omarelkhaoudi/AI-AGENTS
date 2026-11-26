@@ -45,6 +45,20 @@ async function contract(store) {
   await store.deleteSessions(account.id);
   assert.equal(await store.findSession(`${email}-s2`), null);
 
+  const slug = `essai-${Math.random().toString(36).slice(2, 10)}`;
+  const fields = { legalName: "Essai SARL", tradeName: "Essai", country: "MA", sector: "autre", contactEmail: email, language: "fr", status: "provisioning", ownerAccountId: account.id };
+  const created = await store.createCompany({ ...fields, slug });
+  assert.equal(created.slug, slug);
+  assert.equal((await store.createCompany({ ...fields, slug })).slug, `${slug}-2`);
+  assert.equal(await store.createCompany({ ...fields, slug, exact: true }), null);
+  assert.equal(await store.countCompaniesCreatedBy(account.id), 2);
+  assert.deepEqual((await store.listMemberships(account.id)).map((entry) => [entry.company.slug, entry.role]).sort(), [[slug, "owner"], [`${slug}-2`, "owner"]]);
+  assert.deepEqual(await store.setMembership({ accountId: account.id, companyId: created.id, role: "admin" }), { refused: "LAST_OWNER" });
+  const other = await store.createAccount({ email: `autre-${email}`, name: "Autre", passwordHash: "scrypt$z" });
+  assert.equal((await store.setMembership({ accountId: other.id, companyId: created.id, role: "owner" })).membership.role, "owner");
+  assert.equal((await store.setMembership({ accountId: account.id, companyId: created.id, role: "admin" })).membership.role, "admin");
+  assert.deepEqual((await store.listMembers(created.id)).map((member) => member.role).sort(), ["admin", "owner"]);
+
   await store.record({ type: "essai", accountId: account.id, metadata: { n: 1 } });
   const events = await store.events({ accountId: account.id });
   assert.deepEqual(events.map((event) => [event.type, event.metadata]), [["essai", { n: 1 }]]);

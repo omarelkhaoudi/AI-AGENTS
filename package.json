@@ -25,6 +25,7 @@
     "data:import-hkids": "node scripts/import-hkids-workbook.mjs",
     "platform:start": "node src/platform-server.js",
     "platform:emails": "node scripts/platform-emails.mjs",
+    "platform:company": "node scripts/platform-company.mjs",
     "css:build": "tailwindcss -i src/frontend/tailwind.css -o src/frontend/styles.css --minify"
   },
   "engines": {

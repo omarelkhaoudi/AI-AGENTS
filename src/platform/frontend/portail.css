@@ -32,6 +32,9 @@
 
 * { box-sizing: border-box; }
 
+/* hidden wins over every display rule below (a form is a grid). */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -88,7 +91,7 @@ form { display: grid; gap: 6px; }
 
 label { font-weight: 600; font-size: 14px; margin-top: 8px; }
 
-input {
+input, select {
   width: 100%;
   padding: 11px 12px;
   border: 1px solid var(--line);
@@ -99,7 +102,7 @@ input {
   font-size: 16px;
 }
 
-input:focus-visible, button:focus-visible, a:focus-visible {
+input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -149,13 +152,68 @@ button.link {
 
 a { color: var(--accent); }
 
+.section-title { margin-top: 4px; }
+
 .empty {
-  margin: 8px 0 20px;
+  margin: 8px 0 12px;
   padding: 16px;
   border: 1px dashed var(--line);
   border-radius: 12px;
   color: var(--muted);
 }
 
-.empty h2 { color: var(--ink); }
-.empty p { margin: 0; }
+.companies {
+  list-style: none;
+  margin: 8px 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.company {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--field);
+}
+
+.company-name { grid-column: 1; grid-row: 1; font-weight: 700; overflow-wrap: anywhere; }
+.company-meta { grid-column: 1 / -1; grid-row: 2; font-size: 13px; color: var(--muted); }
+
+.company-action {
+  grid-column: 2;
+  grid-row: 1;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+  font-size: 14px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.company-waiting {
+  grid-column: 2;
+  grid-row: 1;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--bg);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.company-form {
+  margin: 16px 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.optional { font-weight: 400; color: var(--muted); }
+
+[data-logout] { margin-top: 20px; }

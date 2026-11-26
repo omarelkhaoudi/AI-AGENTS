@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import rateLimit from "@fastify/rate-limit";
 import { AccountError, createAccountService } from "./accounts.js";
+import { createCompanyService } from "./companies.js";
 
 // The portal: the one place where a person signs up, signs in and, later,
 // chooses the company to enter. It never serves a company's data; each company
@@ -61,6 +62,7 @@ export function buildPlatform({
   rateLimits = { auth: 10, other: 120 }
 }) {
   const accounts = createAccountService({ store, mailer, clock, baseUrl });
+  const companies = createCompanyService({ store });
   const origin = new URL(baseUrl).origin;
   const app = Fastify({ logger, bodyLimit: 64 * 1024, trustProxy });
 
@@ -114,6 +116,13 @@ export function buildPlatform({
 
   const body = (request) => (request.body && typeof request.body === "object" ? request.body : {});
   const sessionOf = (request) => readCookie(request.headers.cookie, SESSION_COOKIE);
+  const signedIn = async (request) => {
+    const account = await accounts.accountForSession(sessionOf(request));
+    if (!account) {
+      throw new AccountError("Connectez-vous.", "NOT_SIGNED_IN", 401);
+    }
+    return account;
+  };
 
   // After the rate limiter has loaded: its hook attaches to the routes declared
   // from then on, not to those declared before.
@@ -142,15 +151,16 @@ export function buildPlatform({
       return { ok: true };
     });
 
-    app.get("/api/auth/me", async (request, reply) => {
-      const account = await accounts.accountForSession(sessionOf(request));
-      if (!account) {
-        return reply.code(401).send({ error: "Connectez-vous.", details: { code: "NOT_SIGNED_IN" } });
-      }
-      return { account, minPasswordLength: accounts.minPasswordLength };
+    app.get("/api/auth/me", async (request) => ({ account: await signedIn(request), minPasswordLength: accounts.minPasswordLength }));
+
+    // Only the companies the person belongs to: there is no way to name another.
+    app.get("/api/companies", async (request) => ({ companies: await companies.listForAccount(await signedIn(request)) }));
+    app.post("/api/companies", async (request, reply) => {
+      const company = await companies.create(await signedIn(request), body(request));
+      return reply.code(201).send({ company });
     });
 
-    app.get("/api/config", async () => ({ minPasswordLength: accounts.minPasswordLength, mail: mailer.mode }));
+    app.get("/api/config", async () => ({ minPasswordLength: accounts.minPasswordLength, mail: mailer.mode, ...companies.choices() }));
   });
 
   return app;

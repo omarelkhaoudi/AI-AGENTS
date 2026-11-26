@@ -46,6 +46,36 @@ export const PLATFORM_MIGRATIONS = Object.freeze([
       );
       CREATE INDEX platform_event_account ON platform_event (account_id, at);
     `
+  }),
+  Object.freeze({
+    id: "002_companies",
+    sql: `
+      CREATE TABLE platform_company (
+        id uuid PRIMARY KEY,
+        slug text NOT NULL UNIQUE,
+        legal_name text NOT NULL,
+        trade_name text NOT NULL,
+        country text NOT NULL,
+        sector text NOT NULL,
+        contact_email text NOT NULL,
+        language text NOT NULL DEFAULT 'fr',
+        status text NOT NULL,
+        cockpit_url text,
+        created_by uuid REFERENCES platform_account(id) ON DELETE SET NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX platform_company_created_by ON platform_company (created_by);
+      CREATE TABLE platform_membership (
+        account_id uuid NOT NULL REFERENCES platform_account(id) ON DELETE CASCADE,
+        company_id uuid NOT NULL REFERENCES platform_company(id) ON DELETE CASCADE,
+        role text NOT NULL,
+        status text NOT NULL DEFAULT 'active',
+        created_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (account_id, company_id)
+      );
+      CREATE INDEX platform_membership_company ON platform_membership (company_id);
+    `
   })
 ]);
 
@@ -91,6 +121,30 @@ function account(row) {
         updatedAt: iso(row.updated_at)
       }
     : null;
+}
+
+function company(row) {
+  return row
+    ? {
+        id: row.id,
+        slug: row.slug,
+        legalName: row.legal_name,
+        tradeName: row.trade_name,
+        country: row.country,
+        sector: row.sector,
+        contactEmail: row.contact_email,
+        language: row.language,
+        status: row.status,
+        cockpitUrl: row.cockpit_url,
+        createdBy: row.created_by,
+        createdAt: iso(row.created_at),
+        updatedAt: iso(row.updated_at)
+      }
+    : null;
+}
+
+function membership(row) {
+  return { accountId: row.account_id, companyId: row.company_id, role: row.role, status: row.status, createdAt: iso(row.created_at) };
 }
 
 export async function createPostgresPlatformStore({ connectionString, pool = null }) {
@@ -166,6 +220,92 @@ export async function createPostgresPlatformStore({ connectionString, pool = nul
 
     async deleteSessions(accountId) {
       await db.query("DELETE FROM platform_session WHERE account_id = $1", [accountId]);
+    },
+
+    // In one transaction: the company and its owner, or nothing. A slug taken
+    // meanwhile by another creation is retried with the next suffix.
+    async createCompany({ slug, exact = false, legalName, tradeName, country, sector, contactEmail, language, status, cockpitUrl = null, ownerAccountId }) {
+      const client = await db.connect();
+      try {
+        for (let index = 1; index < 50; index += 1) {
+          const candidate = index === 1 ? slug : `${slug}-${index}`;
+          await client.query("BEGIN");
+          const row = (await client.query(
+            `INSERT INTO platform_company (id, slug, legal_name, trade_name, country, sector, contact_email, language, status, cockpit_url, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (slug) DO NOTHING RETURNING *`,
+            [randomUUID(), candidate, legalName, tradeName, country, sector, contactEmail, language, status, cockpitUrl, ownerAccountId]
+          )).rows[0];
+          if (!row) {
+            await client.query("ROLLBACK");
+            if (exact) {
+              return null;
+            }
+            continue;
+          }
+          await client.query("INSERT INTO platform_membership (account_id, company_id, role) VALUES ($1, $2, 'owner')", [ownerAccountId, row.id]);
+          await client.query("COMMIT");
+          return company(row);
+        }
+        return null;
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async findCompanyBySlug(slug) {
+      return company(await one("SELECT * FROM platform_company WHERE slug = $1", [slug]));
+    },
+
+    async countCompaniesCreatedBy(accountId) {
+      return Number((await one("SELECT count(*) AS n FROM platform_company WHERE created_by = $1", [accountId])).n);
+    },
+
+    async listMemberships(accountId) {
+      const rows = (await db.query(
+        `SELECT m.role AS member_role, m.status AS member_status, c.* FROM platform_membership m
+         JOIN platform_company c ON c.id = m.company_id WHERE m.account_id = $1`,
+        [accountId]
+      )).rows;
+      return rows
+        .map((row) => ({ role: row.member_role, status: row.member_status, company: company(row) }))
+        .sort((left, right) => left.company.tradeName.localeCompare(right.company.tradeName, "fr"));
+    },
+
+    async listMembers(companyId) {
+      return (await db.query("SELECT * FROM platform_membership WHERE company_id = $1 ORDER BY created_at", [companyId])).rows.map(membership);
+    },
+
+    // The owners are locked while the role changes: two demotions at once
+    // cannot both pass and leave the company without an owner.
+    async setMembership({ accountId, companyId, role }) {
+      const client = await db.connect();
+      try {
+        await client.query("BEGIN");
+        const owners = (await client.query(
+          "SELECT account_id FROM platform_membership WHERE company_id = $1 AND role = 'owner' AND status = 'active' FOR UPDATE",
+          [companyId]
+        )).rows.map((row) => row.account_id);
+        const existing = (await client.query("SELECT role FROM platform_membership WHERE account_id = $1 AND company_id = $2 FOR UPDATE", [accountId, companyId])).rows[0];
+        if (existing?.role === "owner" && role !== "owner" && owners.length <= 1) {
+          await client.query("ROLLBACK");
+          return { refused: "LAST_OWNER" };
+        }
+        const row = (await client.query(
+          `INSERT INTO platform_membership (account_id, company_id, role) VALUES ($1, $2, $3)
+           ON CONFLICT (account_id, company_id) DO UPDATE SET role = EXCLUDED.role RETURNING *`,
+          [accountId, companyId, role]
+        )).rows[0];
+        await client.query("COMMIT");
+        return { membership: membership(row) };
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
     },
 
     async record({ type, accountId = null, metadata = {} }) {

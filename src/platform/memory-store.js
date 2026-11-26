@@ -5,13 +5,16 @@ import { randomUUID } from "node:crypto";
 // does; a record leaves it as a copy, never as the object it keeps.
 //
 // The portal knows people and their access, never a company's business data:
-// accounts, one-time e-mail tokens, sessions, and its own journal.
+// accounts, one-time e-mail tokens, sessions, the companies with who belongs
+// to each and in which role, and its own journal.
 
 export function createMemoryPlatformStore({ clock = () => new Date() } = {}) {
   const accounts = new Map();
   const tokens = new Map();
   const sessions = new Map();
   const journal = [];
+  const companies = new Map();
+  const memberships = [];
   const copy = (record) => (record ? structuredClone(record) : null);
 
   return Object.freeze({
@@ -95,6 +98,59 @@ export function createMemoryPlatformStore({ clock = () => new Date() } = {}) {
           sessions.delete(hash);
         }
       }
+    },
+
+    // slug: the exact one when exact (a company linked by hand), else the first
+    // free one of slug, slug-2, slug-3… The creator becomes its owner.
+    async createCompany({ slug, exact = false, legalName, tradeName, country, sector, contactEmail, language, status, cockpitUrl = null, ownerAccountId }) {
+      const taken = (candidate) => [...companies.values()].some((company) => company.slug === candidate);
+      let chosen = slug;
+      for (let index = 2; taken(chosen); index += 1) {
+        if (exact) {
+          return null;
+        }
+        chosen = `${slug}-${index}`;
+      }
+      const now = clock().toISOString();
+      const company = { id: randomUUID(), slug: chosen, legalName, tradeName, country, sector, contactEmail, language, status, cockpitUrl, createdBy: ownerAccountId, createdAt: now, updatedAt: now };
+      companies.set(company.id, company);
+      memberships.push({ accountId: ownerAccountId, companyId: company.id, role: "owner", status: "active", createdAt: now });
+      return copy(company);
+    },
+
+    async findCompanyBySlug(slug) {
+      return copy([...companies.values()].find((company) => company.slug === slug));
+    },
+
+    async countCompaniesCreatedBy(accountId) {
+      return [...companies.values()].filter((company) => company.createdBy === accountId).length;
+    },
+
+    async listMemberships(accountId) {
+      return memberships
+        .filter((membership) => membership.accountId === accountId)
+        .map((membership) => ({ role: membership.role, status: membership.status, company: copy(companies.get(membership.companyId)) }))
+        .sort((left, right) => left.company.tradeName.localeCompare(right.company.tradeName, "fr"));
+    },
+
+    async listMembers(companyId) {
+      return memberships.filter((membership) => membership.companyId === companyId).map(copy);
+    },
+
+    // A company always keeps an active owner: the last one cannot be given
+    // another role (cahier des charges, section 2).
+    async setMembership({ accountId, companyId, role }) {
+      const existing = memberships.find((membership) => membership.accountId === accountId && membership.companyId === companyId);
+      const owners = memberships.filter((membership) => membership.companyId === companyId && membership.role === "owner" && membership.status === "active");
+      if (existing?.role === "owner" && role !== "owner" && owners.length <= 1) {
+        return { refused: "LAST_OWNER" };
+      }
+      if (existing) {
+        existing.role = role;
+      } else {
+        memberships.push({ accountId, companyId, role, status: "active", createdAt: clock().toISOString() });
+      }
+      return { membership: copy(existing ?? memberships.at(-1)) };
     },
 
     async record({ type, accountId = null, metadata = {} }) {

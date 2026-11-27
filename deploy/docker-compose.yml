@@ -7,6 +7,10 @@
 # Only Caddy is reachable from outside (ports 80 and 443). The application and
 # the database talk on a private network; Caddy reaches the application on the
 # edge network, which never carries a database.
+#
+# The platform's portal (accounts, companies, the way into each cockpit) runs
+# beside it with its own database, which holds no business data, on its own
+# private network: no cockpit reaches it, and it reaches no cockpit's database.
 
 services:
   db:
@@ -55,6 +59,54 @@ services:
       - default
       - edge
 
+  platform-db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: portail
+      POSTGRES_PASSWORD: ${PLATFORM_POSTGRES_PASSWORD:?set PLATFORM_POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_DB: portail
+    volumes:
+      - platformdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U portail -d portail"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - platform
+
+  portal:
+    # The same image as the cockpit, started on the portal's own entry point.
+    # Its settings are named here one by one: it never reads deploy/.env, so
+    # none of the cockpit's keys (OpenAI, Meta, its database) reaches it.
+    image: deploy-app:latest
+    pull_policy: never
+    restart: unless-stopped
+    depends_on:
+      platform-db:
+        condition: service_healthy
+      app:
+        condition: service_started
+    command: ["node", "src/platform-server.js"]
+    environment:
+      NODE_ENV: production
+      TRUST_PROXY: "true"
+      HOST: 0.0.0.0
+      PLATFORM_PORT: "3100"
+      PLATFORM_BASE_URL: https://${PORTAL_DOMAIN:?set PORTAL_DOMAIN in deploy/.env}
+      PLATFORM_DATABASE_URL: postgresql://portail:${PLATFORM_POSTGRES_PASSWORD}@platform-db:5432/portail
+      # The private key that signs the tickets into the cockpits, made once on
+      # the server (npm run platform:keys); the cockpits hold its public half.
+      PLATFORM_SIGNING_KEY_FILE: /run/portail/signature.pem
+    volumes:
+      - ./secrets/portail-signature.pem:/run/portail/signature.pem:ro
+      # Its test inbox, until the sending address is chosen.
+      - portaldata:/app/data
+    networks:
+      - platform
+      - edge
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -65,6 +117,7 @@ services:
       - "443:443"
     environment:
       DOMAIN: ${DOMAIN:?set DOMAIN in deploy/.env}
+      PORTAL_DOMAIN: ${PORTAL_DOMAIN:?set PORTAL_DOMAIN in deploy/.env}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       # One file per client company (scripts/tenant.sh).
@@ -77,6 +130,8 @@ services:
 
 networks:
   default: {}
+  # The portal and its database only.
+  platform: {}
   # Caddy and the cockpits: H-KIDS' and the client companies'
   # (deploy/tenant/). The databases are not on it.
   edge:
@@ -87,5 +142,7 @@ volumes:
   documents:
   appdata:
   archive:
+  platformdata:
+  portaldata:
   caddy_data:
   caddy_config:

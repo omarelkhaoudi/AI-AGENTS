@@ -31,6 +31,10 @@ docker compose exec -T db pg_dump -U hkids -d hkids --format=custom > "$partial/
 docker compose exec -T app tar -czf - -C /app/assets/documents generated > "$partial/documents.tar.gz"
 docker compose exec -T app tar -czf - -C /app data > "$partial/data.tar.gz"
 docker compose exec -T app tar -czf - -C /app archive > "$partial/archive.tar.gz"
+# The platform's portal: its accounts, companies and memberships (no business
+# data). Its signing key is not kept: a new one is made in a minute and given
+# to the cockpits.
+docker compose exec -T platform-db pg_dump -U portail -d portail --format=custom > "$partial/portail.dump"
 
 # The client companies of the SaaS (scripts/tenant.sh), each in its own folder.
 # A stopped one has nothing new to save: its last backup stays.

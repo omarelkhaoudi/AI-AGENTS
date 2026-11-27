@@ -123,7 +123,8 @@ create() {
     echo "# Le logo imprimé sur les documents (JPEG), à déposer dans le volume de données :"
     echo "# HKIDS_LOGO_PATH=/app/data/logo.jpg"
     echo "# L'IA passe par la clé du service ; le budget mensuel est celui de l'offre."
-    for key in OPENAI_API_KEY OPENAI_MODEL OPENAI_REASONING_EFFORT SESSION_DAYS; do
+    echo "# Le portail de la plateforme : sa clé publique et son adresse, comme pour H-KIDS."
+    for key in OPENAI_API_KEY OPENAI_MODEL OPENAI_REASONING_EFFORT SESSION_DAYS PORTAL_PUBLIC_KEY PORTAL_URL; do
       value=$(env_value "$MAIN_ENV" "$key")
       [ -z "$value" ] || echo "$key=$value"
     done

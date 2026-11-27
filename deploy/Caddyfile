@@ -23,6 +23,23 @@
 
 import /etc/caddy/tenants/*.caddy
 
+# The platform's portal. Its own pages set their security headers (CSP, no
+# framing, no referrer); Caddy adds HTTPS-only and keeps the requests small.
+{$PORTAL_DOMAIN} {
+	encode zstd gzip
+	request_body {
+		max_size 1MB
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+	reverse_proxy portal:3100 {
+		lb_try_duration 30s
+	}
+}
+
 {$DOMAIN} {
 	import cockpit
 	reverse_proxy app:3000 {

@@ -38,4 +38,6 @@ backups/
 # The backups and their off-site settings hold client data and secrets.
 deploy/backups/
 deploy/backup-offsite.env
+# The portal's signing key.
+deploy/secrets/
 deploy/backup-passphrase

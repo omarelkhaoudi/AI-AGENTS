@@ -18,3 +18,4 @@ dessinateur/tests/
 **/__pycache__/
 docs/
 deploy/backups/
+deploy/secrets/
